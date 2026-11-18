@@ -84,6 +84,13 @@ impl Snapshot {
     fn visit_shared_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
         fn visit_sheet(sheet: &Sheet, visit: &mut impl FnMut(usize, usize)) {
             for object in &sheet.canvas.objects {
+                if let Some(rich) = &object.label_rich_text {
+                    visit(
+                        Arc::as_ptr(rich) as usize,
+                        std::mem::size_of::<crate::rich_text::InlineText>()
+                            + rich.estimated_heap_bytes(),
+                    );
+                }
                 match &object.kind {
                     CanvasObjectKind::Ink(ink) => {
                         visit(
@@ -97,11 +104,24 @@ impl Snapshot {
                             );
                         }
                     }
-                    CanvasObjectKind::Connector(connector) if !connector.waypoints.is_empty() => {
-                        visit(
-                            Arc::as_ptr(&connector.waypoints) as *const () as usize,
-                            connector.waypoints.len() * std::mem::size_of::<Vec2>(),
-                        );
+                    CanvasObjectKind::Connector(connector) => {
+                        if !connector.waypoints.is_empty() {
+                            visit(
+                                Arc::as_ptr(&connector.waypoints) as *const () as usize,
+                                connector.waypoints.len() * std::mem::size_of::<Vec2>(),
+                            );
+                        }
+                        for rich in connector
+                            .extra_labels
+                            .iter()
+                            .filter_map(|label| label.rich_text.as_ref())
+                        {
+                            visit(
+                                Arc::as_ptr(rich) as usize,
+                                std::mem::size_of::<crate::rich_text::InlineText>()
+                                    + rich.estimated_heap_bytes(),
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -223,8 +243,13 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                         // Point buffers are counted once across both history stacks.
                         2 * size_of::<usize>() * (1 + s.pressure.is_some() as usize)
                     }
-                    crate::board::CanvasObjectKind::Connector(c) if !c.waypoints.is_empty() => {
-                        2 * size_of::<usize>()
+                    crate::board::CanvasObjectKind::Connector(c) => {
+                        2 * size_of::<usize>() * usize::from(!c.waypoints.is_empty())
+                            + c.extra_labels.len() * size_of::<crate::board::ConnectorLabel>()
+                            + c.extra_labels
+                                .iter()
+                                .map(|label| label.text.len())
+                                .sum::<usize>()
                     }
                     _ => 0,
                 }
@@ -258,6 +283,18 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
             * (size_of::<CanvasObjectId>() + size_of::<Rect>() + 48)
         + sheet.canvas.scene.layout_policies.len()
             * (size_of::<CanvasObjectId>() + size_of::<ContainerLayoutPolicy>() + 48)
+        + sheet
+            .canvas
+            .scene
+            .tables
+            .values()
+            .map(|table| {
+                size_of::<crate::scene_table::SceneTable>()
+                    + 48
+                    + (table.rows.len() + table.columns.len()) * size_of::<f32>()
+                    + table.cells.len() * size_of::<crate::scene_table::SceneTableCell>()
+            })
+            .sum::<usize>()
         + sheet
             .semantic
             .as_ref()
@@ -1176,6 +1213,95 @@ impl Document {
         })
     }
 
+    pub fn set_canvas_object_label(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        text: &str,
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            let mut object = sheet
+                .canvas
+                .object(id)
+                .cloned()
+                .ok_or(EditError::NotFound)?;
+            object.set_label(text).map_err(EditError::Invalid)?;
+            sheet
+                .update_canvas_object(id, |current| *current = object)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    /// Changes a canvas label and its inline formatting in one undoable edit.
+    pub fn set_canvas_object_label_with_rich_text(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        text: &str,
+        rich: Option<crate::rich_text::InlineText>,
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            let mut object = sheet
+                .canvas
+                .object(id)
+                .cloned()
+                .ok_or(EditError::NotFound)?;
+            object
+                .set_label_with_rich_text(text, rich)
+                .map_err(EditError::Invalid)?;
+            sheet
+                .update_canvas_object(id, |current| *current = object)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    /// Changes one positioned connector label and its formatting as one undoable edit.
+    pub fn set_canvas_extra_connector_label_with_rich_text(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        index: usize,
+        text: &str,
+        rich: Option<crate::rich_text::InlineText>,
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            let mut object = sheet
+                .canvas
+                .object(id)
+                .cloned()
+                .ok_or(EditError::NotFound)?;
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                return Err(EditError::Invalid("Object is not a connector".into()));
+            };
+            connector
+                .extra_labels
+                .get_mut(index)
+                .ok_or(EditError::NotFound)?
+                .set_text_with_rich_text(text.to_owned(), rich)
+                .map_err(EditError::Invalid)?;
+            sheet
+                .update_canvas_object(id, |current| *current = object)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    /// Applies one edit to several objects as a single atomic, undoable step.
+    pub fn update_canvas_objects(
+        &mut self,
+        label: &str,
+        ids: &[CanvasObjectId],
+        mut f: impl FnMut(&mut CanvasObject),
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            for &id in ids {
+                sheet
+                    .update_canvas_object(id, &mut f)
+                    .map_err(EditError::Invalid)?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn reorder_canvas_objects(
         &mut self,
         ids: &[CanvasObjectId],
@@ -1706,6 +1832,57 @@ mod tests {
             Arc::as_ptr(&connector.waypoints) as *const () as usize,
             pointer
         );
+    }
+
+    #[test]
+    fn shared_extra_label_formatting_is_counted_once_per_history_buffer() {
+        use crate::board::ConnectorLabel;
+
+        let mut rich = crate::InlineText::default();
+        rich.update_range("Label", 0..5, |style| style.bold = Some(true))
+            .unwrap();
+        let rich = Arc::new(rich);
+        let pointer = Arc::as_ptr(&rich) as usize;
+        let bytes = std::mem::size_of::<crate::InlineText>() + rich.estimated_heap_bytes();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.extra_labels.push(ConnectorLabel {
+            text: "Label".into(),
+            rich_text: Some(rich.clone()),
+            ..Default::default()
+        });
+        let mut document = Document::default();
+        let id = document
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for index in 0..5 {
+            document
+                .update_canvas_object("Edit", id, |object| object.alt_text = index.to_string())
+                .unwrap();
+        }
+        assert_eq!(document.history.buffers.get(&pointer), Some(&(5, bytes)));
+        assert_eq!(document.history.shared_bytes, bytes);
+        let mut updated = (*rich).clone();
+        updated
+            .update_range("Label", 0..5, |style| style.italic = Some(true))
+            .unwrap();
+        let updated_bytes =
+            std::mem::size_of::<crate::InlineText>() + updated.estimated_heap_bytes();
+        document
+            .set_canvas_extra_connector_label_with_rich_text(
+                "Format",
+                id,
+                0,
+                "Label",
+                Some(updated),
+            )
+            .unwrap();
+        document
+            .update_canvas_object("Edit", id, |object| object.alt_text = "After".into())
+            .unwrap();
+        assert_eq!(document.history.shared_bytes, bytes + updated_bytes);
     }
 
     #[test]

@@ -18,19 +18,28 @@ use cssparser::{ParseError, Parser, ParserInput};
 use cssparser_color::{Color as CssColor, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+use thinoda_core::drawio_passthrough::{
+    DrawioCellPassthrough as Passthrough, DrawioPagePassthrough,
+};
+use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
     ApproxMeasure, Color, MAX_PRESENTATION_NAME_BYTES, MAX_ZONES, MIN_ZONE_SIZE, Rect, Sheet,
     TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
     board::{
         Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
-        CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-        ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil,
-        Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
-        MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH,
-        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
-        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
+        CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorLabel, ConnectorLabelPlacement,
+        ConnectorMarker, ConnectorMarkerKind, ConnectorPort, ConnectorRoute,
+        DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, DrawioRectangleStencil, EdgeShape,
+        EdgeShapeKind, Endpoint, GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps,
+        MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_CONNECTOR_LABEL_OFFSET,
+        MAX_CONNECTOR_LABELS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
+        MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode,
+        SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
+        valid_connector_marker_size, valid_edge_shape_width, valid_line_jump_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
+    label_style::{LabelStyle, LabelVAlign},
     layout_sheet,
     resources::{MAX_RESOURCE_BYTES, Resource},
 };
@@ -38,7 +47,7 @@ use thinoda_core::{
 mod html;
 mod label_html;
 
-use label_html::strip_html;
+use label_html::{parse_rich_html, strip_html};
 
 /// Largest accepted input and inflated diagram text.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -50,6 +59,116 @@ const MAX_PAGES: usize = 1_000;
 /// Nesting depth of cells (parent references), independent of XML depth.
 const MAX_CELL_DEPTH: usize = 256;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// Ownership table, revision 1 (architecture §3.1.1): style keys that first-class
+/// fields represent or that import consumes. They are never kept as passthrough,
+/// so a cleared field cannot be resurrected by its source value. Every `thinoda*`
+/// key is owned as well.
+const OWNED_STYLE_KEYS: &[&str] = &[
+    "absoluteArcSize",
+    "allowGaps",
+    "anchorPointDirection",
+    "arcSize",
+    "bottom",
+    "childLayout",
+    "collapsible",
+    "colspan",
+    "container",
+    "curved",
+    "direction",
+    "edgeStyle",
+    "elbow",
+    "endArrow",
+    "endFill",
+    "endSize",
+    "entryDx",
+    "entryDy",
+    "entryPerimeter",
+    "entryX",
+    "entryY",
+    "evenColumnColor",
+    "evenRowColor",
+    "exitDx",
+    "exitDy",
+    "exitPerimeter",
+    "exitX",
+    "exitY",
+    "fill",
+    "fillColor",
+    "fillOpacity",
+    "fontColor",
+    "horizontal",
+    "horizontalStack",
+    "html",
+    "image",
+    "imageAspect",
+    "jumpSize",
+    "jumpStyle",
+    "left",
+    "locked",
+    "margin",
+    "marginBottom",
+    "marginLeft",
+    "marginRight",
+    "marginTop",
+    "oddColumnColor",
+    "oddRowColor",
+    "opacity",
+    "perimeter",
+    "perimeterSpacing",
+    "resizeLast",
+    "resizeParent",
+    "resizeParentMax",
+    "right",
+    "rotation",
+    "rounded",
+    "roundedPerimeter",
+    "rowspan",
+    "rSize",
+    "shape",
+    "size",
+    "stackBorder",
+    "stackSpacing",
+    "startArrow",
+    "startFill",
+    "startSize",
+    "strokeColor",
+    "strokeOpacity",
+    "strokeWidth",
+    "swimlaneFillColor",
+    "textOpacity",
+    "top",
+    "whiteSpace",
+];
+
+/// Edge-shape parameters Thinoda owns on connectors; vertices keep them as
+/// passthrough because stencils may bind them.
+const EDGE_SHAPE_STYLE_KEYS: &[&str] = &["width", "startWidth", "endWidth"];
+
+/// Shape style effects Thinoda owns on imported built-in and stencil shapes;
+/// other cells keep them as passthrough.
+const SHAPE_EFFECT_STYLE_KEYS: &[&str] = &[
+    "dashed",
+    "dashPattern",
+    "fixDash",
+    "gradientColor",
+    "gradientDirection",
+    "shadow",
+    "glass",
+    "fillStyle",
+    "flipH",
+    "flipV",
+];
+
+/// Passthrough keys that only mean something next to another key; dropped on
+/// export when that key is absent, so an edit cannot leave an orphan behind.
+const DEPENDENT_STYLE_KEYS: &[(&str, &str)] = &[
+    ("dashPattern", "dashed"),
+    ("fixDash", "dashed"),
+    ("jettySize", "edgeStyle"),
+    ("orthogonalLoop", "edgeStyle"),
+    ("gradientDirection", "gradientColor"),
+];
 
 fn invalid(message: &str) -> IoError {
     IoError::Invalid(message.into())
@@ -519,6 +638,7 @@ pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
 
 struct Page {
     name: String,
+    id: Option<String>,
     model: Element,
 }
 
@@ -543,6 +663,7 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
     match root.name.as_str() {
         "mxGraphModel" => Ok(vec![Page {
             name: String::new(),
+            id: None,
             model: root,
         }]),
         "mxfile" => {
@@ -552,6 +673,14 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                     return Err(invalid("draw.io document has too many pages"));
                 }
                 let name = diagram.attr("name").unwrap_or_default().to_owned();
+                let id = diagram
+                    .attr("id")
+                    .filter(|id| {
+                        !id.is_empty()
+                            && id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+                            && !id.chars().any(char::is_control)
+                    })
+                    .map(str::to_owned);
                 let model = match diagram
                     .children
                     .iter()
@@ -570,7 +699,7 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                         model
                     }
                 };
-                pages.push(Page { name, model });
+                pages.push(Page { name, id, model });
             }
             if pages.is_empty() {
                 return Err(invalid("draw.io document contains no pages"));
@@ -745,10 +874,12 @@ enum ConstraintPerimeter {
     Unknown,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
+    /// Explicit `key=value` keys in source order, for passthrough.
+    order: Vec<String>,
     suppress_defaults: bool,
     partial_sides: [Option<String>; 4],
     constraint_perimeter: ConstraintPerimeter,
@@ -785,9 +916,11 @@ impl Style {
                             _ => ConstraintPerimeter::Unknown,
                         };
                     }
-                    style
-                        .map
-                        .insert(key.trim().to_owned(), value.trim().to_owned());
+                    let key = key.trim();
+                    if !style.map.contains_key(key) {
+                        style.order.push(key.to_owned());
+                    }
+                    style.map.insert(key.to_owned(), value.trim().to_owned());
                 }
                 None => {
                     // Named styles are merged in order; defaultEdge restores its end marker.
@@ -814,12 +947,21 @@ impl Style {
 
     /// A stencil reference: an explicit Thinoda reference, otherwise a plain
     /// draw.io shape that no native kind draws exactly but a built-in stencil
-    /// package (or the cell's inline `stencil(...)`) defines as data.
+    /// package (or the cell's inline `stencil(...)`) defines as data. Bundled
+    /// draw.io families only draw shapes without any native kind, so an
+    /// approximate native kind stays editable as that kind.
     fn stencil(&self) -> Option<thinoda_core::stencil_object::StencilRef> {
         let explicit = self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY).is_some();
         let implicit = !explicit
-            && crate::drawio_stencil::maps_drawio_shape(self.shape())
-            && matches!(classify_native(self), Kind::Approx(..) | Kind::Unknown);
+            && match classify_native(self) {
+                Kind::Approx(..) => crate::drawio_stencil::maps_builtin_drawio_shape(self.shape()),
+                // A bare token is a named-style lookup, never a bundled shape.
+                Kind::Unknown if self.get("shape").is_some() => {
+                    crate::drawio_stencil::maps_drawio_shape(self.shape())
+                }
+                Kind::Unknown => crate::drawio_stencil::maps_builtin_drawio_shape(self.shape()),
+                _ => false,
+            };
         if !explicit && !implicit {
             return None;
         }
@@ -1057,7 +1199,7 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
-    fn label_style_loss(&self, source_is_edge: bool) -> bool {
+    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
         // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
         // These built-in vertex styles leave the default label settings unchanged.
         if !self.tokens.is_empty()
@@ -1072,6 +1214,8 @@ impl Style {
             return true;
         }
         match self.get("fontSize") {
+            // Mapped onto the shape's label style; invalid sizes warn there.
+            _ if label_text => false,
             None => source_is_edge || self.suppress_defaults,
             Some("none") => true,
             Some(_) => self
@@ -1084,23 +1228,8 @@ impl Style {
         if !has_label {
             return false;
         }
-        let nonzero_spacing = |key| {
-            self.get(key)
-                .is_some_and(|value| value != "none" && self.num(key).is_none_or(|v| v != 0.0))
-        };
-        self.get("whiteSpace") == Some("wrap")
-            || self
-                .get("overflow")
-                .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
-            || self
-                .get("labelPosition")
-                .is_some_and(|value| !matches!(value, "" | "none" | "center"))
-            || self
-                .get("verticalLabelPosition")
-                .is_some_and(|value| !matches!(value, "" | "none" | "middle"))
-            || self
-                .get("horizontal")
-                .is_some_and(|value| !matches!(value, "" | "none" | "1"))
+        self.get("overflow")
+            .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
             || self.flag("noLabel")
             || self
                 .get("textDirection")
@@ -1108,18 +1237,6 @@ impl Style {
             || self
                 .get("labelWidth")
                 .is_some_and(|value| !matches!(value, "" | "none"))
-            || [
-                "spacing",
-                "spacingTop",
-                "spacingBottom",
-                "spacingLeft",
-                "spacingRight",
-            ]
-            .into_iter()
-            .any(nonzero_spacing)
-            || self
-                .get("fontStyle")
-                .is_some_and(|value| value != "none" && self.num("fontStyle").is_none())
     }
 
     fn connector_label_appearance_loss(&self, source_is_edge: bool) -> bool {
@@ -1179,21 +1296,7 @@ impl Style {
         {
             return None;
         }
-        let kind = match name {
-            "classic" => ConnectorMarkerKind::Classic,
-            "classicThin" => ConnectorMarkerKind::ClassicThin,
-            "open" => ConnectorMarkerKind::Open,
-            "openThin" => ConnectorMarkerKind::OpenThin,
-            "block" => ConnectorMarkerKind::Block,
-            "blockThin" => ConnectorMarkerKind::BlockThin,
-            "diamond" => ConnectorMarkerKind::Diamond,
-            "diamondThin" => ConnectorMarkerKind::DiamondThin,
-            "oval" => ConnectorMarkerKind::Oval,
-            "halfCircle" => ConnectorMarkerKind::HalfCircle,
-            "baseDash" => ConnectorMarkerKind::BaseDash,
-            "dash" => ConnectorMarkerKind::Dash,
-            _ => return None,
-        };
+        let kind = drawio_marker_kind(name)?;
         Some(ConnectorMarker { kind })
     }
 
@@ -1222,7 +1325,17 @@ impl Style {
     }
 
     /// Visual details without a Thinoda equivalent.
-    fn formatting_loss(&self, edge: bool, card_text_alignment: bool) -> bool {
+    /// `shape_effects` marks cells whose dash, gradient, shadow, glass and
+    /// flips map to native shape style (see [`shape_effects`]); `label_text`
+    /// marks cells whose label text keys map to a label style (see
+    /// [`label_text_style`]).
+    fn formatting_loss(
+        &self,
+        edge: bool,
+        card_text_alignment: bool,
+        shape_effects: bool,
+        label_text: bool,
+    ) -> bool {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
@@ -1241,9 +1354,11 @@ impl Style {
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
         (self.get("shape").is_some() && !self.tokens.is_empty())
-            || FLAGS
-                .iter()
-                .any(|key| self.flag(key) && !(*key == "dashed" && self.flag("thinodaSankeyEdge")))
+            || FLAGS.iter().any(|key| {
+                self.flag(key)
+                    && !(*key == "dashed" && self.flag("thinodaSankeyEdge"))
+                    && !(shape_effects && SHAPE_EFFECT_STYLE_KEYS.contains(key))
+            })
             || self.get("fontColor") == Some("none")
             || self.color_appearance_loss("fillColor", "fillOpacity")
             || self.color_appearance_loss("strokeColor", "strokeOpacity")
@@ -1265,46 +1380,40 @@ impl Style {
                         .contains(&width)
                 })
             })
-            || colored("gradientColor")
-            || colored("labelBackgroundColor")
-            || colored("labelBorderColor")
-            || self.get("fontFamily").is_some()
-            || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
-            || self.num("fontStyle").is_some_and(|v| v != 0.0)
-            || self.get("align").is_some_and(|v| {
-                if card_text_alignment {
-                    self.text_align().is_none()
-                } else {
-                    v != "center"
-                }
-            })
-            || self.get("verticalAlign").is_some_and(|v| {
-                // Thinoda image cards caption beneath the picture.
-                v != "middle" && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
-            })
+            || (!shape_effects && colored("gradientColor"))
+            || (label_text
+                && (self
+                    .get("overflow")
+                    .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
+                    || self
+                        .get("textDirection")
+                        .is_some_and(|value| !matches!(value, "" | "none" | "default"))))
+            || (!label_text
+                && (colored("labelBackgroundColor")
+                    || colored("labelBorderColor")
+                    || self.get("fontFamily").is_some()
+                    || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
+                    || self.num("fontStyle").is_some_and(|v| v != 0.0)
+                    || self.get("align").is_some_and(|v| {
+                        if card_text_alignment {
+                            self.text_align().is_none()
+                        } else {
+                            v != "center"
+                        }
+                    })
+                    || self.get("verticalAlign").is_some_and(|v| {
+                        // Thinoda image cards caption beneath the picture.
+                        v != "middle"
+                            && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
+                    })))
             || self.get("portConstraint").is_some()
             || differs_from("portConstraintRotation", 0.0)
             || differs_from("perimeterSpacing", 0.0)
             || (edge
-                && (self.get("jumpStyle").is_some_and(|v| v != "none")
+                && (self.line_jump_loss()
                     || ["startArrow", "endArrow"].iter().any(|key| {
                         self.get(key).is_some_and(|v| {
-                            !matches!(
-                                v,
-                                "" | "none"
-                                    | "classic"
-                                    | "classicThin"
-                                    | "open"
-                                    | "openThin"
-                                    | "block"
-                                    | "blockThin"
-                                    | "diamond"
-                                    | "diamondThin"
-                                    | "oval"
-                                    | "halfCircle"
-                                    | "baseDash"
-                                    | "dash"
-                            )
+                            !matches!(v, "" | "none") && drawio_marker_kind(v).is_none()
                         })
                     })
                     || [("startArrow", "startFill"), ("endArrow", "endFill")]
@@ -1332,6 +1441,67 @@ impl Style {
                         .iter()
                         .any(|key| differs_from(key, 0.0))
                     || PORT_KEYS.iter().any(|key| self.get(key).is_some())))
+    }
+}
+
+impl Style {
+    /// The edge `shape` with its parameters, and whether any part of it is
+    /// lost: an unknown shape, or a width Thinoda cannot represent.
+    fn edge_shape(&self) -> (Option<EdgeShape>, bool) {
+        let Some(name) = self.get("shape").filter(|name| !name.is_empty()) else {
+            return (None, false);
+        };
+        if name == "connector" {
+            return (None, false);
+        }
+        let Some(kind) = EdgeShapeKind::from_drawio(name) else {
+            return (None, true);
+        };
+        let mut loss = false;
+        let mut width = |key: &str, allowed: bool| {
+            if !allowed || self.get(key).is_none() {
+                return None;
+            }
+            let value = self.num(key).filter(|value| valid_edge_shape_width(*value));
+            loss |= value.is_none();
+            value
+        };
+        let mut shape = EdgeShape::new(kind);
+        shape.width = width("width", kind.has_width());
+        shape.start_width = width("startWidth", kind.has_end_widths());
+        shape.end_width = width("endWidth", kind.has_end_widths());
+        shape.fill = kind
+            .has_fill()
+            .then(|| self.color("fillColor", "fillOpacity"))
+            .flatten()
+            .filter(|fill| fill.a > 0);
+        (Some(shape), loss)
+    }
+
+    fn line_jumps(&self) -> Option<LineJumps> {
+        let style = match self.get("jumpStyle")? {
+            "arc" => LineJumpStyle::Arc,
+            "gap" => LineJumpStyle::Gap,
+            "sharp" => LineJumpStyle::Sharp,
+            "line" => LineJumpStyle::Line,
+            _ => return None,
+        };
+        let mut jumps = LineJumps::new(style);
+        if self.get("jumpSize").is_some() {
+            // draw.io reads the size with parseInt.
+            jumps.size = self.num("jumpSize")?.trunc();
+            if !valid_line_jump_size(jumps.size) {
+                return None;
+            }
+        }
+        Some(jumps)
+    }
+
+    fn line_jump_loss(&self) -> bool {
+        let styled = self.get("jumpStyle").is_some_and(|v| v != "none");
+        (styled && self.line_jumps().is_none())
+            || self.flag("noJump")
+            || self.get("jumpLayers").is_some()
     }
 }
 
@@ -1378,6 +1548,31 @@ struct Cell {
     geometry: Geometry,
     link: Option<String>,
     tooltip: Option<String>,
+    /// `UserObject` attributes without a first-class field, including `link`.
+    attributes: Vec<(String, String)>,
+}
+
+/// Whether an edge-label child looks different from the connector's own label,
+/// which is how Thinoda draws every connector label.
+fn child_label_style_loss(child: &Style, edge: &Style) -> bool {
+    child.suppress_defaults
+        || child.tokens.iter().any(|token| token != "edgeLabel")
+        || child.num("fontSize") != Some(CANVAS_LABEL_FONT_SIZE)
+        || child.text_color() != edge.text_color()
+        || child.get("labelBackgroundColor") == Some("none")
+        || child.map.iter().any(|(key, value)| !match key.as_str() {
+            "html"
+            | "resizable"
+            | "points"
+            | "fontSize"
+            | "fontColor"
+            | "textOpacity"
+            | "labelBackgroundColor" => true,
+            "align" => matches!(value.as_str(), "" | "center"),
+            "verticalAlign" => matches!(value.as_str(), "" | "middle"),
+            "fontStyle" => matches!(value.as_str(), "" | "0"),
+            _ => false,
+        })
 }
 
 fn number(element: &Element, key: &str) -> Option<f32> {
@@ -1501,7 +1696,53 @@ fn read_cell(
         geometry: read_geometry(inner.child("mxGeometry"), warnings),
         link: owned(user.and_then(|u| u.attr("link"))),
         tooltip: owned(user.and_then(|u| u.attr("tooltip"))),
+        attributes: Vec::new(),
     }
+}
+
+/// Moves link, tags, placeholders and custom properties of a `UserObject` into
+/// object data; attributes data cannot hold stay as passthrough, and so does
+/// everything when the data exceeds its bounds.
+fn split_object_data(
+    attributes: &[(String, String)],
+) -> (Option<Arc<ObjectData>>, Vec<(String, String)>) {
+    let mut data = ObjectData::default();
+    let mut rest = Vec::new();
+    for (name, value) in attributes {
+        match name.as_str() {
+            "link" if !value.trim().is_empty() => data.link = Some(value.clone()),
+            "link" => {}
+            "tags" => data.tags = ObjectData::parse_tags(value),
+            "placeholders" => data.placeholders = value == "1",
+            _ if thinoda_core::object_data::valid_property_name(name) => {
+                data.properties.push((name.clone(), value.clone()));
+            }
+            _ => rest.push((name.clone(), value.clone())),
+        }
+    }
+    if data.is_empty() {
+        return (None, rest);
+    }
+    if data.validate().is_err() {
+        return (None, attributes.to_vec());
+    }
+    (Some(Arc::new(data)), rest)
+}
+
+/// `UserObject` attributes written from object data, in import order.
+fn data_attributes(data: &ObjectData) -> Vec<(String, String)> {
+    let mut attributes = Vec::new();
+    if let Some(link) = &data.link {
+        attributes.push(("link".to_owned(), link.clone()));
+    }
+    if !data.tags.is_empty() {
+        attributes.push(("tags".to_owned(), data.tags_text()));
+    }
+    if data.placeholders {
+        attributes.push(("placeholders".to_owned(), "1".to_owned()));
+    }
+    attributes.extend(data.properties.iter().cloned());
+    attributes
 }
 
 fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Cell> {
@@ -1520,7 +1761,13 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                 };
                 match element.attr("placeholders") {
                     Some("1") => {
-                        warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                        if ["label", "tooltip"].iter().any(|name| {
+                            element.attr(name).is_some_and(
+                                thinoda_core::object_data::uses_unresolved_drawio_variables,
+                            )
+                        }) {
+                            warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                        }
                     }
                     None | Some("0") => {}
                     Some(_) => {
@@ -1530,15 +1777,34 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                 if element.attr("placeholder").is_some() {
                     warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
                 }
-                if element.attrs.iter().any(|(key, _)| {
-                    !matches!(
-                        key.as_str(),
-                        "id" | "label" | "link" | "tooltip" | "placeholders"
-                    )
+                let attributes: Vec<(String, String)> = element
+                    .attrs
+                    .iter()
+                    .filter(|(key, _)| {
+                        !thinoda_core::drawio_passthrough::RESERVED_ATTRIBUTES
+                            .contains(&key.as_str())
+                    })
+                    .cloned()
+                    .collect();
+                if attributes.iter().any(|(key, value)| {
+                    !thinoda_core::drawio_passthrough::valid_attribute_name(key)
+                        || value
+                            .chars()
+                            .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
                 }) {
                     warnings.insert(ImportWarning::Other);
                 }
-                read_cell(element, inner, Some(element), warnings)
+                let mut cell = read_cell(element, inner, Some(element), warnings);
+                cell.attributes = attributes
+                    .into_iter()
+                    .filter(|(key, value)| {
+                        thinoda_core::drawio_passthrough::valid_attribute_name(key)
+                            && !value
+                                .chars()
+                                .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+                    })
+                    .collect();
+                cell
             }
             _ => {
                 warnings.insert(ImportWarning::Other);
@@ -1998,6 +2264,310 @@ fn object_style(style: &Style) -> ObjectStyle {
         text_color: style.text_color(),
         stroke_width: style.stroke_width(),
         opacity: style.opacity(),
+        ..Default::default()
+    }
+}
+
+/// Maps draw.io's shape effects onto `object`, returning the keys it owns and
+/// whether anything was only approximated. `swap_flips` exchanges `flipH` and
+/// `flipV` for frames turned a quarter by `direction` (as draw.io's `mxShape`).
+fn shape_effects(
+    style: &Style,
+    object: &mut CanvasObject,
+    swap_flips: bool,
+) -> (Vec<&'static str>, bool) {
+    use thinoda_core::shape_style::{DashPattern, GradientDirection};
+    let mut owned = vec!["dashed", "shadow", "glass", "flipH", "flipV"];
+    let mut approximate = false;
+    if style.flag("dashed") {
+        let pattern = match style.get("dashPattern") {
+            None | Some("") => Some(DashPattern::default()),
+            Some(text) => DashPattern::parse(text),
+        };
+        if let Some(pattern) = pattern {
+            object.style.dash = Some(thinoda_core::board::ShapeDash {
+                pattern,
+                fixed: style.flag("fixDash"),
+            });
+            owned.extend(["dashPattern", "fixDash"]);
+        } else {
+            approximate = true;
+            object.style.dash = Some(thinoda_core::board::ShapeDash {
+                fixed: style.flag("fixDash"),
+                ..Default::default()
+            });
+            owned.push("fixDash");
+        }
+    }
+    match style.get("gradientColor") {
+        None | Some("" | "none") => owned.extend(["gradientColor", "gradientDirection"]),
+        Some(value) => {
+            approximate |= parse_style_color(value).is_some_and(|parsed| parsed.approximate);
+            let direction = match style.get("gradientDirection") {
+                None | Some("") => Some(GradientDirection::South),
+                Some(name) => GradientDirection::from_drawio(name),
+            };
+            match (style.color("gradientColor", "fillOpacity"), direction) {
+                (Some(color), Some(direction)) => {
+                    object.style.gradient =
+                        Some(thinoda_core::board::ShapeGradient { color, direction });
+                    owned.extend(["gradientColor", "gradientDirection"]);
+                }
+                _ => approximate = true,
+            }
+        }
+    }
+    match style.get("fillStyle") {
+        None | Some("") => owned.push("fillStyle"),
+        Some(name) => match thinoda_core::board::FillPattern::from_drawio(name) {
+            Some((pattern, approximated)) => {
+                object.style.fill_pattern = pattern;
+                approximate |= approximated;
+                if !approximated {
+                    owned.push("fillStyle");
+                }
+            }
+            None => approximate = true,
+        },
+    }
+    object.style.shadow = style.flag("shadow");
+    object.style.glass = style.flag("glass");
+    let (flip_h, flip_v) = (style.flag("flipH"), style.flag("flipV"));
+    (object.style.flip_h, object.style.flip_v) = if swap_flips {
+        (flip_v, flip_h)
+    } else {
+        (flip_h, flip_v)
+    };
+    (owned, approximate)
+}
+
+/// Whether a vertex's label text keys map to its shape's label style.
+fn maps_label_text(kind: Kind, style: &Style) -> bool {
+    matches!(kind, Kind::Shape(..) | Kind::Approx(..) | Kind::Text)
+        && style.get("childLayout") != Some("tableLayout")
+}
+
+/// Whether `horizontal` turns a header rather than the label of this cell.
+fn header_orientation(style: &Style) -> bool {
+    matches!(style.shape(), "swimlane" | "table")
+        || style.get("childLayout").is_some()
+        || style.flag("container")
+        || style.get("startSize").is_some()
+}
+
+/// Maps draw.io's label text keys onto a shape label style, returning the
+/// style (when anything differs from the default), the keys it owns and
+/// whether a value was only approximated.
+fn label_text_style(style: &Style) -> (Option<LabelStyle>, Vec<&'static str>, bool) {
+    use thinoda_core::label_style::{
+        MAX_LABEL_FONT_FAMILY_BYTES, MAX_LABEL_FONT_SIZE, MAX_LABEL_SPACING, MIN_LABEL_FONT_SIZE,
+    };
+    let mut label = LabelStyle::default();
+    let mut owned = Vec::new();
+    let mut approximate = false;
+    let present = |key: &str| {
+        style
+            .get(key)
+            .filter(|value| !matches!(*value, "" | "none"))
+    };
+    let mut accept = |key: &'static str, ok: bool| {
+        if ok {
+            owned.push(key);
+        } else {
+            approximate = true;
+        }
+    };
+    match present("fontFamily") {
+        None => accept("fontFamily", true),
+        Some(family) => {
+            let family = family.trim();
+            let ok = !family.is_empty()
+                && family.len() <= MAX_LABEL_FONT_FAMILY_BYTES
+                && !family.chars().any(char::is_control);
+            if ok {
+                label.font_family = Some(family.to_owned());
+            }
+            accept("fontFamily", ok);
+        }
+    }
+    match present("fontSize") {
+        None => {
+            // Without the default stylesheet draw.io falls back to mxGraph's 11px.
+            if style.suppress_defaults && style.get("fontSize").is_none() {
+                label.font_size = Some(11.0);
+            }
+            accept("fontSize", true);
+        }
+        Some(_) => {
+            let size = style
+                .num("fontSize")
+                .filter(|size| (MIN_LABEL_FONT_SIZE..=MAX_LABEL_FONT_SIZE).contains(size));
+            if let Some(size) = size.filter(|size| *size != CANVAS_LABEL_FONT_SIZE) {
+                label.font_size = Some(size);
+            }
+            accept("fontSize", size.is_some());
+        }
+    }
+    match present("fontStyle") {
+        None => accept("fontStyle", true),
+        Some(_) => {
+            let bits = style
+                .num("fontStyle")
+                .filter(|bits| *bits >= 0.0 && bits.fract() == 0.0 && *bits <= 15.0);
+            if let Some(bits) = bits {
+                label.set_font_style_bits(bits as u32);
+            }
+            accept("fontStyle", bits.is_some());
+        }
+    }
+    let horizontal = |value: Option<&str>| match value {
+        None => Some(TextAlign::Center),
+        Some("left") => Some(TextAlign::Left),
+        Some("center") => Some(TextAlign::Center),
+        Some("right") => Some(TextAlign::Right),
+        Some(_) => None,
+    };
+    let vertical = |value: Option<&str>| match value {
+        None => Some(LabelVAlign::Middle),
+        Some("top") => Some(LabelVAlign::Top),
+        Some("middle") => Some(LabelVAlign::Middle),
+        Some("bottom") => Some(LabelVAlign::Bottom),
+        Some(_) => None,
+    };
+    for (key, target) in [
+        ("align", &mut label.align),
+        ("labelPosition", &mut label.position),
+    ] {
+        let value = horizontal(present(key));
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("verticalAlign", &mut label.vertical_align),
+        ("verticalLabelPosition", &mut label.vertical_position),
+    ] {
+        let value = vertical(present(key));
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("spacing", &mut label.spacing),
+        ("spacingTop", &mut label.spacing_top),
+        ("spacingLeft", &mut label.spacing_left),
+        ("spacingBottom", &mut label.spacing_bottom),
+        ("spacingRight", &mut label.spacing_right),
+    ] {
+        if present(key).is_none() {
+            accept(key, true);
+            continue;
+        }
+        let value = style
+            .num(key)
+            .filter(|value| value.abs() <= MAX_LABEL_SPACING);
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("labelBackgroundColor", &mut label.background),
+        ("labelBorderColor", &mut label.border),
+    ] {
+        match style.get(key) {
+            None | Some("" | "none" | "default") => accept(key, true),
+            Some(value) => {
+                let parsed = parse_style_color(value);
+                *target = parsed.and_then(|parsed| parsed.color);
+                accept(
+                    key,
+                    parsed.is_some_and(|parsed| !parsed.approximate) && target.is_some(),
+                );
+            }
+        }
+    }
+    label.vertical = style.get("horizontal") == Some("0") && !header_orientation(style);
+    let white_space = style.get("whiteSpace");
+    if !label.is_default() || white_space.is_some_and(|value| value != "wrap") {
+        label.wrap = white_space == Some("wrap");
+    }
+    ((!label.is_default()).then_some(label), owned, approximate)
+}
+
+/// draw.io keys for a shape's label text style.
+fn label_text_style_keys(out: &mut String, label: &LabelStyle) {
+    if let Some(family) = &label.font_family {
+        let family: String = family.chars().filter(|c| !matches!(c, ';' | '=')).collect();
+        if !family.is_empty() {
+            out.push_str(&format!("fontFamily={family};"));
+        }
+    }
+    if let Some(size) = label.font_size {
+        out.push_str(&format!("fontSize={};", num(size)));
+    }
+    let bits = label.font_style_bits();
+    if bits != 0 {
+        out.push_str(&format!("fontStyle={bits};"));
+    }
+    let horizontal = |align: TextAlign| match align {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    };
+    let vertical = |align: LabelVAlign| match align {
+        LabelVAlign::Top => "top",
+        LabelVAlign::Middle => "middle",
+        LabelVAlign::Bottom => "bottom",
+    };
+    if label.align != TextAlign::Center {
+        out.push_str(&format!("align={};", horizontal(label.align)));
+    }
+    if label.vertical_align != LabelVAlign::Middle {
+        out.push_str(&format!(
+            "verticalAlign={};",
+            vertical(label.vertical_align)
+        ));
+    }
+    if label.position != TextAlign::Center {
+        out.push_str(&format!("labelPosition={};", horizontal(label.position)));
+    }
+    if label.vertical_position != LabelVAlign::Middle {
+        out.push_str(&format!(
+            "verticalLabelPosition={};",
+            vertical(label.vertical_position)
+        ));
+    }
+    if label.spacing != thinoda_core::label_style::DEFAULT_LABEL_SPACING {
+        out.push_str(&format!("spacing={};", num(label.spacing)));
+    }
+    for (key, value) in [
+        ("spacingTop", label.spacing_top),
+        ("spacingLeft", label.spacing_left),
+        ("spacingBottom", label.spacing_bottom),
+        ("spacingRight", label.spacing_right),
+    ] {
+        if value != 0.0 {
+            out.push_str(&format!("{key}={};", num(value)));
+        }
+    }
+    for (key, color) in [
+        ("labelBackgroundColor", label.background),
+        ("labelBorderColor", label.border),
+    ] {
+        color_keys(
+            out,
+            key,
+            "",
+            color
+                .filter(|color| color.a > 0)
+                .map(|color| Color { a: 255, ..color }),
+        );
+    }
+    if label.vertical && !out.contains("horizontal=") {
+        out.push_str("horizontal=0;");
     }
 }
 
@@ -2073,6 +2643,8 @@ struct Context {
     zone: Option<usize>,
     bucket: Option<usize>,
     scene_parent: Option<CanvasObjectId>,
+    /// Named board layer of the cell (`None` = base layer).
+    layer: Option<thinoda_core::BoardLayerId>,
 }
 
 enum End {
@@ -2103,11 +2675,88 @@ struct PageImport<'a> {
             String,
         )>,
     >,
+    bundled_stencils: Option<BundledStencils>,
+    /// Cells whose passthrough was already given to an object.
+    passthrough_cells: HashSet<usize>,
+    /// Style keys mapped by [`shape_effects`] and [`label_text_style`], per cell.
+    shape_effect_keys: HashMap<usize, Vec<&'static str>>,
+    passthrough_bytes: usize,
+    /// Layers locked only after import, so grouping and locking can still edit them.
+    locked_layers: Vec<thinoda_core::BoardLayerId>,
 }
+
+/// Per bundled draw.io package id: the page's closure and, once an object
+/// uses it, its resource.
+type BundledStencils = HashMap<
+    String,
+    (
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        Option<String>,
+    ),
+>;
 
 impl<'a> PageImport<'a> {
     fn warn(&mut self, warning: ImportWarning) {
         self.warnings.insert(warning);
+    }
+
+    /// Unknown style keys, attributes and the id of `cell` (architecture §3.1.1).
+    fn cell_passthrough(
+        &mut self,
+        cell: usize,
+        object: &CanvasObject,
+        attributes: Vec<(String, String)>,
+    ) -> Option<Arc<Passthrough>> {
+        let source = &self.cells[cell];
+        let bound = object
+            .stencil
+            .as_ref()
+            .map(crate::drawio_stencil::bound_style_keys)
+            .unwrap_or_default();
+        let sankey = source.style.flag("thinodaSankeyEdge");
+        let edge = matches!(object.kind, CanvasObjectKind::Connector(_));
+        let effects = self.shape_effect_keys.get(&cell);
+        let style = source
+            .style
+            .order
+            .iter()
+            .filter(|key| {
+                !OWNED_STYLE_KEYS.contains(&key.as_str())
+                    && !key.starts_with("thinoda")
+                    && !bound.contains(key.as_str())
+                    && !(sankey && key.as_str() == "dashed")
+                    && !(edge && EDGE_SHAPE_STYLE_KEYS.contains(&key.as_str()))
+                    && !effects.is_some_and(|owned| owned.contains(&key.as_str()))
+            })
+            .filter_map(|key| {
+                let value = source.style.get(key)?;
+                (thinoda_core::drawio_passthrough::valid_style_key(key)
+                    && thinoda_core::drawio_passthrough::valid_style_value(value))
+                .then(|| (key.clone(), value.to_owned()))
+            })
+            .collect();
+        let passthrough = Passthrough {
+            source_id: (!source.id.starts_with('\u{0}')
+                && !matches!(source.id.as_str(), "0" | "1")
+                && source.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+                && !source.id.chars().any(char::is_control))
+            .then(|| source.id.clone()),
+            style,
+            attributes,
+        };
+        if passthrough.is_empty() {
+            return None;
+        }
+        let bytes = passthrough.byte_len();
+        if passthrough.validate().is_err()
+            || self.passthrough_bytes + bytes
+                > thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.warn(ImportWarning::Other);
+            return None;
+        }
+        self.passthrough_bytes += bytes;
+        Some(Arc::new(passthrough))
     }
 
     fn label(&mut self, cell: &Cell) -> String {
@@ -2117,6 +2766,23 @@ impl<'a> PageImport<'a> {
             cell.value.clone()
         };
         truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings)
+    }
+
+    fn rich_label(&mut self, cell: &Cell) -> (String, Option<thinoda_core::InlineText>) {
+        if !cell.style.flag("html") {
+            return (self.label(cell), None);
+        }
+        let (text, rich) = parse_rich_html(&cell.value, self.warnings);
+        let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
+        let rich = rich.filter(|value| {
+            if value.validate(&text).is_err() {
+                self.warnings.insert(ImportWarning::Formatting);
+                false
+            } else {
+                true
+            }
+        });
+        (text, rich)
     }
 
     fn translated_point(&mut self, origin: Vec2, point: Vec2) -> Option<Vec2> {
@@ -2135,8 +2801,13 @@ impl<'a> PageImport<'a> {
             .collect()
     }
 
-    fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
+    fn register(&mut self, cell: usize, item: Item, mut context: Context, locked: bool) {
         self.items.insert(cell, item);
+        if context.layer.is_some() && matches!(item, Item::Card(_)) {
+            // Cards always stay on the base layer and cannot share its groups.
+            self.warn(ImportWarning::DrawioLayerContentFlattened);
+            context.bucket = None;
+        }
         if context.scene_parent.is_some() && matches!(item, Item::Card(_)) {
             self.warn(ImportWarning::DrawioSceneCardContainmentNotPreserved);
         }
@@ -2186,12 +2857,173 @@ impl<'a> PageImport<'a> {
         self.inline_stencils.clone().flatten()
     }
 
+    /// The page's bundled draw.io stencils: one closure per bundled package
+    /// holding every definition the page's visible cells draw from it, so a
+    /// page never embeds one resource per shape.
+    fn bundled_stencils(&mut self) -> &mut BundledStencils {
+        if self.bundled_stencils.is_none() {
+            let bundle = crate::drawio_bundle::bundle();
+            let mut used: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
+            for (index, cell) in self.cells.iter().enumerate() {
+                if let Some(stencil) = cell.style.stencil()
+                    && stencil.package_resource.is_none()
+                    && !stencil.is_installed_builtin()
+                    && self.shown(index)
+                    && bundle
+                        .package_by_id(&stencil.package)
+                        .is_some_and(|package| package.definition(&stencil.definition).is_some())
+                {
+                    used.entry(stencil.package)
+                        .or_default()
+                        .insert(stencil.definition);
+                }
+            }
+            let mut stencils = HashMap::new();
+            for (id, definitions) in used {
+                let roots: Vec<&str> = definitions.iter().map(String::as_str).collect();
+                if let Some(closure) = bundle
+                    .package_by_id(&id)
+                    .and_then(|package| package.definition_closure(&roots).ok())
+                {
+                    stencils.insert(id, (std::sync::Arc::new(closure), None));
+                }
+            }
+            self.bundled_stencils = Some(stencils);
+        }
+        self.bundled_stencils.get_or_insert_default()
+    }
+
+    /// The page closure of a bundled package and its resource, embedding the
+    /// resource when the first object draws from it.
+    fn bundled_stencil(
+        &mut self,
+        package: &str,
+    ) -> Option<(
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        String,
+    )> {
+        let (closure, reference) = self.bundled_stencils().get(package)?.clone();
+        if let Some(reference) = reference {
+            return Some((closure, reference));
+        }
+        let bytes = serde_json::to_vec(closure.as_ref()).ok()?;
+        let resource = thinoda_core::resources::Resource::new(
+            "stencil-package.json",
+            "application/json",
+            bytes,
+        )
+        .ok()?;
+        let reference = self.sheet.resources.insert(resource).ok()?;
+        if let Some(entry) = self.bundled_stencils().get_mut(package) {
+            entry.1 = Some(reference.clone());
+        }
+        Some((closure, reference))
+    }
+
+    /// Whether the cell and all its ancestors are visible, as `visit` requires.
+    fn shown(&self, mut index: usize) -> bool {
+        for _ in 0..=MAX_CELL_DEPTH {
+            let cell = &self.cells[index];
+            if !cell.visible {
+                return false;
+            }
+            match cell
+                .parent
+                .as_deref()
+                .and_then(|parent| self.index.get(parent))
+            {
+                Some(&parent) if parent != index => index = parent,
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// draw.io's lookup of placeholder `name` on `cell` and its ancestors, with
+    /// the index of the ancestor holding it.
+    fn placeholder_value(&self, cell: &Cell, name: &str) -> Option<(String, Option<usize>)> {
+        match name {
+            "id" => return Some((cell.id.clone(), None)),
+            "width" if cell.vertex => return Some((cell.geometry.width.to_string(), None)),
+            "height" if cell.vertex => return Some((cell.geometry.height.to_string(), None)),
+            _ => {}
+        }
+        let own = |cell: &Cell| {
+            cell.attributes
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        if let Some(value) = own(cell) {
+            return Some((value, None));
+        }
+        let mut parent = cell.parent.as_deref();
+        for _ in 0..self.cells.len() {
+            let &index = parent.and_then(|id| self.index.get(id))?;
+            let ancestor = &self.cells[index];
+            if let Some(value) = own(ancestor) {
+                return Some((value, Some(index)));
+            }
+            parent = ancestor.parent.as_deref();
+        }
+        None
+    }
+
+    fn replaces_placeholders(cell: &Cell) -> bool {
+        cell.attributes
+            .iter()
+            .any(|(name, value)| name == "placeholders" && value == "1")
+    }
+
+    /// `text` with `cell`'s placeholders resolved, for imports without a
+    /// data model (Zones).
+    fn resolved_cell_text<'t>(&self, cell: &Cell, text: &'t str) -> std::borrow::Cow<'t, str> {
+        if !Self::replaces_placeholders(cell) {
+            return std::borrow::Cow::Borrowed(text);
+        }
+        thinoda_core::object_data::replace_placeholders(text, |name| {
+            self.placeholder_value(cell, name).map(|(value, _)| value)
+        })
+    }
+
+    /// Values a placeholder of `cell` takes from a draw.io ancestor that does not
+    /// become a Thinoda scene container, copied so the label still resolves.
+    fn inherited_placeholder_values(&self, cell: usize) -> Vec<(String, String)> {
+        let own = &self.cells[cell];
+        if !Self::replaces_placeholders(own) {
+            return Vec::new();
+        }
+        let mut inherited: Vec<(String, String)> = Vec::new();
+        for text in [Some(own.value.as_str()), own.tooltip.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = thinoda_core::object_data::replace_placeholders(text, |name| {
+                if !inherited.iter().any(|(known, _)| known == name)
+                    && let Some((value, Some(holder))) = self.placeholder_value(own, name)
+                    && !matches!(self.items.get(&holder), Some(Item::Container(_)))
+                {
+                    inherited.push((name.to_owned(), value));
+                }
+                None
+            });
+        }
+        inherited
+    }
+
     fn add_object(
         &mut self,
         cell: usize,
         mut object: CanvasObject,
         context: Context,
     ) -> Option<CanvasObjectId> {
+        if self.passthrough_cells.insert(cell) {
+            let mut attributes = self.cells[cell].attributes.clone();
+            attributes.extend(self.inherited_placeholder_values(cell));
+            let (data, rest) = split_object_data(&attributes);
+            object.data = data;
+            object.drawio = self.cell_passthrough(cell, &object, rest);
+        }
         if let Some(stencil) = &object.stencil
             && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
             && stencil.package_resource.is_none()
@@ -2201,10 +3033,20 @@ impl<'a> PageImport<'a> {
         {
             stencil.embed_package(package, reference);
         }
+        if let Some(stencil) = &object.stencil
+            && stencil.package_resource.is_none()
+            && !stencil.is_installed_builtin()
+            && let Some((package, reference)) = self.bundled_stencil(&stencil.package.clone())
+            && package.definition(&stencil.definition).is_some()
+            && let Some(stencil) = &mut object.stencil
+        {
+            stencil.embed_package(package, reference);
+        }
         let shape = match &object.kind {
             CanvasObjectKind::Shape { shape, .. } => Some(*shape),
             _ => None,
         };
+        object.layer = context.layer;
         match self.sheet.add_canvas_object(object) {
             Ok(id) => {
                 if let Some(shape) = shape {
@@ -2264,19 +3106,19 @@ impl<'a> PageImport<'a> {
             .collect();
         for root in roots {
             self.visited[root] = true;
-            for layer in self.children[root].clone() {
+            for (position, layer) in self.children[root].clone().into_iter().enumerate() {
                 self.visited[layer] = true;
                 let cell = &self.cells[layer];
-                if !cell.visible {
-                    self.warn(ImportWarning::Other);
-                    continue;
-                }
                 if cell.vertex || cell.edge {
                     self.visited[layer] = false;
                     self.visit(layer, Context::default(), 0);
                 } else {
+                    let context = Context {
+                        layer: self.board_layer(layer, position),
+                        ..Context::default()
+                    };
                     for child in self.children[layer].clone() {
-                        self.visit(child, Context::default(), 0);
+                        self.visit(child, context, 0);
                     }
                 }
             }
@@ -2302,6 +3144,58 @@ impl<'a> PageImport<'a> {
         if hidden > 0 {
             self.warn(ImportWarning::Other);
         }
+    }
+
+    /// The board layer for a draw.io layer cell. An unnamed (or "Background"),
+    /// visible and unlocked first layer is the base layer.
+    fn board_layer(&mut self, index: usize, position: usize) -> Option<thinoda_core::BoardLayerId> {
+        let cell = &self.cells[index];
+        let locked = cell.style.flag("locked");
+        let value: String = cell
+            .value
+            .trim()
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(thinoda_core::board_layers::MAX_BOARD_LAYER_NAME_CHARS)
+            .collect();
+        if position == 0 && cell.visible && !locked && (value.is_empty() || value == "Background") {
+            return None;
+        }
+        if self.sheet.canvas.layers.len() >= thinoda_core::board_layers::MAX_BOARD_LAYERS {
+            self.warn(ImportWarning::DrawioLayerContentFlattened);
+            return None;
+        }
+        let name = match value.trim() {
+            "" if position == 0 => "Background".to_owned(),
+            "" => format!("Layer {position}"),
+            name => name.to_owned(),
+        };
+        let id = self.sheet.add_board_layer(&name).ok()?;
+        let source_id = (!cell.id.is_empty()
+            && !cell.id.starts_with('\u{0}')
+            && !matches!(cell.id.as_str(), "0" | "1")
+            && cell.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !cell.id.chars().any(char::is_control)
+            && !self
+                .sheet
+                .canvas
+                .layers
+                .iter()
+                .any(|layer| layer.source_id.as_deref() == Some(cell.id.as_str())))
+        .then(|| cell.id.clone());
+        let visible = cell.visible;
+        let layer = self
+            .sheet
+            .canvas
+            .layers
+            .last_mut()
+            .expect("layer was just added");
+        layer.visible = visible;
+        layer.source_id = source_id;
+        if locked {
+            self.locked_layers.push(id);
+        }
+        Some(id)
     }
 
     fn visit(&mut self, index: usize, context: Context, depth: usize) {
@@ -2364,11 +3258,24 @@ impl<'a> PageImport<'a> {
             .any(|&c| cells[c].visible && (cells[c].vertex || cells[c].edge));
         let kind = classify(&cell.style);
         let card_text_alignment = matches!(kind, Kind::Card(CardKind::Sticky | CardKind::Text));
-        if cell.style.formatting_loss(false, card_text_alignment) {
+        let effects = matches!(kind, Kind::Shape(..) | Kind::Approx(..))
+            && cell.style.get("childLayout") != Some("tableLayout");
+        let label_text = maps_label_text(kind, &cell.style);
+        if cell
+            .style
+            .formatting_loss(false, card_text_alignment, effects, label_text)
+        {
             self.warn(ImportWarning::Formatting);
         }
         if matches!(cell.style.shape(), "note" | "note2") && !cell.style.draws_stencil() {
             self.warn(ImportWarning::DrawioFoldedNotesApproximated);
+        }
+        if cell.style.get("childLayout") == Some("tableLayout") {
+            if self.table(index, rect, context, depth) {
+                return;
+            }
+            log::warn!("draw.io table {} imported without its grid", cell.id);
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
         }
         match kind {
             Kind::Group => {
@@ -2422,6 +3329,9 @@ impl<'a> PageImport<'a> {
                     context.zone.is_some() || context.bucket.is_some(),
                 ) =>
             {
+                if context.layer.is_some() {
+                    self.warn(ImportWarning::DrawioLayerContentFlattened);
+                }
                 child_context.zone = Some(zone);
                 child_context.bucket = None;
                 self.items.insert(index, Item::Area(rect));
@@ -2559,6 +3469,399 @@ impl<'a> PageImport<'a> {
         Some(id)
     }
 
+    /// Imports a draw.io `tableLayout` container as a native table whose rows
+    /// and cells become its grid. Returns false, before creating anything,
+    /// when the source is not a rectangular grid of rows and cells.
+    fn table(&mut self, index: usize, rect: Rect, context: Context, depth: usize) -> bool {
+        use thinoda_core::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide,
+        };
+        use thinoda_core::scene_table::{
+            MAX_TABLE_SLOTS, MAX_TABLE_TRACKS, MIN_TABLE_TRACK, SceneTable, SceneTableCell,
+            TableStripes, table_body, table_frame_size,
+        };
+
+        let cells = self.cells;
+        let cell = &cells[index];
+        let style = &cell.style;
+        if context.bucket.is_some()
+            || cell.collapsed
+            || style.rotation() != 0.0
+            || depth + 3 > MAX_CELL_DEPTH
+        {
+            return false;
+        }
+        let vertices = |parent: usize| -> Vec<usize> {
+            self.children[parent]
+                .iter()
+                .copied()
+                .filter(|&child| cells[child].vertex)
+                .collect()
+        };
+        let rows = vertices(index);
+        let grid: Vec<Vec<usize>> = rows.iter().map(|&row| vertices(row)).collect();
+        let columns = grid.first().map_or(0, Vec::len);
+        if rows.is_empty()
+            || rows.len() > MAX_TABLE_TRACKS
+            || columns == 0
+            || columns > MAX_TABLE_TRACKS
+            || rows.len() * columns > MAX_TABLE_SLOTS
+            || grid.iter().any(|row| row.len() != columns)
+            || rows
+                .iter()
+                .chain(grid.iter().flatten())
+                .any(|&cell| cells[cell].geometry.invalid_frame)
+        {
+            return false;
+        }
+
+        // draw.io treats tables like swimlanes: an absent startSize is 40.
+        let default_extent = if matches!(style.shape(), "table" | "swimlane") {
+            40.0
+        } else {
+            0.0
+        };
+        let horizontal = style.get("horizontal") != Some("0");
+        let limit = if horizontal { rect.size.y } else { rect.size.x };
+        let source_extent = style.num("startSize").unwrap_or(default_extent);
+        let extent = source_extent.clamp(0.0, (limit - MIN_TABLE_TRACK).max(0.0));
+        if extent != source_extent {
+            self.warn(ImportWarning::Formatting);
+        }
+        let header = (extent > 0.0).then_some(HeaderPolicy {
+            side: if horizontal {
+                HeaderSide::Top
+            } else {
+                HeaderSide::Left
+            },
+            extent,
+        });
+        let Ok(body) = table_body(rect, header) else {
+            return false;
+        };
+
+        let span = |cell: usize, key: &str, room: usize| -> (usize, bool) {
+            let style = &cells[cell].style;
+            match style.get(key) {
+                None => (1, false),
+                Some(raw) => match raw.trim().parse::<usize>() {
+                    Ok(span) if (1..=room).contains(&span) => (span, false),
+                    _ => (1, true),
+                },
+            }
+        };
+        let fit = |sizes: Vec<f32>, total: f32| -> Vec<f32> {
+            let sum: f32 = sizes.iter().sum();
+            let count = sizes.len() as f32;
+            sizes
+                .into_iter()
+                .map(|size| {
+                    let size = if sum > 0.0 && sum.is_finite() && total > 0.0 {
+                        size * total / sum
+                    } else {
+                        total / count
+                    };
+                    (size.round()).max(MIN_TABLE_TRACK)
+                })
+                .collect()
+        };
+        let row_sizes = rows
+            .iter()
+            .map(|&row| cells[row].geometry.height.max(0.0))
+            .collect();
+        // Prefer an unmerged cell of each column; merged ones keep their slot
+        // size only as alternate bounds.
+        let column_sizes = (0..columns)
+            .map(|column| {
+                let source = grid
+                    .iter()
+                    .map(|row| row[column])
+                    .find(|&cell| span(cell, "colspan", columns).0 == 1)
+                    .unwrap_or(grid[0][column]);
+                let geometry = &cells[source].geometry;
+                match geometry.alternate_bounds {
+                    Some(bounds) => bounds.size.x.max(0.0),
+                    None => geometry.width.max(0.0) / span(source, "colspan", columns).0 as f32,
+                }
+            })
+            .collect();
+        let mut table = SceneTable {
+            rows: fit(row_sizes, body.size.y),
+            columns: fit(column_sizes, body.size.x),
+            cells: Vec::new(),
+            stripes: TableStripes {
+                even_rows: style.color("evenRowColor", ""),
+                odd_rows: style.color("oddRowColor", ""),
+                even_columns: style.color("evenColumnColor", ""),
+                odd_columns: style.color("oddColumnColor", ""),
+            },
+        };
+
+        // Each slot belongs to the first cell whose span reaches it; covered
+        // source cells are hidden in draw.io and only their content is lost.
+        let mut covered = vec![false; rows.len() * columns];
+        let mut sources: Vec<usize> = Vec::new();
+        let mut clamped = false;
+        for (r, row) in grid.iter().enumerate() {
+            for (c, &source) in row.iter().enumerate() {
+                if covered[r * columns + c] {
+                    if !self.label(&cells[source]).trim().is_empty()
+                        || self.children[source]
+                            .iter()
+                            .any(|&child| cells[child].vertex || cells[child].edge)
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    continue;
+                }
+                let (mut row_span, bad_row) = span(source, "rowspan", rows.len() - r);
+                let (mut column_span, bad_column) = span(source, "colspan", columns - c);
+                clamped |= bad_row || bad_column;
+                let free = |covered: &[bool], r: usize, c: usize| !covered[r * columns + c];
+                let width = (c..c + column_span)
+                    .take_while(|&column| free(&covered, r, column))
+                    .count();
+                if width < column_span {
+                    column_span = width;
+                    clamped = true;
+                }
+                let height = (r..r + row_span)
+                    .take_while(|&row| {
+                        (c..c + column_span).all(|column| free(&covered, row, column))
+                    })
+                    .count();
+                if height < row_span {
+                    row_span = height;
+                    clamped = true;
+                }
+                for row in r..r + row_span {
+                    for column in c..c + column_span {
+                        covered[row * columns + column] = true;
+                    }
+                }
+                let mut slot = SceneTableCell::new(CanvasObjectId(0), r, c);
+                slot.row_span = row_span as u16;
+                slot.column_span = column_span as u16;
+                table.cells.push(slot);
+                sources.push(source);
+            }
+        }
+        if clamped {
+            self.warn(ImportWarning::Formatting);
+        }
+        if table.validate().is_err() {
+            return false;
+        }
+        let actual: HashSet<usize> = sources.iter().copied().collect();
+
+        let frame = Rect::from_min_size(rect.min, table_frame_size(&table, header));
+        if frame.size != rect.size {
+            self.warn(ImportWarning::Formatting);
+        }
+        let Ok(body) = table_body(frame, header) else {
+            return false;
+        };
+        let label = self.label(cell);
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+        if let CanvasObjectKind::Shape {
+            label: object_label,
+            ..
+        } = &mut object.kind
+        {
+            *object_label = label;
+        }
+        object.style = object_style(style);
+        object.band = style.band();
+        object.alt_text = cell.tooltip.clone().unwrap_or_default();
+        if let Some(header) = header {
+            let mut stencil =
+                thinoda_core::stencil_object::StencilRef::new("thinoda.general", "header-frame-v2");
+            stencil.parameters.insert(
+                "headerSide".into(),
+                if header.side == HeaderSide::Top {
+                    0.0
+                } else {
+                    3.0
+                },
+            );
+            stencil
+                .parameters
+                .insert("headerHeight".into(), f64::from(header.extent));
+            object.stencil = Some(stencil);
+        }
+        let Some(table_id) = self.add_object(index, object, context) else {
+            return false;
+        };
+        self.sheet.canvas.scene.containers.insert(table_id);
+        if let Some(header) = header {
+            self.sheet.canvas.scene.layout_policies.insert(
+                table_id,
+                ContainerLayoutPolicy {
+                    header,
+                    layout: ContainerLayout::Free,
+                },
+            );
+        }
+        self.items.insert(index, Item::Container(table_id));
+
+        let table_context = Context {
+            origin: rect.min,
+            parent_size: rect.size,
+            parent_is_vertex: true,
+            zone: None,
+            bucket: None,
+            scene_parent: Some(table_id),
+            ..context
+        };
+        let mut complete = true;
+        for (r, &row) in rows.iter().enumerate() {
+            self.visited[row] = true;
+            let row_cell = &cells[row];
+            if !self.label(row_cell).trim().is_empty()
+                || row_cell.style.num("startSize").unwrap_or(0.0) > 0.0
+            {
+                self.warn(ImportWarning::Formatting);
+            }
+            let row_fill = if row_cell.style.shape() == "swimlane" {
+                row_cell.style.color("swimlaneFillColor", "fillOpacity")
+            } else {
+                row_cell.style.color("fillColor", "fillOpacity")
+            }
+            .filter(|fill| fill.a > 0);
+            for &source in &grid[r] {
+                if !actual.contains(&source) {
+                    self.mark_visited(source);
+                }
+            }
+            for (slot, &source) in sources.iter().enumerate() {
+                if usize::from(table.cells[slot].row) != r {
+                    continue;
+                }
+                let source_cell = &cells[source];
+                let source_style = &source_cell.style;
+                self.visited[source] = true;
+                self.paint_order.push(source);
+                let cell_rect = table.cell_rect(body, &table.cells[slot]);
+                let label = self.label(source_cell);
+                let mut object = CanvasObject::shape(ShapeKind::Rectangle, cell_rect);
+                object.style = object_style(source_style);
+                object.band = source_style.band();
+                object.alt_text = source_cell.tooltip.clone().unwrap_or_default();
+                let has_label = !label.trim().is_empty();
+                if let CanvasObjectKind::Shape {
+                    label: object_label,
+                    ..
+                } = &mut object.kind
+                {
+                    *object_label = label;
+                }
+                match source_style.shape() {
+                    "partialRectangle" => {
+                        // draw.io paints table grid lines on the table; Thinoda
+                        // paints them as cell sides in the table's stroke.
+                        let mut sides = source_style.rectangle_sides();
+                        let row_lines = style.get("rowLines") != Some("0");
+                        let column_lines = style.get("columnLines") != Some("0");
+                        sides.top |= row_lines;
+                        sides.bottom |= row_lines;
+                        sides.left |= column_lines;
+                        sides.right |= column_lines;
+                        object.rectangle_sides = Some(sides);
+                        let outline_visible =
+                            sides.top || sides.right || sides.bottom || sides.left;
+                        let mut resolved = source_style.clone();
+                        if resolved.get("strokeColor") == Some("inherit") {
+                            match style.get("strokeColor") {
+                                Some(stroke) => {
+                                    resolved.map.insert("strokeColor".into(), stroke.into());
+                                }
+                                None => {
+                                    resolved.map.remove("strokeColor");
+                                }
+                            }
+                        }
+                        if resolved_shape_colors(
+                            &resolved,
+                            &mut object,
+                            has_label,
+                            self.adaptive_fixed_colors,
+                            outline_visible,
+                        ) {
+                            self.warn(ImportWarning::Formatting);
+                        }
+                    }
+                    "swimlane" => {
+                        object.style.fill = source_style.color("swimlaneFillColor", "fillOpacity");
+                        if source_style.num("startSize").unwrap_or(40.0) > 0.0 {
+                            self.warn(ImportWarning::Formatting);
+                        }
+                    }
+                    "" | "rect" | "rectangle" => {}
+                    _ => self.warn(ImportWarning::Formatting),
+                }
+                if source_style.rotation() != 0.0 {
+                    self.warn(ImportWarning::Formatting);
+                }
+                if object.style.fill.is_none_or(|fill| fill.a == 0)
+                    && let Some(fill) = row_fill
+                {
+                    object.style.fill = Some(fill);
+                }
+                let Some(id) = self.add_object(source, object, table_context) else {
+                    complete = false;
+                    self.mark_visited(source);
+                    continue;
+                };
+                self.sheet.canvas.scene.containers.insert(id);
+                self.items.insert(source, Item::Container(id));
+                table.cells[slot].id = id;
+                let content_context = Context {
+                    origin: cell_rect.min,
+                    parent_size: cell_rect.size,
+                    scene_parent: Some(id),
+                    ..table_context
+                };
+                for child in self.children[source].clone() {
+                    self.visit(child, content_context, depth + 3);
+                }
+            }
+            let row_origin = self.vertex_rect(row_cell, table_context).min;
+            for child in self.children[row].clone() {
+                if cells[child].edge {
+                    let context = Context {
+                        origin: row_origin,
+                        ..table_context
+                    };
+                    self.visit(child, context, depth + 2);
+                } else if !cells[child].vertex {
+                    self.mark_visited(child);
+                }
+            }
+        }
+        for child in self.children[index].clone() {
+            if cells[child].edge {
+                self.visit(child, table_context, depth + 1);
+            } else if !cells[child].vertex {
+                self.mark_visited(child);
+            }
+        }
+        if complete {
+            self.sheet.canvas.scene.tables.insert(table_id, table);
+        } else {
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
+        }
+        true
+    }
+
+    fn mark_visited(&mut self, index: usize) {
+        let mut stack = vec![index];
+        while let Some(index) = stack.pop() {
+            if !std::mem::replace(&mut self.visited[index], true) {
+                stack.extend(self.children[index].iter().copied());
+            }
+        }
+    }
+
     /// A container frame, unless it cannot be a valid Zone.
     fn zone(&mut self, cell: &Cell, rect: Rect, nested: bool) -> Option<usize> {
         if nested {
@@ -2572,6 +3875,7 @@ impl<'a> PageImport<'a> {
             return None;
         }
         let label = self.label(cell);
+        let label = self.resolved_cell_text(cell, &label);
         let mut name: String = label
             .lines()
             .map(str::trim)
@@ -2624,16 +3928,17 @@ impl<'a> PageImport<'a> {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
-        let label = self.label(cell);
+        let (label, rich_label) = if !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
+            self.rich_label(cell)
+        } else {
+            (self.label(cell), None)
+        };
         if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
             || !label.is_empty()
                 && (style.label_opacity_loss()
                     || kind == Kind::Line && style.connector_label_appearance_loss(false))
         {
             self.warn(ImportWarning::Formatting);
-        }
-        if cell.link.is_some() && !matches!(kind, Kind::Card(_)) {
-            self.warn(ImportWarning::Links);
         }
         let shape_object = |shape: ShapeKind, frame: Rect, rotation: f32, label: String| {
             let mut object = CanvasObject::shape(shape, frame);
@@ -2646,7 +3951,7 @@ impl<'a> PageImport<'a> {
             object.alt_text = cell.tooltip.clone().unwrap_or_default();
             object
         };
-        let object = match kind {
+        let mut object = match kind {
             Kind::Shape(..) if style.draws_stencil() => {
                 // Stencils are drawn in their own frame; draw.io's `direction`
                 // turns that frame like a rotation with swapped sides.
@@ -2656,12 +3961,15 @@ impl<'a> PageImport<'a> {
                 } else {
                     rect
                 };
-                if style.flag("flipH") || style.flag("flipV") {
-                    self.warn(ImportWarning::Formatting);
-                }
                 let rotation = direction + style.rotation();
                 let mut object = shape_object(ShapeKind::Rectangle, frame, rotation, label);
                 object.stencil = style.stencil();
+                let (owned, approximate) =
+                    shape_effects(style, &mut object, direction % 180.0 == 90.0);
+                self.shape_effect_keys.insert(index, owned);
+                if approximate {
+                    self.warn(ImportWarning::Formatting);
+                }
                 object
             }
             Kind::Shape(shape, base, symmetric) | Kind::Approx(shape, base, symmetric) => {
@@ -2680,6 +3988,11 @@ impl<'a> PageImport<'a> {
                 };
                 let rotation = total + style.rotation();
                 let mut object = shape_object(shape, frame, rotation, label);
+                let (owned, approximate) = shape_effects(style, &mut object, total % 180.0 == 90.0);
+                self.shape_effect_keys.insert(index, owned);
+                if approximate {
+                    self.warn(ImportWarning::Formatting);
+                }
                 if let Some(stencil) = mockup_rectangle_stencil(style) {
                     object.rounding = Some(ShapeRounding {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
@@ -2936,7 +4249,22 @@ impl<'a> PageImport<'a> {
                 return self.card(index, card_kind, rect, label, context, image);
             }
         };
-        if !object.label().is_empty() && style.label_style_loss(false) {
+        if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            object.label_rich_text = rich_label.map(Arc::new);
+        }
+        let label_text = maps_label_text(kind, style);
+        if label_text && matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            let (label_style, owned, approximate) = label_text_style(style);
+            object.label_style = label_style.map(Arc::new);
+            self.shape_effect_keys
+                .entry(index)
+                .or_default()
+                .extend(owned);
+            if approximate && !object.label().is_empty() {
+                self.warn(ImportWarning::Formatting);
+            }
+        }
+        if !object.label().is_empty() && style.label_style_loss(false, label_text) {
             self.warn(ImportWarning::Formatting);
         }
         self.add_object(index, object, context)
@@ -3140,6 +4468,15 @@ impl<'a> PageImport<'a> {
             .is_some_and(|value| !matches!(value, "" | "east"))
             || ["flipH", "flipV", "stencilFlipH", "stencilFlipV"]
                 .iter()
+                .filter(|key| {
+                    // Native flips mirror ports exactly as draw.io does.
+                    !(matches!(**key, "flipH" | "flipV")
+                        && matches!(endpoint, Endpoint::Object(id)
+                        if self.sheet.canvas.object(id).is_some_and(|object| {
+                            object.style.flip_h == style.flag("flipH")
+                                && object.style.flip_v == style.flag("flipV")
+                        })))
+                })
                 .any(|key| {
                     style
                         .get(key)
@@ -3207,7 +4544,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
-            if style.formatting_loss(true, false)
+            if style.formatting_loss(true, false, false, false)
                 || style.start_arrow()
                 || style.end_arrow()
                 || !matches!(style.connector_port(true), Ok(None))
@@ -3269,26 +4606,112 @@ impl<'a> PageImport<'a> {
                 return;
             }
         };
+        let edge_style = style.get("edgeStyle").filter(|value| !value.is_empty());
+        let route = if style.flag("curved") {
+            ConnectorRoute::Curve
+        } else {
+            match edge_style {
+                None | Some("none") => ConnectorRoute::Straight,
+                Some("elbowEdgeStyle") if style.get("elbow") == Some("vertical") => {
+                    ConnectorRoute::ElbowVertical
+                }
+                Some("elbowEdgeStyle") => ConnectorRoute::ElbowHorizontal,
+                Some("sideToSideEdgeStyle") => ConnectorRoute::SideToSide,
+                Some("topToBottomEdgeStyle") => ConnectorRoute::TopToBottom,
+                Some("entityRelationEdgeStyle") => ConnectorRoute::EntityRelation,
+                Some("segmentEdgeStyle") => ConnectorRoute::Segment,
+                Some("isometricEdgeStyle") if style.get("elbow") == Some("vertical") => {
+                    ConnectorRoute::IsometricVertical
+                }
+                Some("isometricEdgeStyle") => ConnectorRoute::IsometricHorizontal,
+                Some(_) => ConnectorRoute::Elbow,
+            }
+        };
+        // Routed styles Thinoda reproduces exactly keep their draw.io meaning,
+        // including the first-waypoint hint; any other router is approximated
+        // by Thinoda's orthogonal elbow.
+        let approximated_router = edge_style.is_some_and(|value| {
+            !matches!(
+                value,
+                "none"
+                    | "orthogonalEdgeStyle"
+                    | "elbowEdgeStyle"
+                    | "sideToSideEdgeStyle"
+                    | "topToBottomEdgeStyle"
+                    | "entityRelationEdgeStyle"
+                    | "segmentEdgeStyle"
+                    | "isometricEdgeStyle"
+            )
+        }) && !style.flag("curved");
         let routed_hints = !cell.geometry.points.is_empty()
+            && edge_style.is_some_and(|value| value != "none")
+            && !route.is_drawio_edge_style();
+        let custom_segment = route == ConnectorRoute::EntityRelation
             && style
-                .get("edgeStyle")
-                .is_some_and(|value| !value.is_empty() && value != "none");
-        if style.formatting_loss(true, false) || routed_hints {
+                .get("segment")
+                .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(30.0));
+        // Thinoda draws self-loops like draw.io's default `Loop` router; other
+        // loop directions and sizes are not kept.
+        let custom_loop = from == to
+            && !matches!(from, Endpoint::Point(_))
+            && (style
+                .get("direction")
+                .is_some_and(|value| !value.is_empty() && value != "west")
+                || style
+                    .get("segment")
+                    .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(10.0)));
+        let (edge_shape, edge_shape_loss) = style.edge_shape();
+        if style.formatting_loss(true, false, false, false)
+            || routed_hints
+            || approximated_router
+            || custom_segment
+            || custom_loop
+            || edge_shape_loss
+        {
             self.warn(ImportWarning::Formatting);
         }
-        if cell.link.is_some() {
-            self.warn(ImportWarning::Links);
-        }
-        let mut label = self.label(cell);
-        let label_style_loss = !label.is_empty() && style.label_style_loss(true);
+        let (mut label, mut rich_label) = self.rich_label(cell);
+        let label_style_loss = !label.is_empty() && style.label_style_loss(true, false);
+        let label_placement = self.edge_label_placement(&cell.geometry);
+        let mut extra_labels = Vec::new();
         for child in self.children[index].clone() {
             let child = &cells[child];
             if child.vertex && child.visible {
-                let text = self.label(child);
-                if !text.is_empty() {
-                    // Folding child labels loses their independent positions and styles.
+                let (text, rich_text) = self.rich_label(child);
+                if text.is_empty()
+                    && rich_text
+                        .as_ref()
+                        .is_none_or(|rich| rich.paragraphs.is_empty())
+                {
+                    continue;
+                }
+                if child.geometry.relative && !child.geometry.invalid_frame {
+                    if extra_labels.len() >= MAX_CONNECTOR_LABELS {
+                        self.warn(ImportWarning::Other);
+                        continue;
+                    }
+                    if child_label_style_loss(&child.style, style) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    let g = &child.geometry;
+                    let placement = self.label_placement(
+                        g.x,
+                        g.y,
+                        g.offset.unwrap_or(Vec2::ZERO) + Vec2::new(g.width, g.height) * 0.5,
+                    );
+                    extra_labels.push(ConnectorLabel {
+                        text: truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings),
+                        placement,
+                        rich_text: rich_text.map(Arc::new),
+                    });
+                } else {
+                    // Absolute children have no edge-relative position; fold them.
                     self.warn(ImportWarning::Formatting);
-                    if !label.is_empty() {
+                    if !label.is_empty()
+                        || rich_label
+                            .as_ref()
+                            .is_some_and(|rich| !rich.paragraphs.is_empty())
+                    {
                         label.push('\n');
                     }
                     label.push_str(&text);
@@ -3305,16 +4728,7 @@ impl<'a> PageImport<'a> {
         let mut connector = CanvasConnector::new(from, to);
         connector.from_port = self.connector_port(style, true, from, cell.source.as_deref());
         connector.to_port = self.connector_port(style, false, to, cell.target.as_deref());
-        connector.route = if style.flag("curved") {
-            ConnectorRoute::Curve
-        } else if style
-            .get("edgeStyle")
-            .is_some_and(|v| !v.is_empty() && v != "none")
-        {
-            ConnectorRoute::Elbow
-        } else {
-            ConnectorRoute::Straight
-        };
+        connector.route = route;
         connector.waypoints = self
             .translated_points(origin, cell.geometry.points.iter().copied())
             .into();
@@ -3326,10 +4740,28 @@ impl<'a> PageImport<'a> {
         connector.end_marker_size = style.marker_size("endArrow", "endSize");
         connector.start_marker_unfilled = style.marker_unfilled("startArrow", "startFill");
         connector.end_marker_unfilled = style.marker_unfilled("endArrow", "endFill");
+        connector.line_jumps = style.line_jumps();
+        connector.edge_shape = edge_shape;
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
+        if rich_label
+            .as_ref()
+            .is_some_and(|rich| rich.validate(&connector.label).is_err())
+        {
+            self.warn(ImportWarning::Formatting);
+            rich_label = None;
+        }
+        if !connector.label.is_empty()
+            || rich_label
+                .as_ref()
+                .is_some_and(|rich| !rich.paragraphs.is_empty())
+        {
+            connector.label_placement = label_placement;
+        }
+        connector.extra_labels = extra_labels;
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
         let mut object = CanvasObject::connector(connector);
+        object.label_rich_text = rich_label.map(Arc::new);
         object.style.text_color = style.text_color();
         object.style.opacity = style.opacity();
         object.band = style.band();
@@ -3337,6 +4769,36 @@ impl<'a> PageImport<'a> {
         if self.add_object(index, object, context).is_some() && detached {
             self.warn(ImportWarning::DetachedConnectors);
         }
+    }
+
+    /// The draw.io position of an edge's own label, unless it is the midpoint.
+    fn edge_label_placement(&mut self, geometry: &Geometry) -> Option<ConnectorLabelPlacement> {
+        let offset = geometry.offset.unwrap_or(Vec2::ZERO);
+        if !geometry.relative {
+            // mxGraph places absolute edge labels at the end-point midpoint.
+            if offset != Vec2::ZERO {
+                self.warn(ImportWarning::Formatting);
+            }
+            return None;
+        }
+        (geometry.x != 0.0 || geometry.y != 0.0 || offset != Vec2::ZERO)
+            .then(|| self.label_placement(geometry.x, geometry.y, offset))
+    }
+
+    fn label_placement(&mut self, x: f32, y: f32, offset: Vec2) -> ConnectorLabelPlacement {
+        let clamp = |value: f32, limit: f32| value.clamp(-limit, limit);
+        let placement = ConnectorLabelPlacement {
+            along: x.clamp(-1.0, 1.0),
+            orthogonal: clamp(y, MAX_CONNECTOR_LABEL_OFFSET),
+            offset: Vec2::new(
+                clamp(offset.x, MAX_CONNECTOR_LABEL_OFFSET),
+                clamp(offset.y, MAX_CONNECTOR_LABEL_OFFSET),
+            ),
+        };
+        if placement.along != x || placement.orthogonal != y || placement.offset != offset {
+            self.warn(ImportWarning::Formatting);
+        }
+        placement
     }
 
     fn finish(mut self) -> Sheet {
@@ -3390,6 +4852,12 @@ impl<'a> PageImport<'a> {
             .canvas
             .objects
             .sort_by_key(|object| order.get(&object.id).copied().unwrap_or(usize::MAX));
+        self.sheet.canvas.normalize_layer_order();
+        for id in std::mem::take(&mut self.locked_layers) {
+            if self.sheet.set_board_layer_locked(id, true).is_err() {
+                self.warn(ImportWarning::Other);
+            }
+        }
         self.sheet
     }
 }
@@ -3792,12 +5260,135 @@ fn import_page(
         deferred: Vec::new(),
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
         inline_stencils: None,
+        bundled_stencils: None,
+        passthrough_cells: HashSet::new(),
+        shape_effect_keys: HashMap::new(),
+        passthrough_bytes: 0,
+        locked_layers: Vec::new(),
     };
     import.run();
+    if import.cells.iter().enumerate().any(|(i, cell)| {
+        !import.passthrough_cells.contains(&i)
+            && cell
+                .attributes
+                .iter()
+                .any(|(name, _)| !matches!(name.as_str(), "link" | "placeholders"))
+    }) {
+        // Only canvas objects keep unknown attributes; topics and cards drop
+        // them. Their `link` becomes the hyperlink, and placeholders are
+        // reported below.
+        import.warn(ImportWarning::Other);
+    }
+    if import.cells.iter().enumerate().any(|(i, cell)| {
+        !import.passthrough_cells.contains(&i)
+            && cell
+                .attributes
+                .iter()
+                .any(|(name, value)| name == "placeholders" && value == "1")
+            && [Some(cell.value.as_str()), cell.tooltip.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|text| {
+                    matches!(
+                        thinoda_core::object_data::replace_placeholders(text, |_| Some(
+                            String::new()
+                        )),
+                        std::borrow::Cow::Owned(_)
+                    )
+                })
+    }) {
+        // Topics and cards show their text as written.
+        import.warn(ImportWarning::DrawioPlaceholdersUnsupported);
+    }
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
     }
-    Ok(import.finish())
+    let object_cells: HashSet<usize> = import
+        .items
+        .iter()
+        .filter(|(_, item)| matches!(item, Item::Object(_)))
+        .map(|(index, _)| *index)
+        .collect();
+    let drawio = page_passthrough(page, &cells, &object_cells);
+    let mut sheet = import.finish();
+    sheet.drawio = drawio;
+    Ok(sheet)
+}
+
+/// Unknown `mxGraphModel` attributes the exporter writes from first-class fields
+/// or as fixed values.
+const OWNED_MODEL_ATTRIBUTES: &[&str] = &[
+    "dx",
+    "dy",
+    "grid",
+    "gridSize",
+    "thinodaGrid",
+    "thinodaSnap",
+    "thinodaSankey",
+    "background",
+    "backgroundImage",
+    "guides",
+    "tooltips",
+    "connect",
+    "arrows",
+    "fold",
+    "page",
+    "pageScale",
+    "pageWidth",
+    "pageHeight",
+    "math",
+    "shadow",
+    "adaptiveColors",
+];
+
+/// Page-level passthrough. `cell_ids` records the cells that became canvas
+/// objects, so the exporter never hands a deleted object's id to another cell.
+fn page_passthrough(
+    page: &Page,
+    cells: &[Cell],
+    object_cells: &HashSet<usize>,
+) -> Option<Arc<DrawioPagePassthrough>> {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let mut drawio = DrawioPagePassthrough {
+        diagram_id: page.id.clone(),
+        model_attributes: page
+            .model
+            .attrs
+            .iter()
+            .filter(|(name, value)| {
+                !OWNED_MODEL_ATTRIBUTES.contains(&name.as_str())
+                    && thinoda_core::drawio_passthrough::valid_attribute_name(name)
+                    && !value
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+            })
+            .cloned()
+            .collect(),
+        cell_ids: Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    drawio
+        .model_attributes
+        .retain(|(name, _)| seen.insert(name.clone()));
+    let mut bytes = drawio.byte_len();
+    for (index, cell) in cells.iter().enumerate() {
+        let id = &cell.id;
+        if !object_cells.contains(&index)
+            || id.starts_with('\u{0}')
+            || matches!(id.as_str(), "0" | "1")
+            || id.len() > thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            || id.chars().any(char::is_control)
+            || drawio.cell_ids.len() >= thinoda_core::drawio_passthrough::MAX_PAGE_CELL_IDS
+        {
+            continue;
+        }
+        bytes += id.len();
+        if bytes > budget {
+            break;
+        }
+        drawio.cell_ids.push(id.clone());
+    }
+    (!drawio.is_empty() && drawio.validate().is_ok()).then(|| Arc::new(drawio))
 }
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
@@ -4097,6 +5688,176 @@ fn html(text: &str) -> String {
     out
 }
 
+fn html_rich_label(
+    text: &str,
+    rich: &thinoda_core::InlineText,
+    whole: Option<&thinoda_core::label_style::LabelStyle>,
+) -> String {
+    use thinoda_core::{InlineBaseline, InlineTextStyle, ListKind};
+
+    fn span(
+        text: &str,
+        style: &InlineTextStyle,
+        whole: Option<&LabelStyle>,
+        boundary: bool,
+    ) -> String {
+        let mut css = String::new();
+        if let Some(value) = style.bold {
+            css.push_str(if value {
+                "font-weight:bold;"
+            } else {
+                "font-weight:normal;"
+            });
+        }
+        if let Some(value) = style.italic {
+            css.push_str(if value {
+                "font-style:italic;"
+            } else {
+                "font-style:normal;"
+            });
+        }
+        let mut inherited = String::new();
+        if style.underline.is_some() || style.strikethrough.is_some() {
+            let underline = style
+                .underline
+                .unwrap_or_else(|| whole.is_some_and(|style| style.underline));
+            let strike = style
+                .strikethrough
+                .unwrap_or_else(|| whole.is_some_and(|style| style.strikethrough));
+            let values: Vec<_> = [
+                underline.then_some("underline"),
+                strike.then_some("line-through"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            css.push_str("text-decoration:");
+            if values.is_empty() {
+                css.push_str("none");
+            } else {
+                css.push_str(&values.join(" "));
+            }
+            css.push(';');
+            if style.underline.is_none() {
+                inherited.push_str(" data-thinoda-underline=\"inherit\"");
+            }
+            if style.strikethrough.is_none() {
+                inherited.push_str(" data-thinoda-strike=\"inherit\"");
+            }
+        }
+        if let Some(family) = &style.font_family {
+            let mut quoted = String::new();
+            for ch in family.chars() {
+                if ch.is_alphanumeric() || matches!(ch, ' ' | '-' | '_' | ',' | '.') {
+                    quoted.push(ch);
+                } else {
+                    quoted.push_str(&format!("\\{:x} ", u32::from(ch)));
+                }
+            }
+            css.push_str(&format!("font-family:'{quoted}';"));
+        }
+        if let Some(size) = style.font_size {
+            css.push_str(&format!("font-size:{}px;", num(size)));
+        }
+        if let Some(color) = style.color {
+            css.push_str(&format!(
+                "color:rgba({},{},{},{:.6});",
+                color.r,
+                color.g,
+                color.b,
+                f32::from(color.a) / 255.0
+            ));
+        }
+        if let Some(baseline) = style.baseline {
+            css.push_str(match baseline {
+                InlineBaseline::Normal => "vertical-align:baseline;",
+                InlineBaseline::Subscript => "vertical-align:sub;",
+                InlineBaseline::Superscript => "vertical-align:super;",
+            });
+        }
+        let boundary = if boundary {
+            " data-thinoda-break=\"1\""
+        } else {
+            ""
+        };
+        format!(
+            "<span style=\"{}\"{inherited}{boundary}>{}</span>",
+            html(&css),
+            html(text)
+        )
+    }
+
+    let chars: Vec<_> = text.chars().collect();
+    let mut out = String::new();
+    let mut start = 0usize;
+    let mut run_index = 0usize;
+    let mut active_list = None;
+    for (index, paragraph) in text.split('\n').enumerate() {
+        let end = start + paragraph.chars().count();
+        let list = rich
+            .paragraphs
+            .iter()
+            .find(|item| item.index as usize == index)
+            .map(|item| item.list);
+        if active_list != list {
+            match active_list {
+                Some(ListKind::Bulleted) => out.push_str("</ul>"),
+                Some(ListKind::Numbered) => out.push_str("</ol>"),
+                None => {}
+            }
+            match list {
+                Some(ListKind::Bulleted) => out.push_str("<ul>"),
+                Some(ListKind::Numbered) => out.push_str("<ol>"),
+                None => {}
+            }
+            active_list = list;
+        }
+        out.push_str(if list.is_some() { "<li>" } else { "<div>" });
+        let mut cursor = start;
+        while cursor < end {
+            while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= cursor {
+                run_index += 1;
+            }
+            let run = rich.runs.get(run_index);
+            let styled = run.is_some_and(|run| run.start as usize <= cursor);
+            let next = if styled {
+                end.min(run.map_or(end, |run| run.end as usize))
+            } else {
+                end.min(run.map_or(end, |run| run.start as usize))
+            };
+            let part: String = chars[cursor..next].iter().collect();
+            if let Some(run) = run.filter(|_| styled) {
+                out.push_str(&span(&part, &run.style, whole, false));
+            } else {
+                out.push_str(&html(&part));
+            }
+            cursor = next;
+        }
+        if end < chars.len() {
+            while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= end {
+                run_index += 1;
+            }
+            if let Some(run) = rich
+                .runs
+                .get(run_index)
+                .filter(|run| run.start as usize <= end)
+            {
+                out.push_str(&span("", &run.style, whole, true));
+            } else {
+                out.push_str("<span data-thinoda-break=\"1\"></span>");
+            }
+        }
+        out.push_str(if list.is_some() { "</li>" } else { "</div>" });
+        start = end + 1;
+    }
+    match active_list {
+        Some(ListKind::Bulleted) => out.push_str("</ul>"),
+        Some(ListKind::Numbered) => out.push_str("</ol>"),
+        None => {}
+    }
+    out
+}
+
 fn num(value: f32) -> String {
     if value == 0.0 || !value.is_finite() {
         "0".into()
@@ -4251,6 +6012,85 @@ fn common_keys(out: &mut String, style: &ObjectStyle, rotation: f32, locked: boo
     }
 }
 
+/// draw.io keys for a shape's native effects. Thinoda frames are never turned
+/// by `direction` on export, so the flips are written as stored.
+fn shape_effect_style(out: &mut String, style: &ObjectStyle) {
+    if let Some(dash) = style.dash {
+        out.push_str("dashed=1;");
+        if dash.pattern != thinoda_core::shape_style::DashPattern::default() {
+            out.push_str(&format!("dashPattern={};", dash.pattern.to_drawio()));
+        }
+        if dash.fixed {
+            out.push_str("fixDash=1;");
+        }
+    }
+    if let Some(gradient) = style.gradient {
+        color_keys(
+            out,
+            "gradientColor",
+            "",
+            Some(Color {
+                a: 255,
+                ..gradient.color
+            }),
+        );
+        if gradient.direction != thinoda_core::shape_style::GradientDirection::South {
+            out.push_str(&format!(
+                "gradientDirection={};",
+                gradient.direction.drawio_name()
+            ));
+        }
+    }
+    if !style.fill_pattern.is_solid() {
+        out.push_str(&format!("fillStyle={};", style.fill_pattern.drawio_name()));
+    }
+    for (key, set) in [
+        ("shadow", style.shadow),
+        ("glass", style.glass),
+        ("flipH", style.flip_h),
+        ("flipV", style.flip_v),
+    ] {
+        if set {
+            out.push_str(&format!("{key}=1;"));
+        }
+    }
+}
+
+/// Appends a cell's preserved draw.io style keys after the generated ones.
+/// Generated keys always win, and dependent keys are dropped when the key they
+/// refine is gone (e.g. `dashPattern` once the line is no longer dashed).
+fn passthrough_style(out: &mut String, drawio: Option<&Passthrough>) {
+    let Some(drawio) = drawio.filter(|drawio| !drawio.style.is_empty()) else {
+        return;
+    };
+    let mut present: HashMap<String, String> = out
+        .split(';')
+        .filter_map(|entry| entry.split_once('='))
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+    let rest: Vec<_> = drawio
+        .style
+        .iter()
+        .filter(|(key, _)| !present.contains_key(key))
+        .collect();
+    for (key, value) in &rest {
+        present.insert(key.clone(), value.clone());
+    }
+    for (key, value) in rest {
+        let orphan = DEPENDENT_STYLE_KEYS
+            .iter()
+            .find(|(dependent, _)| dependent == key)
+            .is_some_and(|(_, owner)| {
+                present
+                    .get(*owner)
+                    .is_none_or(|value| matches!(value.as_str(), "0" | "none" | ""))
+            });
+        if !orphan {
+            out.push_str(&format!("{key}={value};"));
+        }
+    }
+}
+
 enum Terminal {
     Cell(String),
     Point(Vec2),
@@ -4289,6 +6129,112 @@ struct PageWriter<'a> {
     groups: HashMap<CanvasGroupId, (String, Rect)>,
     written_groups: HashSet<CanvasGroupId>,
     written: HashSet<BoardMember>,
+    /// draw.io cell id of each canvas object.
+    cell_ids: HashMap<CanvasObjectId, String>,
+    /// Preserved UserObject attributes for the next cell written.
+    attributes: Vec<(String, String)>,
+    /// Position of the next edge's own label, unless it is the midpoint.
+    label_placement: Option<ConnectorLabelPlacement>,
+    /// Every cell id written or reserved, for generated label cell ids.
+    used_ids: HashSet<String>,
+    /// draw.io layer cell id of each named board layer.
+    layer_cells: HashMap<thinoda_core::BoardLayerId, String>,
+    /// Row cell ids and absolute row origins of each written table.
+    table_rows: HashMap<CanvasObjectId, Vec<(String, Vec2)>>,
+}
+
+/// Layer cell ids of named board layers: the imported draw.io id when it is
+/// unique and not reserved, otherwise `l{id}`.
+fn layer_cell_ids(
+    sheet: &Sheet,
+    reserved: &HashSet<String>,
+) -> HashMap<thinoda_core::BoardLayerId, String> {
+    let tombstones: HashSet<&str> = sheet
+        .drawio
+        .iter()
+        .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+        .collect();
+    let mut used = reserved.clone();
+    let mut ids = HashMap::new();
+    for layer in &sheet.canvas.layers {
+        if let Some(source) = &layer.source_id
+            && used.insert(source.clone())
+        {
+            ids.insert(layer.id, source.clone());
+        }
+    }
+    for layer in &sheet.canvas.layers {
+        if ids.contains_key(&layer.id) {
+            continue;
+        }
+        let base = format!("l{}", layer.id.0);
+        let mut id = base.clone();
+        let mut n = 1;
+        while used.contains(&id) || tombstones.contains(id.as_str()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        used.insert(id.clone());
+        ids.insert(layer.id, id);
+    }
+    ids
+}
+
+/// Cell ids of canvas objects: the imported draw.io id when it is still unique
+/// and not one of the ids generated for other cells (`reserved`), otherwise
+/// `o{id}`. Ids of deleted source cells are never reused, so external
+/// references to them cannot silently retarget. Sankey edges keep `o{id}`,
+/// which their native extension reattaches by.
+fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasObjectId, String> {
+    let tombstones: HashSet<&str> = sheet
+        .drawio
+        .iter()
+        .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+        .collect();
+    let sankey = |object: &CanvasObject| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some());
+    let mut ids = HashMap::new();
+    let mut used = reserved.clone();
+    for object in sheet.canvas.objects.iter().filter(|object| sankey(object)) {
+        let id = format!("o{}", object.id.0);
+        used.insert(id.clone());
+        ids.insert(object.id, id);
+    }
+    for object in &sheet.canvas.objects {
+        let Some(source) = object
+            .drawio
+            .as_ref()
+            .and_then(|drawio| drawio.source_id.as_ref())
+        else {
+            continue;
+        };
+        if !ids.contains_key(&object.id) && used.insert(source.clone()) {
+            ids.insert(object.id, source.clone());
+        }
+    }
+    for object in &sheet.canvas.objects {
+        if ids.contains_key(&object.id) {
+            continue;
+        }
+        let base = format!("o{}", object.id.0);
+        let mut id = base.clone();
+        let mut n = 1;
+        while used.contains(&id) || tombstones.contains(id.as_str()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        used.insert(id.clone());
+        ids.insert(object.id, id);
+    }
+    ids
+}
+
+impl<'a> PageWriter<'a> {
+    fn cell_id(&self, id: CanvasObjectId) -> String {
+        self.cell_ids
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("o{}", id.0))
+    }
 }
 
 impl<'a> PageWriter<'a> {
@@ -4321,7 +6267,19 @@ impl<'a> PageWriter<'a> {
         let mut connector_midpoints = HashMap::new();
         let mut detached_fixed_points = HashMap::new();
         if !edge_targets.is_empty() || !detached_fixed.is_empty() {
-            for item in thinoda_core::build_scene(sheet, &layout).items {
+            // Hidden layers are still exported, so measure them as if shown.
+            let shown;
+            let scene_sheet = if sheet.canvas.layers.iter().any(|layer| !layer.visible) {
+                let mut copy = sheet.clone();
+                for layer in &mut copy.canvas.layers {
+                    layer.visible = true;
+                }
+                shown = copy;
+                &shown
+            } else {
+                sheet
+            };
+            for item in thinoda_core::build_scene(scene_sheet, &layout).items {
                 if let (
                     thinoda_core::SceneId::Object(id),
                     thinoda_core::scene::SceneGeometry::Polyline { points, .. },
@@ -4353,7 +6311,44 @@ impl<'a> PageWriter<'a> {
             groups: HashMap::new(),
             written_groups: HashSet::new(),
             written: HashSet::new(),
+            cell_ids: HashMap::new(),
+            attributes: Vec::new(),
+            label_placement: None,
+            used_ids: HashSet::new(),
+            layer_cells: HashMap::new(),
+            table_rows: HashMap::new(),
         };
+        let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
+        reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
+        reserved.extend(sheet.zones.iter().map(|zone| format!("z{}", zone.id.0)));
+        reserved.extend(sheet.canvas.groups.iter().map(|g| format!("g{}", g.id.0)));
+        reserved.extend(
+            writer
+                .layout
+                .boundaries
+                .iter()
+                .map(|b| format!("b{}", b.id.0)),
+        );
+        reserved.extend((0..writer.layout.connectors.len()).map(|n| format!("e{n}")));
+        reserved.extend(
+            writer
+                .layout
+                .relationships
+                .iter()
+                .map(|r| format!("r{}", r.id.0)),
+        );
+        reserved.extend(
+            writer
+                .layout
+                .summaries
+                .iter()
+                .map(|s| format!("s{}", s.id.0)),
+        );
+        writer.layer_cells = layer_cell_ids(sheet, &reserved);
+        reserved.extend(writer.layer_cells.values().cloned());
+        writer.cell_ids = object_cell_ids(sheet, &reserved);
+        reserved.extend(writer.cell_ids.values().cloned());
+        writer.used_ids = reserved;
         for zone in &sheet.zones {
             for object in &zone.objects {
                 writer.object_zone.insert(*object, zone.id);
@@ -4370,8 +6365,12 @@ impl<'a> PageWriter<'a> {
                 .reduce(|a, b| a.union(&b))
                 .unwrap_or_default();
             let zones: HashSet<_> = members.iter().map(|m| writer.member_zone(*m)).collect();
-            let parent = match zones.into_iter().collect::<Vec<_>>()[..] {
-                [Some(zone)] => format!("z{}", zone.0),
+            let parent = match (
+                members.iter().find_map(|m| writer.member_layer_cell(*m)),
+                &zones.into_iter().collect::<Vec<_>>()[..],
+            ) {
+                (Some(layer), _) => layer,
+                (None, [Some(zone)]) => format!("z{}", zone.0),
                 _ => "1".into(),
             };
             writer.groups.insert(group.id, (parent, bounds));
@@ -4399,6 +6398,15 @@ impl<'a> PageWriter<'a> {
                 ))
             }
         }
+    }
+
+    /// The layer cell of a member on a named board layer.
+    fn member_layer_cell(&self, member: BoardMember) -> Option<String> {
+        let BoardMember::Object(id) = member else {
+            return None;
+        };
+        let layer = self.sheet.canvas.object(id)?.layer?;
+        self.layer_cells.get(&layer).cloned()
     }
 
     fn member_zone(&self, member: BoardMember) -> Option<ZoneId> {
@@ -4443,10 +6451,14 @@ impl<'a> PageWriter<'a> {
                         .map(|object| object.rect.min)
                 })
                 .unwrap_or(Vec2::ZERO);
-            return (format!("o{}", parent.0), origin);
+            return (self.cell_id(*parent), origin);
         }
         if let Some(group) = self.member_group(member) {
             return (format!("g{}", group.0), self.groups[&group].1.min);
+        }
+        // draw.io layers hold top-level cells, so a layered object leaves its frame.
+        if let Some(layer) = self.member_layer_cell(member) {
+            return (layer, Vec2::ZERO);
         }
         match self.member_zone(member) {
             Some(zone) => (format!("z{}", zone.0), self.zone_origin(zone)),
@@ -4463,7 +6475,7 @@ impl<'a> PageWriter<'a> {
         rect: Rect,
         user: Option<(&str, &str)>,
     ) {
-        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, user);
+        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, false, user, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4475,13 +6487,11 @@ impl<'a> PageWriter<'a> {
         parent: &str,
         rect: Rect,
         alternate_bounds: Option<Rect>,
+        collapsed: bool,
         user: Option<(&str, &str)>,
+        rich: Option<(&thinoda_core::InlineText, Option<&LabelStyle>)>,
     ) {
-        let collapsed = if alternate_bounds.is_some() {
-            " collapsed=\"1\""
-        } else {
-            ""
-        };
+        let collapsed = if collapsed { " collapsed=\"1\"" } else { "" };
         let geometry = match alternate_bounds {
             Some(bounds) => format!(
                 "<mxRectangle x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"alternateBounds\"/>",
@@ -4509,8 +6519,13 @@ impl<'a> PageWriter<'a> {
                 num(rect.size.y)
             )
         };
-        let label = esc(&html(label));
+        let label = esc(&rich.map_or_else(
+            || html(label),
+            |(rich, style)| html_rich_label(label, rich, style),
+        ));
         let style = esc(style);
+        let extra = self.take_attributes();
+        let user = user.or_else(|| (!extra.is_empty()).then_some(("", "")));
         match user {
             Some((tooltip, link)) => {
                 self.out.push_str(&format!("<UserObject label=\"{label}\" id=\"{id}\""));
@@ -4520,6 +6535,7 @@ impl<'a> PageWriter<'a> {
                 if !link.is_empty() {
                     self.out.push_str(&format!(" link=\"{}\"", esc(link)));
                 }
+                self.out.push_str(&extra);
                 self.out.push_str(&format!(
                     "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell></UserObject>\n"
                 ));
@@ -4541,6 +6557,7 @@ impl<'a> PageWriter<'a> {
         ends: [Terminal; 2],
         points: &[Vec2],
         tooltip: &str,
+        rich: Option<&thinoda_core::InlineText>,
     ) {
         let mut terminals = String::new();
         let mut geometry = String::new();
@@ -4568,20 +6585,92 @@ impl<'a> PageWriter<'a> {
             }
             geometry.push_str("</Array>");
         }
+        let mut position = String::new();
+        if let Some(placement) = self.label_placement.take() {
+            for (key, value) in [("x", placement.along), ("y", placement.orthogonal)] {
+                if value != 0.0 {
+                    position.push_str(&format!(" {key}=\"{}\"", num(value)));
+                }
+            }
+            if placement.offset != Vec2::ZERO {
+                geometry.push_str(&format!(
+                    "<mxPoint x=\"{}\" y=\"{}\" as=\"offset\"/>",
+                    num(placement.offset.x),
+                    num(placement.offset.y)
+                ));
+            }
+        }
         let cell = format!(
-            "style=\"{}\" edge=\"1\" parent=\"{parent}\"{terminals}><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
+            "style=\"{}\" edge=\"1\" parent=\"{parent}\"{terminals}><mxGeometry{position} relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
             esc(style)
         );
-        let label = esc(&html(label));
-        if tooltip.is_empty() {
+        let label =
+            esc(&rich.map_or_else(|| html(label), |rich| html_rich_label(label, rich, None)));
+        let extra = self.take_attributes();
+        if tooltip.is_empty() && extra.is_empty() {
             self.out
                 .push_str(&format!("<mxCell id=\"{id}\" value=\"{label}\" {cell}\n"));
         } else {
+            let tooltip = if tooltip.is_empty() {
+                String::new()
+            } else {
+                format!(" tooltip=\"{}\"", esc(tooltip))
+            };
             self.out.push_str(&format!(
-                "<UserObject label=\"{label}\" tooltip=\"{}\" id=\"{id}\"><mxCell {cell}</UserObject>\n",
-                esc(tooltip)
+                "<UserObject label=\"{label}\"{tooltip} id=\"{id}\"{extra}><mxCell {cell}</UserObject>\n"
             ));
         }
+    }
+
+    /// Writes further connector labels as draw.io edge-label children.
+    fn edge_labels(&mut self, edge_id: &str, labels: &[ConnectorLabel], text_color: Option<Color>) {
+        for (n, label) in labels.iter().enumerate() {
+            let mut id = format!("{edge_id}-label-{}", n + 1);
+            while self.used_ids.contains(&id) {
+                id.push('x');
+            }
+            self.used_ids.insert(id.clone());
+            let mut style = format!(
+                "edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize={};",
+                num(CANVAS_LABEL_FONT_SIZE)
+            );
+            color_keys(&mut style, "fontColor", "textOpacity", text_color);
+            let placement = label.placement;
+            let mut position = String::new();
+            for (key, value) in [("x", placement.along), ("y", placement.orthogonal)] {
+                if value != 0.0 {
+                    position.push_str(&format!(" {key}=\"{}\"", num(value)));
+                }
+            }
+            let offset = if placement.offset == Vec2::ZERO {
+                String::new()
+            } else {
+                format!(
+                    "<mxPoint x=\"{}\" y=\"{}\" as=\"offset\"/>",
+                    num(placement.offset.x),
+                    num(placement.offset.y)
+                )
+            };
+            let value = label.rich_text.as_deref().map_or_else(
+                || html(&label.text),
+                |rich| html_rich_label(&label.text, rich, None),
+            );
+            self.out.push_str(&format!(
+                "<mxCell id=\"{}\" value=\"{}\" style=\"{}\" vertex=\"1\" connectable=\"0\" parent=\"{}\"><mxGeometry{position} relative=\"1\" as=\"geometry\">{offset}</mxGeometry></mxCell>\n",
+                esc(&id),
+                esc(&value),
+                esc(&style),
+                esc(edge_id)
+            ));
+        }
+    }
+
+    /// Escaped ` name="value"` text of the pending preserved attributes.
+    fn take_attributes(&mut self) -> String {
+        std::mem::take(&mut self.attributes)
+            .into_iter()
+            .map(|(name, value)| format!(" {name}=\"{}\"", esc(&value)))
+            .collect()
     }
 
     fn terminal(&self, end: Endpoint) -> Terminal {
@@ -4589,7 +6678,7 @@ impl<'a> PageWriter<'a> {
             Endpoint::Point(p) => Terminal::Point(p),
             Endpoint::Object(id) => match self.sheet.canvas.object(id) {
                 Some(object) if matches!(object.kind, CanvasObjectKind::Shape { .. }) => {
-                    Terminal::Cell(format!("o{}", id.0))
+                    Terminal::Cell(self.cell_id(id))
                 }
                 Some(object) if object.is_connector() => {
                     Terminal::Point(self.connector_midpoints.get(&id).copied().unwrap_or_else(
@@ -4650,11 +6739,12 @@ impl<'a> PageWriter<'a> {
             && self.written_groups.insert(group)
         {
             let (parent, bounds) = self.groups[&group].clone();
-            let origin = if parent == "1" {
-                Vec2::ZERO
-            } else {
-                self.zone_origin(ZoneId(parent[1..].parse().unwrap_or(0)))
-            };
+            let origin = self
+                .sheet
+                .zones
+                .iter()
+                .find(|zone| format!("z{}", zone.id.0) == parent)
+                .map_or(Vec2::ZERO, |zone| zone.frame.min);
             let locked = self.sheet.canvas.group(group).is_some_and(|g| g.locked);
             let style = if locked { "group;locked=1;" } else { "group;" };
             self.vertex(
@@ -4672,7 +6762,98 @@ impl<'a> PageWriter<'a> {
         self.write_member(member);
     }
 
+    /// Writes the rows of a table, then each row's cells in column order with
+    /// hidden placeholders for slots covered by a merged cell, as draw.io does.
+    fn table_grid(&mut self, id: CanvasObjectId, frame: Rect) {
+        const ROW_STYLE: &str = "shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;swimlaneBody=0;strokeColor=inherit;top=0;left=0;bottom=0;right=0;collapsible=0;dropTarget=0;fillColor=none;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;";
+        const COVERED_STYLE: &str = "shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;strokeColor=inherit;overflow=hidden;fillColor=none;top=0;left=0;bottom=0;right=0;pointerEvents=1;";
+        let Some(table) = self.sheet.canvas.scene.tables.get(&id) else {
+            return;
+        };
+        let header = thinoda_core::scene_table::table_header(&self.sheet.canvas, id);
+        let Ok(body) = thinoda_core::scene_table::table_body(frame, header) else {
+            return;
+        };
+        let table_id = self.cell_id(id);
+        let mut rows = Vec::with_capacity(table.rows.len());
+        let mut y = 0.0;
+        for (index, height) in table.rows.iter().enumerate() {
+            let row_id = self.generated_id(format!("{table_id}-row{index}"));
+            let offset = body.min - frame.min;
+            self.vertex(
+                &row_id,
+                "",
+                ROW_STYLE,
+                &table_id,
+                Rect::from_min_size(
+                    Vec2::new(offset.x, offset.y + y),
+                    Vec2::new(body.size.x, *height),
+                ),
+                None,
+            );
+            rows.push((row_id, Vec2::new(body.min.x, body.min.y + y)));
+            y += height;
+        }
+        self.table_rows.insert(id, rows.clone());
+        for (row, (row_id, _)) in rows.iter().enumerate() {
+            let mut x = 0.0;
+            for (column, width) in table.columns.iter().enumerate() {
+                match table.cell_at(row, column) {
+                    Some(cell)
+                        if usize::from(cell.row) == row && usize::from(cell.column) == column =>
+                    {
+                        self.write_member(BoardMember::Object(cell.id));
+                    }
+                    _ => {
+                        let covered = self.generated_id(format!("{row_id}-{column}"));
+                        let slot = Rect::from_min_size(
+                            Vec2::new(x, 0.0),
+                            Vec2::new(*width, table.rows[row]),
+                        );
+                        let mut out = String::new();
+                        std::mem::swap(&mut out, &mut self.out);
+                        self.vertex_with_alternate_bounds(
+                            &covered,
+                            "",
+                            COVERED_STYLE,
+                            row_id,
+                            slot,
+                            Some(Rect::from_min_size(Vec2::ZERO, slot.size)),
+                            false,
+                            None,
+                            None,
+                        );
+                        std::mem::swap(&mut out, &mut self.out);
+                        self.out.push_str(&out.replacen(
+                            " vertex=\"1\"",
+                            " vertex=\"1\" visible=\"0\"",
+                            1,
+                        ));
+                    }
+                }
+                x += width;
+            }
+        }
+    }
+
+    fn generated_id(&mut self, mut id: String) -> String {
+        while self.used_ids.contains(&id) {
+            id.push('x');
+        }
+        self.used_ids.insert(id.clone());
+        id
+    }
+
     fn write_member(&mut self, member: BoardMember) {
+        // Table cells are written by their table, under the table's row cells.
+        if let BoardMember::Object(id) = member
+            && let Some((table, _)) =
+                thinoda_core::scene_table::table_of_cell(&self.sheet.canvas, id)
+            && !self.table_rows.contains_key(&table)
+        {
+            self.member(BoardMember::Object(table));
+            return;
+        }
         if !self.written.insert(member) {
             return;
         }
@@ -4686,8 +6867,22 @@ impl<'a> PageWriter<'a> {
         let Some(object) = self.sheet.canvas.object(id) else {
             return;
         };
-        let (parent, origin) = self.parent(BoardMember::Object(id));
-        let cell_id = format!("o{}", id.0);
+        let table = self.sheet.canvas.scene.tables.get(&id);
+        let table_cell = thinoda_core::scene_table::table_of_cell(&self.sheet.canvas, id)
+            .and_then(|(table, grid)| Some((grid, *grid.cell(id)?, self.table_rows.get(&table)?)));
+        let (parent, origin) = match table_cell {
+            Some((_, cell, rows)) => rows[usize::from(cell.row)].clone(),
+            None => self.parent(BoardMember::Object(id)),
+        };
+        let cell_id = self.cell_id(id);
+        let drawio = object.drawio.as_deref();
+        self.attributes = object
+            .data
+            .as_deref()
+            .map(data_attributes)
+            .unwrap_or_default();
+        self.attributes
+            .extend(drawio.map(|d| d.attributes.clone()).unwrap_or_default());
         match &object.kind {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
@@ -4702,7 +6897,34 @@ impl<'a> PageWriter<'a> {
                     .stencil
                     .as_ref()
                     .and_then(crate::drawio_stencil::native_style);
-                if let Some(mut native) = stencil_native {
+                if let Some(table) = table {
+                    style
+                        .push_str("shape=table;childLayout=tableLayout;container=1;collapsible=0;");
+                    let header = thinoda_core::scene_table::table_header(&self.sheet.canvas, id);
+                    style.push_str(&format!(
+                        "startSize={};",
+                        num(header.map_or(0.0, |header| header.extent))
+                    ));
+                    if header.is_some_and(|header| {
+                        header.side == thinoda_core::scene_layout::HeaderSide::Left
+                    }) {
+                        style.push_str("horizontal=0;");
+                    }
+                    let stripes = &table.stripes;
+                    for (key, color) in [
+                        ("evenRowColor", stripes.even_rows),
+                        ("oddRowColor", stripes.odd_rows),
+                        ("evenColumnColor", stripes.even_columns),
+                        ("oddColumnColor", stripes.odd_columns),
+                    ] {
+                        color_keys(
+                            &mut style,
+                            key,
+                            "",
+                            color.map(|color| Color { a: 255, ..color }),
+                        );
+                    }
+                } else if let Some(mut native) = stencil_native {
                     if scene_header.and_then(|stencil| stencil.parameters.get("headerSide"))
                         == Some(&3.0)
                     {
@@ -4733,6 +6955,7 @@ impl<'a> PageWriter<'a> {
                         ));
                     }
                 } else if *shape == ShapeKind::Rectangle
+                    && table_cell.is_none()
                     && style_ref.fill.is_some_and(|c| c.a == 0)
                     && style_ref.stroke.is_some_and(|c| c.a == 0)
                 {
@@ -4743,7 +6966,7 @@ impl<'a> PageWriter<'a> {
                 if let Some(margin) = object.double_ellipse_margin {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
-                if let Some(stencil) = &object.stencil {
+                if let Some(stencil) = object.stencil.as_ref().filter(|_| table.is_none()) {
                     if let Some(scene_header) = scene_header {
                         if let Some(extent) = scene_header.parameters.get("headerHeight") {
                             style.push_str(&format!("startSize={};", num(*extent as f32)));
@@ -4752,7 +6975,15 @@ impl<'a> PageWriter<'a> {
                         style.push_str(&crate::drawio_stencil::reference_style(stencil));
                     }
                 }
-                if scene_container {
+                if let Some((_, cell, _)) = table_cell {
+                    if cell.row_span > 1 {
+                        style.push_str(&format!("rowspan={};", cell.row_span));
+                    }
+                    if cell.column_span > 1 {
+                        style.push_str(&format!("colspan={};", cell.column_span));
+                    }
+                }
+                if scene_container && table.is_none() {
                     style.push_str("container=1;");
                     if is_isolated_scene_container(self.sheet, id) {
                         style.push_str("thinodaSceneContainer=1;");
@@ -4771,7 +7002,17 @@ impl<'a> PageWriter<'a> {
                         style.push_str(&stack_style);
                     }
                 }
-                style.push_str("whiteSpace=wrap;html=1;");
+                match object.label_style.as_deref() {
+                    Some(label) => {
+                        style.push_str(if label.wrap {
+                            "whiteSpace=wrap;html=1;"
+                        } else {
+                            "whiteSpace=nowrap;html=1;"
+                        });
+                        label_text_style_keys(&mut style, label);
+                    }
+                    None => style.push_str("whiteSpace=wrap;html=1;"),
+                }
                 let special_outline = object.rectangle_sides.is_some()
                     || matches!(*shape, ShapeKind::DoubleEllipse | ShapeKind::FinalState);
                 let fill = if special_outline {
@@ -4801,16 +7042,38 @@ impl<'a> PageWriter<'a> {
                     object.locked,
                     object.band,
                 );
+                shape_effect_style(&mut style, style_ref);
+                passthrough_style(&mut style, drawio);
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
+                // draw.io keeps a table cell's own slot size as its alternate bounds.
+                let slot = table_cell.map(|(grid, cell, _)| {
+                    Rect::from_min_size(
+                        Vec2::ZERO,
+                        Vec2::new(
+                            grid.columns[usize::from(cell.column)],
+                            grid.rows[usize::from(cell.row)],
+                        ),
+                    )
+                });
                 self.vertex_with_alternate_bounds(
                     &cell_id,
                     label,
                     &style,
                     &parent,
                     object.rect.translate(Vec2::ZERO - origin),
-                    collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin)),
+                    slot.or_else(|| {
+                        collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin))
+                    }),
+                    collapsed_bounds.is_some(),
                     user,
+                    object
+                        .label_rich_text
+                        .as_deref()
+                        .map(|rich| (rich, object.label_style.as_deref())),
                 );
+                if table.is_some() {
+                    self.table_grid(id, object.rect);
+                }
             }
             CanvasObjectKind::Connector(connector) => {
                 let mut style = String::from("html=1;");
@@ -4829,21 +7092,27 @@ impl<'a> PageWriter<'a> {
                             style.push_str("edgeStyle=none;");
                         }
                     }
+                    ConnectorRoute::ElbowHorizontal => style.push_str("edgeStyle=elbowEdgeStyle;"),
+                    ConnectorRoute::ElbowVertical => {
+                        style.push_str("edgeStyle=elbowEdgeStyle;elbow=vertical;");
+                    }
+                    ConnectorRoute::SideToSide => style.push_str("edgeStyle=sideToSideEdgeStyle;"),
+                    ConnectorRoute::TopToBottom => {
+                        style.push_str("edgeStyle=topToBottomEdgeStyle;")
+                    }
+                    ConnectorRoute::EntityRelation => {
+                        style.push_str("edgeStyle=entityRelationEdgeStyle;");
+                    }
+                    ConnectorRoute::Segment => style.push_str("edgeStyle=segmentEdgeStyle;"),
+                    ConnectorRoute::IsometricHorizontal => {
+                        style.push_str("edgeStyle=isometricEdgeStyle;");
+                    }
+                    ConnectorRoute::IsometricVertical => {
+                        style.push_str("edgeStyle=isometricEdgeStyle;elbow=vertical;");
+                    }
                 }
-                let marker_name = |marker: Option<ConnectorMarker>| match marker.map(|m| m.kind) {
-                    Some(ConnectorMarkerKind::Classic) => "classic",
-                    Some(ConnectorMarkerKind::ClassicThin) => "classicThin",
-                    Some(ConnectorMarkerKind::Open) => "open",
-                    Some(ConnectorMarkerKind::OpenThin) => "openThin",
-                    Some(ConnectorMarkerKind::Block) => "block",
-                    Some(ConnectorMarkerKind::BlockThin) => "blockThin",
-                    Some(ConnectorMarkerKind::Diamond) => "diamond",
-                    Some(ConnectorMarkerKind::DiamondThin) => "diamondThin",
-                    Some(ConnectorMarkerKind::Oval) => "oval",
-                    Some(ConnectorMarkerKind::HalfCircle) => "halfCircle",
-                    Some(ConnectorMarkerKind::BaseDash) => "baseDash",
-                    Some(ConnectorMarkerKind::Dash) => "dash",
-                    None => "classic",
+                let marker_name = |marker: Option<ConnectorMarker>| {
+                    marker.map_or("classic", |m| drawio_marker_name(m.kind))
                 };
                 style.push_str("endArrow=");
                 style.push_str(if connector.arrow_end {
@@ -4874,6 +7143,36 @@ impl<'a> PageWriter<'a> {
                 }
                 if connector.end_marker_unfilled {
                     style.push_str("endFill=0;");
+                }
+                if let Some(shape) = connector.edge_shape {
+                    style.push_str("shape=");
+                    style.push_str(shape.kind.drawio_name());
+                    style.push(';');
+                    for (key, value) in [
+                        ("width", shape.width),
+                        ("startWidth", shape.start_width),
+                        ("endWidth", shape.end_width),
+                    ] {
+                        if let Some(value) = value {
+                            style.push_str(&format!("{key}={};", num(value)));
+                        }
+                    }
+                    if shape.fill.is_some() {
+                        color_keys(&mut style, "fillColor", "fillOpacity", shape.fill);
+                    }
+                }
+                if let Some(jumps) = connector.line_jumps {
+                    style.push_str("jumpStyle=");
+                    style.push_str(match jumps.style {
+                        LineJumpStyle::Arc => "arc",
+                        LineJumpStyle::Gap => "gap",
+                        LineJumpStyle::Sharp => "sharp",
+                        LineJumpStyle::Line => "line",
+                    });
+                    style.push(';');
+                    if jumps.size != DEFAULT_LINE_JUMP_SIZE {
+                        style.push_str(&format!("jumpSize={};", num(jumps.size)));
+                    }
                 }
                 color_keys(
                     &mut style,
@@ -4957,6 +7256,11 @@ impl<'a> PageWriter<'a> {
                         ));
                     }
                 }
+                passthrough_style(&mut style, drawio);
+                self.label_placement = connector.label_placement.filter(|_| {
+                    connector.sankey.is_none()
+                        && (!connector.label.is_empty() || object.has_label_list())
+                });
                 self.edge(
                     &cell_id,
                     &if connector.sankey.is_some() {
@@ -4973,7 +7277,9 @@ impl<'a> PageWriter<'a> {
                     ends,
                     &connector.waypoints,
                     &object.alt_text,
+                    object.label_rich_text.as_deref(),
                 );
+                self.edge_labels(&cell_id, &connector.extra_labels, object.style.text_color);
             }
             CanvasObjectKind::Ink(ink) => {
                 let mut style = String::from(match ink.tool {
@@ -4984,6 +7290,7 @@ impl<'a> PageWriter<'a> {
                 color_keys(&mut style, "strokeColor", "strokeOpacity", Some(ink.color));
                 style.push_str(&format!("strokeWidth={};", num(ink.width)));
                 common_keys(&mut style, &object.style, 0.0, object.locked, object.band);
+                passthrough_style(&mut style, drawio);
                 let center = object.rect.center();
                 let points: Vec<Vec2> = ink
                     .points
@@ -5018,10 +7325,16 @@ impl<'a> PageWriter<'a> {
                     }
                     geometry.push_str("</Array>");
                 }
-                self.out.push_str(&format!(
-                    "<mxCell id=\"{cell_id}\" value=\"\" style=\"{}\" edge=\"1\" parent=\"{parent}\"><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>\n",
+                let cell = format!(
+                    "style=\"{}\" edge=\"1\" parent=\"{parent}\"><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
                     esc(&style)
-                ));
+                );
+                let extra = self.take_attributes();
+                self.out.push_str(&if extra.is_empty() {
+                    format!("<mxCell id=\"{cell_id}\" value=\"\" {cell}\n")
+                } else {
+                    format!("<UserObject label=\"\" id=\"{cell_id}\"{extra}><mxCell {cell}</UserObject>\n")
+                });
             }
         }
     }
@@ -5135,7 +7448,17 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(connector.parent, connector.start),
                 self.topic_terminal(connector.child, connector.end),
             ];
-            self.edge(&format!("e{n}"), "", &style, "1", Vec2::ZERO, ends, &[], "");
+            self.edge(
+                &format!("e{n}"),
+                "",
+                &style,
+                "1",
+                Vec2::ZERO,
+                ends,
+                &[],
+                "",
+                None,
+            );
         }
         for id in self.layout.order.clone() {
             let Some(topic) = sheet.topic(id) else {
@@ -5207,6 +7530,7 @@ impl<'a> PageWriter<'a> {
                 ends,
                 &[],
                 "",
+                None,
             );
         }
         for summary in self.layout.summaries.clone() {
@@ -5219,6 +7543,7 @@ impl<'a> PageWriter<'a> {
                 [Terminal::Point(summary.start), Terminal::Point(summary.end)],
                 &[summary.tip],
                 "",
+                None,
             );
         }
     }
@@ -5281,7 +7606,34 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
         ));
     }
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
+    let mut diagram_ids = HashSet::new();
+    let kept_ids: Vec<Option<String>> = sheets
+        .iter()
+        .map(|sheet| {
+            sheet
+                .drawio
+                .as_ref()
+                .and_then(|page| page.diagram_id.clone())
+                .filter(|id| diagram_ids.insert(id.clone()))
+        })
+        .collect();
     for (index, sheet) in sheets.into_iter().enumerate() {
+        let diagram_id = kept_ids[index].clone().unwrap_or_else(|| {
+            let base = format!("thinoda-page-{}", index + 1);
+            let mut id = base.clone();
+            let mut n = 1;
+            while !diagram_ids.insert(id.clone()) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+            id
+        });
+        let model_attributes: String = sheet
+            .drawio
+            .iter()
+            .flat_map(|page| &page.model_attributes)
+            .map(|(name, value)| format!(" {name}=\"{}\"", esc(value)))
+            .collect();
         let (grid, thinoda_grid) = match sheet.board.grid {
             GridKind::None => (0, "none"),
             GridKind::Dots => (1, "dots"),
@@ -5306,12 +7658,31 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
             })
             .unwrap_or_default();
         out.push_str(&format!(
-            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background}{sankey} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
-            index + 1,
+            "<diagram id=\"{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background}{sankey} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\"{model_attributes}>\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
+            esc(&diagram_id),
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));
-        out.push_str(&PageWriter::new(sheet)?.write());
+        let writer = PageWriter::new(sheet)?;
+        for layer in &sheet.canvas.layers {
+            let id = writer
+                .layer_cells
+                .get(&layer.id)
+                .cloned()
+                .unwrap_or_else(|| format!("l{}", layer.id.0));
+            out.push_str(&format!(
+                "<mxCell id=\"{}\" value=\"{}\"{}{} parent=\"0\"/>\n",
+                esc(&id),
+                esc(&layer.name),
+                if layer.locked {
+                    " style=\"locked=1;\""
+                } else {
+                    ""
+                },
+                if layer.visible { "" } else { " visible=\"0\"" },
+            ));
+        }
+        out.push_str(&writer.write());
         out.push_str("</root>\n</mxGraphModel>\n</diagram>\n");
     }
     out.push_str("</mxfile>\n");
@@ -5612,6 +7983,52 @@ pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoEr
     let checksum = crc32fast::hash(&chunk[4..chunk_len - 4]);
     chunk[chunk_len - 4..].copy_from_slice(&checksum.to_be_bytes());
     Ok(png)
+}
+
+const DRAWIO_MARKER_NAMES: [(&str, ConnectorMarkerKind); 30] = [
+    ("classic", ConnectorMarkerKind::Classic),
+    ("classicThin", ConnectorMarkerKind::ClassicThin),
+    ("open", ConnectorMarkerKind::Open),
+    ("openThin", ConnectorMarkerKind::OpenThin),
+    ("block", ConnectorMarkerKind::Block),
+    ("blockThin", ConnectorMarkerKind::BlockThin),
+    ("diamond", ConnectorMarkerKind::Diamond),
+    ("diamondThin", ConnectorMarkerKind::DiamondThin),
+    ("oval", ConnectorMarkerKind::Oval),
+    ("halfCircle", ConnectorMarkerKind::HalfCircle),
+    ("baseDash", ConnectorMarkerKind::BaseDash),
+    ("dash", ConnectorMarkerKind::Dash),
+    ("ERone", ConnectorMarkerKind::ErOne),
+    ("ERmandOne", ConnectorMarkerKind::ErMandOne),
+    ("ERmany", ConnectorMarkerKind::ErMany),
+    ("ERoneToMany", ConnectorMarkerKind::ErOneToMany),
+    ("ERzeroToOne", ConnectorMarkerKind::ErZeroToOne),
+    ("ERzeroToMany", ConnectorMarkerKind::ErZeroToMany),
+    ("manyOptional", ConnectorMarkerKind::ManyOptional),
+    ("box", ConnectorMarkerKind::Box),
+    ("cross", ConnectorMarkerKind::Cross),
+    ("circle", ConnectorMarkerKind::Circle),
+    ("circlePlus", ConnectorMarkerKind::CirclePlus),
+    ("async", ConnectorMarkerKind::Async),
+    ("openAsync", ConnectorMarkerKind::OpenAsync),
+    ("doubleBlock", ConnectorMarkerKind::DoubleBlock),
+    ("sysMLx", ConnectorMarkerKind::SysmlX),
+    ("sysMLLost", ConnectorMarkerKind::SysmlLost),
+    ("sysMLFound", ConnectorMarkerKind::SysmlFound),
+    ("sysMLPackCont", ConnectorMarkerKind::SysmlPackCont),
+];
+
+fn drawio_marker_kind(name: &str) -> Option<ConnectorMarkerKind> {
+    DRAWIO_MARKER_NAMES
+        .iter()
+        .find_map(|(candidate, kind)| (*candidate == name).then_some(*kind))
+}
+
+fn drawio_marker_name(kind: ConnectorMarkerKind) -> &'static str {
+    DRAWIO_MARKER_NAMES
+        .iter()
+        .find_map(|(name, candidate)| (*candidate == kind).then_some(*name))
+        .unwrap_or("classic")
 }
 
 #[cfg(test)]

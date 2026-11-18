@@ -39,11 +39,13 @@ mod actions;
 mod font_tests;
 pub mod ink_controller;
 pub mod ink_input;
+mod label_text;
 mod measure;
 pub mod minimap;
 pub mod pen_input;
 mod relationship_editing;
 mod render;
+mod shape_effects;
 mod topic_drag;
 #[cfg(test)]
 mod topic_ordering_tests;
@@ -54,11 +56,27 @@ pub use actions::{Action, BoardAction, FloatingArrangement, apply_action, apply_
 pub use measure::EguiMeasure;
 pub use minimap::MinimapLabels;
 pub use render::{
-    PaintOptions, Xf, automatic_board_stroke, board_label_colors, color32, paint_map,
-    paint_marker_colored, paint_thumbnail, resource_preview_texture,
+    PaintOptions, THUMBNAIL_MIN_LABEL_SIZE, Xf, automatic_board_stroke, board_label_colors,
+    color32, paint_map, paint_marker_colored, paint_thumbnail, resource_preview_texture,
 };
 pub use view::{
-    AddControlLabels, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView, NewTopicTitles,
-    ObjectSelection, ShapeDrop, StencilDrop, TitleEditContinuation, protect_ime_candidate_keys,
-    shortcut_bindings,
+    AddControlLabels, BoardLabelTarget, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView,
+    NewTopicTitles, ObjectSelection, ShapeDrop, StencilDrop, TitleEditContinuation,
+    protect_ime_candidate_keys, shortcut_bindings,
 };
+
+/// Shared palette for text and object formatting controls.
+pub const FORMAT_SWATCHES: [egui::Color32; 12] = [
+    egui::Color32::from_rgb(0x2E, 0x7C, 0xF6),
+    egui::Color32::from_rgb(0x00, 0xA8, 0x9D),
+    egui::Color32::from_rgb(0x2B, 0xB6, 0x73),
+    egui::Color32::from_rgb(0xF5, 0xA6, 0x23),
+    egui::Color32::from_rgb(0xF2, 0x6B, 0x3A),
+    egui::Color32::from_rgb(0xE8, 0x45, 0x5C),
+    egui::Color32::from_rgb(0xA3, 0x5B, 0xE0),
+    egui::Color32::from_rgb(0x5B, 0x6B, 0xE0),
+    egui::Color32::from_rgb(0x33, 0x33, 0x33),
+    egui::Color32::from_rgb(0x88, 0x88, 0x88),
+    egui::Color32::from_rgb(0xEE, 0xEE, 0xEE),
+    egui::Color32::WHITE,
+];

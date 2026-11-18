@@ -6,8 +6,8 @@
 //! refuses to render with an explicit diagnostic instead of drawing silently
 //! wrong geometry.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -25,6 +25,9 @@ use crate::drawio::{BoundedDecodeError, Element, decode_compressed_bounded, pars
 pub const CAP_IMAGE: &str = "drawio.image";
 /// Capability declared by definitions that include shapes from outside the file.
 pub const CAP_EXTERNAL_INCLUDE: &str = "drawio.include-shape";
+/// Revision of the conversion rules; bundled packages record the revision
+/// that generated them, and a change must regenerate the bundle.
+pub const TRANSLATOR_REVISION: u32 = 1;
 /// Extension key holding the bounded original `<shape>` XML.
 pub const SOURCE_EXTENSION: &str = "drawio.source";
 const MAX_SOURCE_BYTES: usize = 32 * 1024;
@@ -44,6 +47,211 @@ pub fn import_drawio_stencils(
     package_id: &str,
     title: &str,
 ) -> Result<StencilImport, IoError> {
+    let (import, _) = convert_stencils(xml, package_id, title)?;
+    import
+        .package
+        .validate(&thinoda_core::stencil::Limits::DEFAULT)
+        .map_err(|e| IoError::Invalid(e.to_string()))?;
+    Ok(import)
+}
+
+/// A draw.io stencil library file converted into installable packages.
+#[derive(Debug)]
+pub struct StencilLibraryImport {
+    /// One package, or numbered parts when the library exceeds package limits.
+    pub packages: Vec<StencilPackage>,
+    /// The `<shapes name>` namespace, e.g. `mxgraph.aws4`.
+    pub namespace: Option<String>,
+    pub diagnostics: Vec<String>,
+}
+
+/// Prefix of user-installed draw.io library packages, distinct from the
+/// bundled `drawio.<family>` packages so neither can shadow the other.
+pub const USER_LIBRARY_PREFIX: &str = "user.drawio.";
+
+/// Converts a whole draw.io stencil library (`<shapes name="mxgraph.x">`) the
+/// way draw.io registers it: every shape gets the alias
+/// `lowercase(namespace + ".") + lowercase(name with "_")`, recorded in the
+/// package's `drawio.import` map and as the definition's native draw.io style.
+/// Libraries beyond the package limits (including the compact JSON size) are
+/// split into `<id>.part-N` packages that keep each definition with the
+/// definitions it includes; store them with `serde_json::to_string`.
+pub fn import_drawio_stencil_library(
+    xml: &str,
+    title: &str,
+) -> Result<StencilLibraryImport, IoError> {
+    let (import, namespace) = convert_stencils(xml, "user.drawio.library", title)?;
+    let mut diagnostics = import.diagnostics;
+    let mut package = import.package;
+    let local = namespace
+        .as_deref()
+        .map(|ns| {
+            let lower = ns.to_lowercase();
+            lower.strip_prefix("mxgraph.").unwrap_or(&lower).to_owned()
+        })
+        .map(|local| slug(&local))
+        .filter(|local| !local.is_empty())
+        .unwrap_or_else(|| {
+            let title = slug(&package.title.to_lowercase());
+            if title.is_empty() {
+                "library".into()
+            } else {
+                title
+            }
+        });
+    package.id = format!("{USER_LIBRARY_PREFIX}{local}");
+    let prefix = namespace
+        .as_deref()
+        .map(|ns| format!("{}.", ns.to_lowercase()))
+        .unwrap_or_default();
+
+    // A later shape with the same name replaces the earlier, like draw.io.
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    for definition in &mut package.definitions {
+        definition.extensions.remove(SOURCE_EXTENSION);
+        let Some(name) = definition
+            .interchange
+            .get("drawio")
+            .and_then(|v| v.get("stencilName"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let alias = format!("{prefix}{}", name.replace(' ', "_").to_lowercase());
+        definition.interchange.insert(
+            "drawio".into(),
+            serde_json::json!({ "stencilName": name, "style": format!("shape={alias};") }),
+        );
+        if definition.requires.is_empty() {
+            aliases.insert(alias, definition.id.clone());
+        }
+    }
+
+    let limits = thinoda_core::stencil::Limits::DEFAULT;
+    let with_aliases = |mut package: StencilPackage| {
+        let map: serde_json::Map<String, Value> = aliases
+            .iter()
+            .filter(|(_, id)| package.definition(id).is_some())
+            .map(|(alias, id)| (alias.clone(), Value::String(id.clone())))
+            .collect();
+        package
+            .extensions
+            .insert(IMPORT_EXTENSION.into(), Value::Object(map));
+        package
+    };
+    // Installed packages reload through `from_json`, which also bounds the
+    // compact serialized size that `validate` does not check.
+    let fits = |package: &StencilPackage| -> Result<(), String> {
+        package.validate(&limits).map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(package).map_err(|e| e.to_string())?;
+        if bytes.len() > limits.max_package_bytes {
+            return Err("package size limit".into());
+        }
+        Ok(())
+    };
+    let whole = with_aliases(package.clone());
+    if fits(&whole).is_ok() {
+        return Ok(StencilLibraryImport {
+            packages: vec![whole],
+            namespace,
+            diagnostics,
+        });
+    }
+
+    let mut parts = Vec::new();
+    let mut pending = vec![include_groups(std::mem::take(&mut package.definitions))];
+    while let Some(groups) = pending.pop() {
+        let mut part = package.clone();
+        part.definitions = groups.iter().flatten().cloned().collect();
+        let part = with_aliases(part);
+        match fits(&part) {
+            Ok(()) => parts.push(part),
+            Err(_) if groups.len() > 1 => {
+                let mut groups = groups;
+                let second = groups.split_off(groups.len() / 2);
+                pending.push(second);
+                pending.push(groups);
+            }
+            Err(error) => diagnostics.push(format!(
+                "{}: skipped, exceeds package limits: {error}",
+                groups[0][0].id
+            )),
+        }
+    }
+    if parts.is_empty() {
+        return Err(IoError::Invalid(
+            "no shape of the draw.io stencil library fits the package limits".into(),
+        ));
+    }
+    let count = parts.len();
+    for (index, part) in parts.iter_mut().enumerate() {
+        part.id = format!("{}.part-{}", package.id, index + 1);
+        part.title = format!("{} ({}/{count})", package.title, index + 1);
+    }
+    Ok(StencilLibraryImport {
+        packages: parts,
+        namespace,
+        diagnostics,
+    })
+}
+
+/// Groups definitions so each group holds every definition it includes;
+/// groups keep the library order of their first definition.
+fn include_groups(definitions: Vec<StencilDefinition>) -> Vec<Vec<StencilDefinition>> {
+    let index: HashMap<String, usize> = definitions
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.id.clone(), i))
+        .collect();
+    let mut parent: Vec<usize> = (0..definitions.len()).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    for (i, definition) in definitions.iter().enumerate() {
+        let mut includes = Vec::new();
+        collect_includes(definition.background.iter(), &mut includes);
+        collect_includes(definition.foreground.iter(), &mut includes);
+        for include in includes {
+            if let Some(&j) = index.get(include) {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                parent[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<StencilDefinition>> = BTreeMap::new();
+    for (i, definition) in definitions.into_iter().enumerate() {
+        let r = root(&mut parent, i);
+        groups.entry(r).or_default().push(definition);
+    }
+    groups.into_values().collect()
+}
+
+fn collect_includes<'a>(ops: impl Iterator<Item = &'a Op>, out: &mut Vec<&'a str>) {
+    for op in ops {
+        match op {
+            Op::Include { definition, .. } => out.push(definition),
+            Op::If {
+                then, otherwise, ..
+            } => {
+                collect_includes(then.iter(), out);
+                collect_includes(otherwise.iter(), out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Converts without validating limits; also returns the `<shapes>` name.
+fn convert_stencils(
+    xml: &str,
+    package_id: &str,
+    title: &str,
+) -> Result<(StencilImport, Option<String>), IoError> {
     let trimmed = xml.trim();
     if trimmed.len() > MAX_STENCIL_BYTES {
         return Err(IoError::Invalid(format!(
@@ -86,6 +294,7 @@ pub fn import_drawio_stencils(
     }
 
     let mut ids = BTreeMap::new();
+    let mut shape_ids = Vec::with_capacity(shapes.len());
     let mut used = BTreeSet::new();
     for (index, shape) in shapes.iter().enumerate() {
         let name = shape.attr("name").unwrap_or_default();
@@ -99,22 +308,20 @@ pub fn import_drawio_stencils(
             id = format!("{base}-{n}");
             n += 1;
         }
-        ids.entry(name.to_string()).or_insert(id);
+        // Includes resolve to the first shape carrying a name, like draw.io.
+        ids.entry(name.to_string()).or_insert_with(|| id.clone());
+        shape_ids.push(id);
     }
 
     let mut diagnostics = Vec::new();
     let mut definitions = Vec::with_capacity(shapes.len());
-    for (index, shape) in shapes.iter().enumerate() {
+    for (shape, id) in shapes.iter().zip(shape_ids) {
         let name = shape.attr("name").unwrap_or_default();
-        let id = if name.is_empty() {
-            format!("shape-{}", index + 1)
-        } else {
-            ids[name].clone()
-        };
         let mut cx = Convert {
             ids: &ids,
             requires: BTreeSet::new(),
             notes: Vec::new(),
+            hoisted: Vec::new(),
         };
         let definition = cx.shape(shape, id.clone(), name);
         diagnostics.extend(cx.notes.into_iter().map(|n| format!("{id}: {n}")));
@@ -137,13 +344,63 @@ pub fn import_drawio_stencils(
         definitions,
         extensions: BTreeMap::new(),
     };
-    package
-        .validate(&thinoda_core::stencil::Limits::DEFAULT)
-        .map_err(|e| IoError::Invalid(e.to_string()))?;
-    Ok(StencilImport {
-        package,
-        diagnostics,
-    })
+    let namespace = (root.name == "shapes")
+        .then(|| root.attr("name").map(str::to_owned))
+        .flatten();
+    Ok((
+        StencilImport {
+            package,
+            diagnostics,
+        },
+        namespace,
+    ))
+}
+
+fn is_geometry(name: &str) -> bool {
+    matches!(name, "rect" | "roundrect" | "ellipse" | "path")
+}
+
+fn is_paint(name: &str) -> bool {
+    matches!(name, "fill" | "stroke" | "fillstroke")
+}
+
+fn is_path_command(name: &str) -> bool {
+    matches!(name, "move" | "line" | "quad" | "curve" | "arc" | "close")
+}
+
+/// Canvas state setters. draw.io applies them when a path is painted, so one
+/// that appears inside a `<path>` is equivalent to one placed before it.
+fn is_state(name: &str) -> bool {
+    matches!(
+        name,
+        "strokecolor"
+            | "fillcolor"
+            | "fontcolor"
+            | "alpha"
+            | "fillalpha"
+            | "strokealpha"
+            | "strokewidth"
+            | "dashed"
+            | "dashpattern"
+            | "linejoin"
+            | "linecap"
+            | "miterlimit"
+            | "fontsize"
+            | "fontstyle"
+            | "fontfamily"
+    )
+}
+
+/// Elements draw.io's renderer draws or applies; it ignores every other name.
+fn is_known(name: &str) -> bool {
+    is_geometry(name)
+        || is_paint(name)
+        || is_path_command(name)
+        || is_state(name)
+        || matches!(
+            name,
+            "save" | "restore" | "text" | "image" | "include-shape"
+        )
 }
 
 /// Lowercase ASCII identifier from a draw.io stencil name.
@@ -163,6 +420,9 @@ struct Convert<'a> {
     ids: &'a BTreeMap<String, String>,
     requires: BTreeSet<String>,
     notes: Vec<String>,
+    /// State setters found inside the last converted `<path>`, to be emitted
+    /// before it.
+    hoisted: Vec<Op>,
 }
 
 impl Convert<'_> {
@@ -186,22 +446,37 @@ impl Convert<'_> {
             stroke_width,
         };
 
+        // draw.io runs <background> as ordinary instructions before
+        // <foreground>; its first geometry is the outline. Thinoda seeds the
+        // outline as the current path, so the remaining background
+        // instructions (state, paint, later geometry) become a foreground
+        // prelude that keeps draw.io's execution order.
         let mut background = None;
+        let mut foreground = Vec::new();
         if let Some(bg) = shape.child("background") {
-            for child in &bg.children {
-                match self.geometry(child) {
-                    Some(op) if background.is_none() => background = Some(op),
-                    Some(_) => self.notes.push(
+            let children = &bg.children;
+            let outline = children.iter().position(|c| is_geometry(&c.name));
+            let split = outline.unwrap_or(children.len());
+            if children[..split].iter().any(|c| is_paint(&c.name)) {
+                self.notes
+                    .push("background paints before its outline geometry".into());
+            }
+            foreground.extend(self.ops(&children[..split]));
+            if let Some(index) = outline {
+                background = self.geometry(&children[index]);
+                foreground.append(&mut self.hoisted);
+                let rest = &children[index + 1..];
+                if rest.iter().any(|c| is_geometry(&c.name)) {
+                    self.notes.push(
                         "background has extra geometry; only the first is the outline".into(),
-                    ),
-                    None => self.unsupported(&child.name),
+                    );
                 }
+                foreground.extend(self.ops(rest));
             }
         }
-        let foreground = shape
-            .child("foreground")
-            .map(|fg| self.ops(&fg.children))
-            .unwrap_or_default();
+        if let Some(fg) = shape.child("foreground") {
+            foreground.extend(self.ops(&fg.children));
+        }
 
         let mut names = BTreeSet::new();
         let connections = shape
@@ -292,18 +567,47 @@ impl Convert<'_> {
                 w: n(self, "w"),
                 h: n(self, "h"),
             },
-            "path" => Op::Path {
-                commands: self.path(e),
-            },
+            "path" => self.path(e),
             _ => return None,
         })
     }
 
-    fn path(&mut self, e: &Element) -> Vec<PathCmd> {
+    /// Converts a `<path>`. draw.io draws its children in the same canvas:
+    /// state setters apply at paint time and are hoisted before the path, and
+    /// a shape element replaces the path being built, as it does in draw.io.
+    fn path(&mut self, e: &Element) -> Op {
+        if e.attr("rounded") == Some("1") {
+            self.notes
+                .push("rounded path corners are drawn sharp".into());
+        }
         let mut commands = Vec::new();
+        let mut replaced: Option<Op> = None;
         for c in &e.children {
+            let name = c.name.as_str();
+            if is_state(name) {
+                let state = self.ops(std::slice::from_ref(c));
+                self.hoisted.extend(state);
+                continue;
+            }
+            if is_geometry(name) {
+                self.notes.push(format!(
+                    "<{name}> inside a path replaces the path, as in draw.io"
+                ));
+                let hoisted = std::mem::take(&mut self.hoisted);
+                replaced = self.geometry(c);
+                self.hoisted.splice(0..0, hoisted);
+                commands.clear();
+                continue;
+            }
+            if replaced.is_some() && is_path_command(name) {
+                continue;
+            }
+            if !is_known(name) {
+                self.ignored(name);
+                continue;
+            }
             let n = |cx: &mut Self, key| Expr::Num(cx.num(c, key));
-            let command = match c.name.as_str() {
+            let command = match name {
                 "move" => PathCmd::Move {
                     x: n(self, "x"),
                     y: n(self, "y"),
@@ -352,21 +656,83 @@ impl Convert<'_> {
             }
             commands.push(command);
         }
+        if let Some(op) = replaced {
+            return op;
+        }
         if commands.is_empty() {
             commands.push(PathCmd::Move {
                 x: Expr::Num(0.0),
                 y: Expr::Num(0.0),
             });
         }
-        commands
+        Op::Path { commands }
+    }
+
+    /// A `move`/`line`/... outside `<path>` extends the open path in draw.io,
+    /// or is ignored when no path is open.
+    fn stray_command(&mut self, e: &Element, open: Option<&mut Op>) {
+        let Some(Op::Path { commands }) = open else {
+            self.notes.push(format!(
+                "<{}> outside a path is ignored, as in draw.io",
+                e.name
+            ));
+            return;
+        };
+        let n = |cx: &mut Self, key| Expr::Num(cx.num(e, key));
+        commands.push(match e.name.as_str() {
+            "move" => PathCmd::Move {
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            "line" => PathCmd::Line {
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            "quad" => PathCmd::Quad {
+                x1: n(self, "x1"),
+                y1: n(self, "y1"),
+                x2: n(self, "x2"),
+                y2: n(self, "y2"),
+            },
+            "curve" => PathCmd::Curve {
+                x1: n(self, "x1"),
+                y1: n(self, "y1"),
+                x2: n(self, "x2"),
+                y2: n(self, "y2"),
+                x3: n(self, "x3"),
+                y3: n(self, "y3"),
+            },
+            "arc" => PathCmd::Arc {
+                rx: n(self, "rx"),
+                ry: n(self, "ry"),
+                x_axis_rotation: n(self, "x-axis-rotation"),
+                large_arc_flag: n(self, "large-arc-flag"),
+                sweep_flag: n(self, "sweep-flag"),
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            _ => PathCmd::Close,
+        });
     }
 
     fn ops(&mut self, elements: &[Element]) -> Vec<Op> {
         let mut ops = Vec::with_capacity(elements.len());
+        // Index of the path that later stray path commands extend.
+        let mut open: Option<usize> = None;
         for e in elements {
             if let Some(geometry) = self.geometry(e) {
+                ops.append(&mut self.hoisted);
+                open = matches!(geometry, Op::Path { .. }).then_some(ops.len());
                 ops.push(geometry);
                 continue;
+            }
+            if is_path_command(&e.name) {
+                let target = open.and_then(|i| ops.get_mut(i));
+                self.stray_command(e, target);
+                continue;
+            }
+            if is_paint(&e.name) || e.name == "include-shape" {
+                open = None;
             }
             let color = |cx: &mut Self| cx.color(e);
             let op = match e.name.as_str() {
@@ -378,13 +744,9 @@ impl Convert<'_> {
                 "strokecolor" => Op::StrokeColor { color: color(self) },
                 "fillcolor" => Op::FillColor { color: color(self) },
                 "fontcolor" => Op::FontColor { color: color(self) },
-                "alpha" => Op::Alpha {
-                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
-                },
-                "fillalpha" => Op::FillAlpha {
-                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
-                },
-                "strokealpha" => Op::StrokeAlpha {
+                // draw.io applies fillalpha and strokealpha as the global
+                // alpha; matching it keeps converted shapes looking the same.
+                "alpha" | "fillalpha" | "strokealpha" => Op::Alpha {
                     value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
                 },
                 "strokewidth" => Op::StrokeWidth {
@@ -479,8 +841,12 @@ impl Convert<'_> {
                         }
                     }
                 }
+                "image" => {
+                    self.unsupported("image");
+                    continue;
+                }
                 other => {
-                    self.unsupported(other);
+                    self.ignored(other);
                     continue;
                 }
             };
@@ -489,8 +855,16 @@ impl Convert<'_> {
         ops
     }
 
-    /// Declares an element the interpreter cannot draw, so the definition
-    /// refuses to render instead of silently dropping instructions.
+    /// draw.io's renderer ignores elements it does not know; so does the
+    /// conversion, with a diagnostic.
+    fn ignored(&mut self, element: &str) {
+        self.notes.push(format!(
+            "ignored unknown element <{element}>, as in draw.io"
+        ));
+    }
+
+    /// Declares an element draw.io draws but the interpreter cannot, so the
+    /// definition refuses to render instead of silently dropping it.
     fn unsupported(&mut self, element: &str) {
         if element == "image" {
             self.requires.insert(CAP_IMAGE.into());
@@ -606,6 +980,42 @@ pub(crate) fn native_style(stencil: &StencilRef) -> Option<String> {
 
 /// Package of stencils converted from cells' inline `shape=stencil(...)`.
 pub(crate) const INLINE_PACKAGE_ID: &str = "drawio.inline";
+
+/// draw.io style keys whose value the stencil reference owns: the definition's
+/// native style keys and its bound parameter keys.
+pub(crate) fn bound_style_keys(stencil: &StencilRef) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    let Some((_, definition)) = stencil.resolve() else {
+        return keys;
+    };
+    let Some(binding) = drawio_binding(definition) else {
+        return keys;
+    };
+    if let Some(style) = binding.get("style").and_then(Value::as_str) {
+        keys.extend(
+            style
+                .split(';')
+                .filter_map(|part| part.split_once('='))
+                .map(|(key, _)| key.trim().to_owned()),
+        );
+    }
+    if let Some(bindings) = binding.get("parameters").and_then(Value::as_object) {
+        for binding in bindings.values() {
+            match binding {
+                Value::String(key) => {
+                    keys.insert(key.clone());
+                }
+                Value::Object(choice) => {
+                    if let Some(key) = choice.get("style").and_then(Value::as_str) {
+                        keys.insert(key.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    keys
+}
 
 /// draw.io keys for bound parameters plus the lossless reference keys.
 pub(crate) fn reference_style(stencil: &StencilRef) -> String {
@@ -805,8 +1215,72 @@ fn import_index() -> &'static HashMap<String, ImportTarget> {
     })
 }
 
-/// Whether a built-in package maps the draw.io shape name to a definition.
+#[derive(Default)]
+struct UserRegistry {
+    packages: HashMap<String, Arc<StencilPackage>>,
+    aliases: HashMap<String, (Arc<StencilPackage>, String)>,
+}
+
+fn user_registry() -> &'static RwLock<UserRegistry> {
+    static REGISTRY: OnceLock<RwLock<UserRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+/// Replaces the process-wide set of user-installed stencil packages. Their
+/// `drawio.import` aliases resolve plain draw.io shapes after the built-in
+/// and bundled packages, and their ids resolve explicit Thinoda references,
+/// so diagrams using an installed vendor library open as stencils.
+pub fn set_user_stencil_packages(packages: impl IntoIterator<Item = Arc<StencilPackage>>) {
+    let mut registry = UserRegistry::default();
+    for package in packages {
+        if registry.packages.contains_key(&package.id) {
+            continue;
+        }
+        if let Some(map) = package
+            .extensions
+            .get(IMPORT_EXTENSION)
+            .and_then(Value::as_object)
+        {
+            for (shape, target) in map {
+                let Some(definition) = target.as_str() else {
+                    continue;
+                };
+                if package.definition(definition).is_some() {
+                    // Earlier packages win, like the built-in index.
+                    registry
+                        .aliases
+                        .entry(shape.clone())
+                        .or_insert_with(|| (Arc::clone(&package), definition.to_owned()));
+                }
+            }
+        }
+        registry.packages.insert(package.id.clone(), package);
+    }
+    if let Ok(mut current) = user_registry().write() {
+        *current = registry;
+    }
+}
+
+fn user_alias(shape: &str) -> Option<(Arc<StencilPackage>, String)> {
+    user_registry().read().ok()?.aliases.get(shape).cloned()
+}
+
+fn user_package(id: &str) -> Option<Arc<StencilPackage>> {
+    user_registry().read().ok()?.packages.get(id).cloned()
+}
+
+/// Whether a built-in package, the bundled draw.io families, an installed
+/// user library or the shape's inline payload define the draw.io shape name.
+/// Never decodes a package.
 pub fn maps_drawio_shape(shape: &str) -> bool {
+    maps_builtin_drawio_shape(shape)
+        || crate::drawio_bundle::bundle().has_alias(shape)
+        || user_alias(shape).is_some()
+}
+
+/// Whether a built-in package or the shape's inline payload defines the
+/// draw.io shape name, ignoring the bundled draw.io families.
+pub fn maps_builtin_drawio_shape(shape: &str) -> bool {
     import_index().contains_key(shape) || inline_payload(shape).is_some()
 }
 
@@ -893,8 +1367,10 @@ pub(crate) fn inline_bundle<'a>(
 
 /// Resolves a cell style to a stencil reference. An explicit Thinoda reference
 /// wins; when its package is not installed, a matching inline stencil in the
-/// same style draws it. With `implicit`, a plain draw.io shape name resolves
-/// through the built-in `drawio.import` maps or its inline stencil payload.
+/// same style draws it, then a bundled draw.io package of that id, then an
+/// installed user library. With `implicit`, a plain draw.io shape name
+/// resolves through its inline stencil payload, the built-in `drawio.import`
+/// maps, the bundled families or the installed user libraries.
 pub(crate) fn style_reference<'a>(
     entries: impl IntoIterator<Item = (&'a str, &'a str)>,
     shape: &str,
@@ -906,8 +1382,11 @@ pub(crate) fn style_reference<'a>(
         if explicit.resolve().is_some() {
             return Some(explicit);
         }
-        if let Some(package) = inline_package(shape)
-            && package.id == explicit.package
+        let fallback = inline_package(shape)
+            .filter(|package| package.id == explicit.package)
+            .or_else(|| crate::drawio_bundle::bundle().package_by_id(&explicit.package))
+            .or_else(|| user_package(&explicit.package));
+        if let Some(package) = fallback
             && package.definition(&explicit.definition).is_some()
         {
             let mut stencil = StencilRef::with_package(package, explicit.definition.clone());
@@ -925,12 +1404,17 @@ pub(crate) fn style_reference<'a>(
     let stencil = if let Some(package) = inline_package(shape) {
         let definition = package.definitions.first()?.id.clone();
         StencilRef::with_package(package, definition)
-    } else {
-        let target = import_index().get(shape)?;
+    } else if let Some(target) = import_index().get(shape) {
         let mut stencil =
             StencilRef::with_package(Arc::clone(&target.package), target.definition.clone());
         apply_bound_parameters(&mut stencil, &entries, target.absent);
         stencil
+    } else {
+        let (package, definition) = crate::drawio_bundle::bundle()
+            .lookup(shape)
+            .map(|(package, definition)| (package, definition.to_owned()))
+            .or_else(|| user_alias(shape))?;
+        StencilRef::with_package(package, definition)
     };
     stencil.validate().ok()?;
     stencil.resolve()?;

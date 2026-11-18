@@ -670,6 +670,9 @@ impl Subtree {
 pub struct Sheet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sankey: Option<crate::sankey::SankeySettings>,
+    /// Imported draw.io page data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioPagePassthrough>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fim: Option<crate::fim::FimDocument>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -732,6 +735,7 @@ impl Sheet {
         topics.insert(root, Topic::new(root, root_title));
         Self {
             sankey: None,
+            drawio: None,
             fim: None,
             semantic: None,
             title: title.into(),
@@ -811,6 +815,76 @@ impl Sheet {
         self.canvas.has_bar_connector_markers()
     }
 
+    /// Whether the sheet needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.canvas.has_library_connector_markers()
+    }
+
+    /// Whether the sheet needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.canvas.has_connector_line_jumps()
+    }
+
+    /// Whether the sheet needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.canvas.has_drawio_edge_routes()
+    }
+
+    /// Whether the sheet needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.canvas.has_connector_edge_shapes()
+    }
+
+    /// Whether the sheet needs connector-label-aware persistence.
+    pub fn has_connector_labels(&self) -> bool {
+        self.canvas.has_connector_labels()
+    }
+
+    /// Whether the sheet needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.canvas.has_object_data()
+    }
+
+    /// Whether the sheet needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.canvas.has_shape_styles()
+    }
+
+    /// Whether any shape label has a text style.
+    pub fn has_label_styles(&self) -> bool {
+        self.canvas.has_label_styles()
+    }
+
+    /// Whether any object needs inline-label-aware persistence.
+    pub fn has_rich_labels(&self) -> bool {
+        self.canvas.has_rich_labels()
+    }
+
+    /// Whether any connector needs rich-connector-label-aware persistence.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.canvas.has_rich_connector_labels()
+    }
+
+    /// Whether any additional connector label has inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.canvas.has_rich_extra_connector_labels()
+    }
+
+    /// Whether the sheet needs layer-aware persistence.
+    pub fn has_layers(&self) -> bool {
+        self.canvas.has_layers()
+    }
+
+    /// Whether the sheet needs table-aware persistence.
+    pub fn has_tables(&self) -> bool {
+        !self.canvas.scene.tables.is_empty()
+    }
+
+    /// Whether the sheet needs draw.io segment-route-aware persistence.
+    pub fn has_drawio_segment_routes(&self) -> bool {
+        self.canvas.has_drawio_segment_routes()
+    }
+
     /// Whether the sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.canvas.has_shape_rounding()
@@ -838,6 +912,10 @@ impl Sheet {
 
     pub fn has_stencils(&self) -> bool {
         self.canvas.has_stencils()
+    }
+
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.drawio.is_some() || self.canvas.has_drawio_passthrough()
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -1560,6 +1638,15 @@ impl Sheet {
                 t.inline_text
                     .validate(&t.title)
                     .map_err(|error| format!("topic {id}: {error}"))?;
+                if t.inline_text
+                    .runs
+                    .iter()
+                    .any(|run| run.style.baseline.is_some())
+                {
+                    return Err(format!(
+                        "topic {id} has a baseline override reserved for shape labels"
+                    ));
+                }
             }
             if t.marker_colors
                 .keys()
@@ -2591,6 +2678,77 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_bar_connector_markers)
     }
 
+    /// Whether any sheet needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_library_connector_markers)
+    }
+
+    /// Whether any sheet needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_line_jumps)
+    }
+
+    /// Whether any sheet needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_edge_routes)
+    }
+
+    /// Whether any sheet needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_edge_shapes)
+    }
+
+    /// Whether any sheet needs connector-label-aware persistence.
+    pub fn has_connector_labels(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_labels)
+    }
+
+    /// Whether any sheet needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_object_data)
+    }
+
+    /// Whether any sheet needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_shape_styles)
+    }
+
+    pub fn has_label_styles(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_label_styles)
+    }
+
+    /// Whether any sheet needs inline-label-aware persistence.
+    pub fn has_rich_labels(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rich_labels)
+    }
+
+    /// Whether any sheet needs rich-connector-label-aware persistence.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rich_connector_labels)
+    }
+
+    /// Whether any sheet has an additional connector label with inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_rich_extra_connector_labels)
+    }
+
+    /// Whether any sheet needs layer-aware persistence.
+    pub fn has_layers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_layers)
+    }
+
+    /// Whether any sheet needs table-aware persistence.
+    pub fn has_tables(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_tables)
+    }
+
+    /// Whether any sheet needs draw.io segment-route-aware persistence.
+    pub fn has_drawio_segment_routes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_segment_routes)
+    }
+
     /// Whether any sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.sheets.iter().any(Sheet::has_shape_rounding)
@@ -2623,6 +2781,10 @@ impl Workbook {
 
     pub fn has_stencils(&self) -> bool {
         self.sheets.iter().any(Sheet::has_stencils)
+    }
+
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_passthrough)
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -2697,6 +2859,7 @@ impl Workbook {
         copy.metadata = Metadata::default();
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
             sheet.fim = None;
+            sheet.drawio = None;
             sheet.resources = Default::default();
             sheet.title = format!("Sheet {}", sheet_index + 1);
             sheet.theme.font_family = None;

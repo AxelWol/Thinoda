@@ -2383,3 +2383,518 @@ fn destination_with_exhausted_entity_ids_is_rejected_without_allocation() {
         assert_eq!(target, before);
     }
 }
+
+#[test]
+fn drawio_passthrough_board_clipboard_requires_version_thirty_and_drops_source_ids() {
+    use crate::Rect;
+    use crate::drawio_passthrough::DrawioCellPassthrough;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+    );
+    shape.drawio = Some(std::sync::Arc::new(DrawioCellPassthrough {
+        source_id: Some("node-a".into()),
+        style: vec![("customKey".into(), "1".into())],
+        attributes: vec![("owner".into(), "ops".into())],
+    }));
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DRAWIO_PASSTHROUGH_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(
+        DRAWIO_PASSTHROUGH_BOARD_PREFIX,
+        CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(decode_board_payload(&downgraded).is_err());
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let drawio = destination
+        .canvas
+        .object(pasted.objects[0])
+        .unwrap()
+        .drawio
+        .clone()
+        .unwrap();
+    assert_eq!(drawio.source_id, None);
+    assert_eq!(drawio.style, [("customKey".to_string(), "1".to_string())]);
+    assert_eq!(
+        drawio.attributes,
+        [("owner".to_string(), "ops".to_string())]
+    );
+}
+
+#[test]
+fn library_marker_board_clipboard_requires_version_thirty_one() {
+    use crate::board::{CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::ErOneToMany,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Async,
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(MARKER_LIBRARY_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let downgraded = encoded.replacen(
+        MARKER_LIBRARY_BOARD_PREFIX,
+        DRAWIO_PASSTHROUGH_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("library connector markers require board clipboard version 31")
+    );
+}
+
+#[test]
+fn rich_label_board_clipboard_requires_version_forty_two() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+        unreachable!()
+    };
+    *label = "A🙂B".into();
+    let mut rich = crate::InlineText::default();
+    rich.update_range(label, 1..2, |style| style.italic = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(std::sync::Arc::new(rich));
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RICH_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let downgraded = encoded.replacen(RICH_LABELS_BOARD_PREFIX, LABEL_STYLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("rich labels require board clipboard version 42")
+    );
+}
+
+#[test]
+fn rich_connector_label_board_clipboard_requires_version_forty_three() {
+    let mut source = Sheet::new("Source", "Root");
+    let connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut object = CanvasObject::connector(connector);
+    object.set_label("A🙂B").unwrap();
+    let mut rich = crate::InlineText::default();
+    rich.update_range(object.label(), 1..2, |style| style.italic = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(std::sync::Arc::new(rich));
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RICH_CONNECTOR_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let forged = encoded.replacen(
+        RICH_CONNECTOR_LABELS_BOARD_PREFIX,
+        RICH_LABELS_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&forged)
+            .unwrap_err()
+            .contains("rich connector labels require board clipboard version 43")
+    );
+}
+
+#[test]
+fn rich_extra_connector_label_board_clipboard_requires_version_forty_four() {
+    use crate::board::ConnectorLabel;
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut rich = crate::InlineText::default();
+    rich.update_range("A🙂B", 1..2, |style| style.italic = Some(true))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "A🙂B".into(),
+        rich_text: Some(std::sync::Arc::new(rich)),
+        ..Default::default()
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let forged = encoded.replacen(
+        RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX,
+        RICH_CONNECTOR_LABELS_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&forged)
+            .unwrap_err()
+            .contains("rich extra connector labels require board clipboard version 44")
+    );
+}
+
+#[test]
+fn label_style_board_clipboard_requires_version_forty_one() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.style.flip_v = true;
+    object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+        font_family: Some("Courier New".into()),
+        vertical_position: crate::label_style::LabelVAlign::Bottom,
+        ..Default::default()
+    }));
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LABEL_STYLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LABEL_STYLES_BOARD_PREFIX, SHAPE_STYLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("label styles require board clipboard version 41")
+    );
+}
+
+#[test]
+fn shape_style_board_clipboard_requires_version_forty() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.style.fill = Some(crate::Color::WHITE);
+    object.style.gradient = Some(crate::board::ShapeGradient {
+        color: crate::Color::BLACK,
+        direction: crate::shape_style::GradientDirection::East,
+    });
+    object.style.fill_pattern = crate::board::FillPattern::Dots;
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(SHAPE_STYLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(SHAPE_STYLES_BOARD_PREFIX, TABLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("shape styles require board clipboard version 40")
+    );
+}
+
+#[test]
+fn table_board_clipboard_requires_version_thirty_nine_and_remaps_cells() {
+    let mut source = Sheet::new("Source", "Root");
+    let table = source
+        .insert_canvas_table(Vec2::new(10.0, 10.0), 2, 2, None)
+        .unwrap();
+    let payload = copy(&source, &[], &[table]);
+    assert_eq!(payload.fragment.canvas.scene.tables.len(), 1);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(TABLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(TABLES_BOARD_PREFIX, LAYERS_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("tables require board clipboard version 39")
+    );
+
+    let pasted = paste_board_selection(&mut source, &payload, Vec2::new(0.0, 200.0))
+        .unwrap()
+        .objects;
+    assert_eq!(source.canvas.scene.tables.len(), 2);
+    let copy = source
+        .canvas
+        .scene
+        .tables
+        .iter()
+        .find(|(id, _)| **id != table)
+        .unwrap();
+    assert!(pasted.contains(copy.0));
+    assert!(copy.1.cells.iter().all(|cell| pasted.contains(&cell.id)));
+    crate::board::validate_board(&source).unwrap();
+}
+
+#[test]
+fn layered_board_clipboard_requires_version_thirty_eight_and_maps_layers_by_name() {
+    let mut source = Sheet::new("Source", "Root");
+    let base = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    let layered = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            rect(60.0, 0.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    source.add_board_layer("Unused").unwrap();
+    let notes = source.add_board_layer("Notes").unwrap();
+    source
+        .move_canvas_objects_to_layer(&[layered], Some(notes))
+        .unwrap();
+    let payload = copy(&source, &[], &[base, layered]);
+    assert_eq!(payload.fragment.canvas.layers.len(), 1);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LAYERS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LAYERS_BOARD_PREFIX, OBJECT_DATA_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("layers require board clipboard version 38")
+    );
+
+    let mut plain = Sheet::new("Plain", "Root");
+    let pasted = paste_board_selection(&mut plain, &payload, Vec2::ZERO)
+        .unwrap()
+        .objects;
+    assert!(plain.canvas.layers.is_empty());
+    assert!(
+        pasted
+            .iter()
+            .all(|id| plain.canvas.object(*id).unwrap().layer.is_none())
+    );
+
+    let mut target = Sheet::new("Target", "Root");
+    let existing = target
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 90.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    let target_notes = target.add_board_layer("Notes").unwrap();
+    target
+        .move_canvas_objects_to_layer(&[existing], Some(target_notes))
+        .unwrap();
+    let pasted = paste_board_selection(&mut target, &payload, Vec2::ZERO)
+        .unwrap()
+        .objects;
+    let order: Vec<_> = target
+        .canvas
+        .objects
+        .iter()
+        .map(|object| object.id)
+        .collect();
+    assert_eq!(order, [pasted[0], existing, pasted[1]]);
+    assert_eq!(
+        target.canvas.object(pasted[1]).unwrap().layer,
+        Some(target_notes)
+    );
+}
+
+#[test]
+fn object_data_board_clipboard_requires_version_thirty_seven() {
+    use crate::object_data::ObjectData;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+    );
+    shape.data = Some(std::sync::Arc::new(ObjectData {
+        link: Some("https://example.com".into()),
+        properties: vec![("owner".into(), "Ada".into())],
+        ..Default::default()
+    }));
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(OBJECT_DATA_BOARD_PREFIX));
+    let decoded = decode_board_payload(&encoded).unwrap();
+    assert_eq!(decoded, payload);
+    assert_eq!(
+        decoded.fragment.canvas.objects[0]
+            .data
+            .as_ref()
+            .unwrap()
+            .property("owner"),
+        Some("Ada")
+    );
+    let downgraded = encoded.replacen(OBJECT_DATA_BOARD_PREFIX, CONNECTOR_LABELS_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("object data requires board clipboard version 37")
+    );
+}
+
+#[test]
+fn connector_label_board_clipboard_requires_version_thirty_six() {
+    use crate::board::{CanvasConnector, ConnectorLabelPlacement, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.label = "uses".into();
+    connector.label_placement = Some(ConnectorLabelPlacement {
+        along: 0.5,
+        orthogonal: -8.0,
+        offset: Vec2::new(2.0, 0.0),
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CONNECTOR_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(CONNECTOR_LABELS_BOARD_PREFIX, EDGE_SHAPES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("connector labels require board clipboard version 36")
+    );
+}
+
+#[test]
+fn edge_shape_board_clipboard_requires_version_thirty_five() {
+    use crate::board::{CanvasConnector, EdgeShape, EdgeShapeKind, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Pipe));
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(EDGE_SHAPES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(EDGE_SHAPES_BOARD_PREFIX, SEGMENT_ROUTES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("edge shapes require board clipboard version 35")
+    );
+}
+
+#[test]
+fn segment_route_board_clipboard_requires_version_thirty_four() {
+    use crate::board::{CanvasConnector, ConnectorRoute, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.route = ConnectorRoute::Segment;
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(SEGMENT_ROUTES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(SEGMENT_ROUTES_BOARD_PREFIX, EDGE_ROUTES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("segment routes require board clipboard version 34")
+    );
+}
+
+#[test]
+fn edge_route_board_clipboard_requires_version_thirty_three() {
+    use crate::board::{CanvasConnector, ConnectorRoute, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.route = ConnectorRoute::ElbowVertical;
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(EDGE_ROUTES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(EDGE_ROUTES_BOARD_PREFIX, LINE_JUMPS_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("edge routes require board clipboard version 33")
+    );
+}
+
+#[test]
+fn line_jump_board_clipboard_requires_version_thirty_two() {
+    use crate::board::{CanvasConnector, Endpoint, LineJumpStyle, LineJumps};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.line_jumps = Some(LineJumps {
+        style: LineJumpStyle::Line,
+        size: 12.0,
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LINE_JUMPS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LINE_JUMPS_BOARD_PREFIX, MARKER_LIBRARY_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("line jumps require board clipboard version 32")
+    );
+    let invalid = encoded.replacen("\"size\":12.0", "\"size\":1000.0", 1);
+    assert_ne!(invalid, encoded);
+    assert!(decode_board_payload(&invalid).is_err());
+}

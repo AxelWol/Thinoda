@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 36;
+pub const NATIVE_FORMAT_VERSION: u64 = 51;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -29,10 +29,48 @@ pub const NATIVE_FORMAT_VERSION: u64 = 36;
 /// hashes, 28 embedded stencil definition closures, 29 collapsed containers,
 /// 30 persistent scene layout policies, 31 fill-last stack resizing, and
 /// 32 grow-parent, 33 fit-parent, 34 distribute stack resizing, and
-/// 35 stack cross-axis fill, and 36 typed socio-technical meaning.
+/// 35 stack cross-axis fill, and 36 typed socio-technical meaning, and
+/// 37 draw.io round-trip passthrough, and 38 draw.io library connector markers,
+/// and 39 connector line jumps, and 40 draw.io edge routes, and 41 draw.io
+/// segment and isometric routes, and 42 connector edge shapes, and 43
+/// positioned and multiple connector labels, and 44 object data, and 45
+/// named board layers, and 46 native tables, and 47 shape style effects
+/// (dash, gradient, fill pattern, shadow, glass and flips), and 48 shape
+/// label text styles, 49 inline shape-label formatting, and 50 inline
+/// primary connector-label formatting, and 51 additional connector-label formatting.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_semantic_model() {
+    if book.has_rich_extra_connector_labels() {
+        51
+    } else if book.has_rich_connector_labels() {
+        50
+    } else if book.has_rich_labels() {
+        49
+    } else if book.has_label_styles() {
+        48
+    } else if book.has_shape_styles() {
+        47
+    } else if book.has_tables() {
+        46
+    } else if book.has_layers() {
+        45
+    } else if book.has_object_data() {
+        44
+    } else if book.has_connector_labels() {
+        43
+    } else if book.has_connector_edge_shapes() {
+        42
+    } else if book.has_drawio_segment_routes() {
+        41
+    } else if book.has_drawio_edge_routes() {
+        40
+    } else if book.has_connector_line_jumps() {
+        39
+    } else if book.has_library_connector_markers() {
+        38
+    } else if book.has_drawio_passthrough() {
+        37
+    } else if book.has_semantic_model() {
         36
     } else if book.has_scene_cross_axis_fill() {
         35
@@ -482,7 +520,7 @@ fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
     let CanvasObjectKind::Connector(connector) = &object.kind else {
         return false;
     };
-    if connector.label.is_empty() {
+    if connector.label.is_empty() && connector.extra_labels.is_empty() {
         return false;
     }
     object.style.text_color.is_some_and(|color| {
@@ -663,13 +701,13 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                 final_state_appearance +=
                     usize::from(visible_outline || visible_fill || visible_label);
             }
-            let opacity_differs = !object.label().is_empty()
+            let opacity_differs = object.label_texts().any(|label| !label.is_empty())
                 && object.style.opacity < 1.0
                 && object.style.text_color.is_none_or(|color| color.a > 0);
             let connector_label_differs = matches!(
                 &object.kind,
                 CanvasObjectKind::Connector(connector)
-                    if !connector.label.is_empty()
+                    if (!connector.label.is_empty() || !connector.extra_labels.is_empty())
                         && (object.style.text_color.is_none()
                             || connector_label_compositing_differs(object))
             );

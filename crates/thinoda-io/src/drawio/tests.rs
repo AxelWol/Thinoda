@@ -44,15 +44,218 @@ fn connectors(sheet: &Sheet) -> Vec<&CanvasConnector> {
         .collect()
 }
 
+/// Native version an import needs for its features, ignoring the draw.io
+/// passthrough (ids, unknown keys) that every imported page now carries.
+fn feature_version(book: &Workbook) -> u64 {
+    let mut book = book.clone();
+    for sheet in &mut book.sheets {
+        sheet.drawio = None;
+        for object in &mut sheet.canvas.objects {
+            object.drawio = None;
+        }
+    }
+    crate::required_native_version(&book)
+}
+
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h))
+}
+
+#[test]
+fn drawio_shape_effects_import_natively_and_round_trip() {
+    use thinoda_core::shape_style::{DashPattern, GradientDirection};
+    let xml = page(concat!(
+        r#"<mxCell id="a" value="A" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;dashed=1;dashPattern=8 4 1 4;fixDash=1;gradientColor=#0000FF;gradientDirection=east;shadow=1;glass=1;flipH=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" style="triangle;whiteSpace=wrap;html=1;fillColor=#FF0000;strokeColor=#000000;fillStyle=cross-hatch;flipH=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="40" height="80" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="c" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;dashed=1;" vertex="1" parent="1"><mxGeometry x="300" y="10" width="40" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = &report.workbook.sheets[0];
+    let by_id = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let a = by_id("a");
+    let dash = a.style.dash.unwrap();
+    assert_eq!(
+        dash.pattern,
+        DashPattern::new(&[8.0, 4.0, 1.0, 4.0]).unwrap()
+    );
+    assert!(dash.fixed);
+    let gradient = a.style.gradient.unwrap();
+    assert_eq!(gradient.color, Color::rgb(0, 0, 255));
+    assert_eq!(gradient.direction, GradientDirection::East);
+    assert!(a.style.shadow && a.style.glass && a.style.flip_h && !a.style.flip_v);
+    for object in [a, by_id("b"), by_id("c")] {
+        let style = &object.drawio.as_ref().unwrap().style;
+        assert!(
+            style
+                .iter()
+                .all(|(key, _)| !SHAPE_EFFECT_STYLE_KEYS.contains(&key.as_str())),
+            "{style:?}"
+        );
+    }
+    // The east-pointing triangle is a turned native triangle, so draw.io's
+    // horizontal flip is the frame's vertical one.
+    let b = by_id("b");
+    assert_eq!(
+        b.style.fill_pattern,
+        thinoda_core::board::FillPattern::CrossHatch
+    );
+    assert!(!b.style.flip_h && b.style.flip_v);
+    assert_eq!(
+        by_id("c").style.dash.unwrap().pattern,
+        DashPattern::default()
+    );
+    assert_eq!(feature_version(&report.workbook), 47);
+
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "dashed=1;dashPattern=8 4 1 4;fixDash=1;gradientColor=#0000FF;gradientDirection=east;shadow=1;glass=1;flipH=1;",
+        "fillStyle=cross-hatch;flipV=1;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
+    let reopened = load(&exported);
+    let objects = |book: &Workbook| {
+        book.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|o| (o.rect, o.rotation, o.style))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(objects(&reopened.workbook), objects(&report.workbook));
+}
+
+#[test]
+fn drawio_label_text_style_imports_natively_and_round_trips() {
+    use thinoda_core::label_style::LabelVAlign;
+    let xml = page(concat!(
+        r##"<mxCell id="a" value="Styled label" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontFamily=Courier New;fontSize=18;fontStyle=15;align=left;verticalAlign=bottom;labelPosition=right;verticalLabelPosition=top;spacing=4;spacingTop=1;spacingLeft=2;spacingBottom=3;spacingRight=5;labelBackgroundColor=#FFFF00;labelBorderColor=#FF0000;horizontal=0;overflow=hidden;textDirection=rtl;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+        r##"<mxCell id="b" value="Wrapped" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontSize=14;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+        r##"<mxCell id="c" value="Plain" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;align=center;fontSize=12;" vertex="1" parent="1"><mxGeometry x="300" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+    ))
+    .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
+    let report = load(&xml);
+    // `overflow` and `textDirection` stay passthrough with a warning.
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let by_id = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let a = by_id("a");
+    let label = a.label_style.as_deref().unwrap();
+    assert_eq!(label.font_family.as_deref(), Some("Courier New"));
+    assert_eq!(label.font_size, Some(18.0));
+    assert!(label.bold && label.italic && label.underline && label.strikethrough);
+    assert_eq!(label.align, TextAlign::Left);
+    assert_eq!(label.vertical_align, LabelVAlign::Bottom);
+    assert_eq!(label.position, TextAlign::Right);
+    assert_eq!(label.vertical_position, LabelVAlign::Top);
+    assert_eq!(
+        [
+            label.spacing,
+            label.spacing_top,
+            label.spacing_left,
+            label.spacing_bottom,
+            label.spacing_right
+        ],
+        [4.0, 1.0, 2.0, 3.0, 5.0]
+    );
+    assert_eq!(label.background, Some(Color::rgb(255, 255, 0)));
+    assert_eq!(label.border, Some(Color::rgb(255, 0, 0)));
+    assert!(label.vertical && !label.wrap);
+    let rest = &a.drawio.as_ref().unwrap().style;
+    assert!(rest.contains(&("overflow".into(), "hidden".into())));
+    assert!(rest.contains(&("textDirection".into(), "rtl".into())));
+    assert!(
+        rest.iter().all(|(key, _)| !matches!(
+            key.as_str(),
+            "fontFamily" | "fontSize" | "fontStyle" | "align" | "labelPosition" | "spacing"
+        )),
+        "{rest:?}"
+    );
+    let b = by_id("b").label_style.as_deref().unwrap();
+    assert!(b.wrap && b.font_size == Some(14.0));
+    assert!(by_id("c").label_style.is_none());
+    assert_eq!(feature_version(&report.workbook), 48);
+
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "whiteSpace=nowrap;html=1;fontFamily=Courier New;fontSize=18;fontStyle=15;align=left;verticalAlign=bottom;labelPosition=right;verticalLabelPosition=top;spacing=4;spacingTop=1;spacingLeft=2;spacingBottom=3;spacingRight=5;labelBackgroundColor=#FFFF00;labelBorderColor=#FF0000;horizontal=0;",
+        "overflow=hidden;",
+        "whiteSpace=wrap;html=1;fontSize=14;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
+    let reopened = load(&exported);
+    let labels = |book: &Workbook| {
+        book.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|o| o.label_style.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&reopened.workbook), labels(&report.workbook));
+}
+
+#[test]
+fn drawio_shape_effects_keep_unmapped_values_and_warn() {
+    let xml = page(concat!(
+        r#"<mxCell id="a" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fillStyle=zigzag;" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fillStyle=future;gradientColor=#00FF00;gradientDirection=diagonal;" vertex="1" parent="1"><mxGeometry x="100" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="t" value="Text" style="text;html=1;shadow=1;" vertex="1" parent="1"><mxGeometry x="200" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let sheet = &report.workbook.sheets[0];
+    let style = |index: usize| {
+        let object = &sheet.canvas.objects[index];
+        (object.style, object.drawio.as_ref().unwrap().style.clone())
+    };
+    let (a, a_rest) = style(0);
+    assert_eq!(a.fill_pattern, thinoda_core::board::FillPattern::ZigzagLine);
+    assert!(a_rest.contains(&("fillStyle".into(), "zigzag".into())));
+    let (b, b_rest) = style(1);
+    assert!(b.fill_pattern.is_solid() && b.gradient.is_none());
+    for key in ["fillStyle", "gradientColor", "gradientDirection"] {
+        assert!(b_rest.iter().any(|(k, _)| k == key), "{key}: {b_rest:?}");
+    }
+    let (t, t_rest) = style(2);
+    assert!(!t.shadow);
+    assert!(t_rest.contains(&("shadow".into(), "1".into())));
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "fillStyle=zigzag-line;",
+        "fillStyle=future;",
+        "gradientDirection=diagonal;",
+        "shadow=1;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
 }
 
 #[test]
 fn drawio_placeholder_data_loss_requires_confirmation() {
     for tag in ["object", "UserObject"] {
         let xml = page(&format!(
-            r#"<{tag} id="a" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></{tag}>"#
+            r#"<{tag} id="a" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></{tag}>"#
         ));
         let report = load(&xml);
         assert_eq!(
@@ -62,7 +265,7 @@ fn drawio_placeholder_data_loss_requires_confirmation() {
         );
         assert_eq!(
             shapes(&report.workbook.sheets[0])[0].label(),
-            "Width %width%"
+            "Width %width% on %date%"
         );
         assert!(matches!(
             crate::import_bytes(Format::DrawIo, xml.as_bytes()),
@@ -86,12 +289,11 @@ fn drawio_placeholder_data_loss_requires_confirmation() {
     assert_eq!(load(&malformed).warnings, vec![ImportWarning::Other]);
 
     let bound_label = disabled.replace(r#"placeholders="0""#, r#"placeholder="status""#);
+    // The unknown attribute itself is preserved, so only the placeholder
+    // behavior is reported.
     assert_eq!(
         load(&bound_label).warnings,
-        vec![
-            ImportWarning::DrawioPlaceholdersUnsupported,
-            ImportWarning::Other
-        ]
+        vec![ImportWarning::DrawioPlaceholdersUnsupported]
     );
 }
 
@@ -724,7 +926,10 @@ fn sticky_and_text_card_alignment_survives_drawio_interchange() {
 
 #[test]
 fn unsupported_drawio_alignment_is_still_reported() {
-    for style in ["shape=note;align=justify;", "shape=rectangle;align=left;"] {
+    for style in [
+        "shape=note;align=justify;",
+        "shape=rectangle;align=justify;",
+    ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="Label" style="{style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="240" height="140" as="geometry"/></mxCell>"#
         ));
@@ -1019,7 +1224,7 @@ fn final_state_import_preserves_editable_geometry_colors_and_connectors() {
     assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
     assert!(connectors(sheet)[0].from_port.is_some());
     report.workbook.validate().unwrap();
-    assert_eq!(crate::required_native_version(&report.workbook), 24);
+    assert_eq!(feature_version(&report.workbook), 24);
     let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
     assert!(exported.contains("shape=endState;perimeter=ellipsePerimeter;"));
     let reimported = load(&exported);
@@ -1134,7 +1339,7 @@ fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
         );
         let native =
             export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
-        assert_eq!(crate::required_native_version(&report.workbook), 21);
+        assert_eq!(feature_version(&report.workbook), 21);
         assert_eq!(
             crate::import_bytes(Format::Thinoda, &native).unwrap(),
             report.workbook
@@ -1279,20 +1484,20 @@ fn double_ellipse_reports_unrepresentable_insets_and_unresolved_colors() {
 #[test]
 fn double_ellipse_reports_unsupported_label_layout() {
     for (extra, warning) in [
-        ("whiteSpace=wrap;", true),
+        ("whiteSpace=wrap;", false),
         ("whiteSpace=nowrap;", false),
-        ("spacingLeft=12;", true),
+        ("spacingLeft=12;", false),
         ("spacing=0;spacingTop=none;", false),
-        ("labelPosition=right;", true),
-        ("verticalLabelPosition=top;", true),
+        ("labelPosition=right;", false),
+        ("verticalLabelPosition=top;", false),
         ("overflow=hidden;", true),
-        ("horizontal=0;", true),
+        ("horizontal=0;", false),
         ("noLabel=1;", true),
         ("textDirection=rtl;", true),
         ("labelWidth=40;", true),
-        ("fontSize=11;", true),
+        ("fontSize=11;", false),
         ("fontSize=12;", false),
-        ("fontSize=none;", true),
+        ("fontSize=none;", false),
         ("fontSize=invalid;", true),
         ("fontStyle=invalid;", true),
     ] {
@@ -1324,10 +1529,14 @@ fn double_ellipse_reports_unsupported_label_layout() {
         r##"<mxCell id="a" value="End" style=";shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
     )
     .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
-    assert_eq!(
-        load(&suppressed_default).warnings,
-        vec![ImportWarning::Formatting]
-    );
+    let report = load(&suppressed_default);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let label_style = shapes(&report.workbook.sheets[0])[0]
+        .label_style
+        .clone()
+        .unwrap();
+    assert_eq!(label_style.font_size, Some(11.0));
+    assert!(!label_style.wrap);
     let restored_default =
         suppressed_default.replace("shape=doubleEllipse;", "shape=doubleEllipse;fontSize=12;");
     assert!(load(&restored_default).warnings.is_empty());
@@ -1404,6 +1613,317 @@ fn html_label_text_retains_visible_entities_and_block_boundaries() {
             "{source}: {warnings:?}"
         );
     }
+}
+
+#[test]
+fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
+    use thinoda_core::{InlineBaseline, InlineParagraph, InlineText, ListKind};
+
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="rich" value="{}" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="120" height="80" as="geometry"/></mxCell>"##,
+        esc(markup),
+    ))
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    let object = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(object.label(), "A🙂\ntwo");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 49);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = shapes(&restored.sheets[0])[0];
+    assert_eq!(restored.label(), object.label());
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+
+    let mut sheet = Sheet::new("P", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 120.0, 80.0));
+    object.set_label("Hi🙂\n\nend").unwrap();
+    let mut rich = InlineText {
+        paragraphs: vec![
+            InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 1,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 2,
+                list: ListKind::Numbered,
+            },
+        ],
+        ..Default::default()
+    };
+    rich.update_range(object.label(), 0..5, |style| {
+        style.bold = Some(true);
+        style.strikethrough = Some(true);
+        style.font_family = Some("Example';url(https://example.invalid/x)".into());
+        style.font_size = Some(24.5);
+        style.color = Some(Color::rgba(30, 40, 50, 128));
+    })
+    .unwrap();
+    object.label_style = Some(Arc::new(LabelStyle {
+        underline: true,
+        ..Default::default()
+    }));
+    object.label_rich_text = Some(Arc::new(rich.clone()));
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    let exported = export(&book).unwrap();
+    assert!(!String::from_utf8_lossy(&exported).contains("url(https:"));
+    let restored = import(&exported).unwrap().workbook;
+    let object = shapes(&restored.sheets[0])[0];
+    assert_eq!(object.label(), "Hi🙂\n\nend");
+    assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+}
+
+#[test]
+fn rich_connector_html_imports_and_round_trips_primary_label() {
+    use thinoda_core::InlineBaseline;
+
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="edge" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "A🙂\ntwo");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 50);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(restored.label(), object.label());
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+}
+
+#[test]
+fn rich_extra_connector_html_imports_and_round_trips() {
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="edge" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;" vertex="1" parent="edge"><mxGeometry x="0.5" y="-25" relative="1" as="geometry"/></mxCell>"##,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    let label = &connectors(&report.workbook.sheets[0])[0].extra_labels[0];
+    assert_eq!(label.text, "A🙂\ntwo");
+    let rich = label.rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(thinoda_core::InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 51);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    assert_eq!(connectors(&restored.sheets[0])[0].extra_labels[0], *label);
+}
+
+#[test]
+fn empty_rich_extra_connector_list_imports_and_round_trips() {
+    let xml = page(&format!(
+        r##"<mxCell id="edge" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;" vertex="1" parent="edge"><mxGeometry x="0.5" y="-25" relative="1" as="geometry"/></mxCell>"##,
+        esc("<ul><li></li></ul>")
+    ));
+    let report = load(&xml);
+    let label = &connectors(&report.workbook.sheets[0])[0].extra_labels[0];
+    assert!(label.text.is_empty());
+    assert!(label.has_list());
+    let restored = import(&export(&report.workbook).unwrap()).unwrap().workbook;
+    assert_eq!(connectors(&restored.sheets[0])[0].extra_labels[0], *label);
+}
+
+#[test]
+fn rich_connector_empty_list_placement_and_unsupported_children_are_disclosed() {
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry x="0.5" y="-10" relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc("<ul><li></li></ul>"),
+    ));
+    let report = load(&xml);
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert!(object.has_label_list());
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        unreachable!()
+    };
+    assert!(connector.label_placement.is_some());
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert!(restored.has_label_list());
+    let CanvasObjectKind::Connector(back) = &restored.kind else {
+        unreachable!()
+    };
+    assert_eq!(back.label_placement, connector.label_placement);
+
+    let folded = xml.replace(
+        "</root>",
+        r#"<mxCell id="child" value="child" vertex="1" parent="e"><mxGeometry width="20" height="10" as="geometry"/></mxCell></root>"#,
+    );
+    let report = load(&folded);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "\nchild");
+    assert!(object.has_label_list());
+}
+
+#[test]
+fn rich_connector_unsupported_html_is_inert_and_warned() {
+    let markup = r#"<b>safe</b><img src="https://invalid.example/x"><script>bad()</script>"#;
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc(markup),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "safe");
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+        Some(true)
+    );
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(!exported.contains("invalid.example"));
+    assert!(!exported.contains("bad()"));
+}
+
+#[test]
+fn rich_sankey_drawio_export_styles_only_the_authored_label() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let object = book
+        .active_mut()
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some_and(|f| f.weight.is_some()))
+        })
+        .unwrap();
+    object.set_label("Ribbon").unwrap();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("Ribbon", 0..6, |style| style.italic = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    let mut extra_rich = thinoda_core::InlineText::default();
+    extra_rich
+        .update_range("Extra", 0..5, |style| style.bold = Some(true))
+        .unwrap();
+    let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+        panic!()
+    };
+    connector.extra_labels.push(ConnectorLabel {
+        text: "Extra".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(extra_rich)),
+    });
+    let object_id = object.id;
+    let values = thinoda_core::sankey::evaluate(book.active()).unwrap();
+    let object = book.active().canvas.object(object_id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        unreachable!()
+    };
+    let display = thinoda_core::sankey::flow_label(connector, values.mass[&object_id]);
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    let restored = import(exported.as_bytes()).unwrap().workbook;
+    let object = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Ribbon")
+        .unwrap();
+    assert!(matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()));
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!()
+    };
+    assert_eq!(connector.extra_labels[0].text, "Extra");
+    assert_eq!(
+        connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0]
+            .style
+            .bold,
+        Some(true)
+    );
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs.len(), 1);
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 6));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+
+    let original = esc(&html_rich_label(&display, rich, None));
+    let mut edited = thinoda_core::InlineText::default();
+    edited
+        .update_range(&display, 0..display.chars().count(), |style| {
+            style.italic = Some(true)
+        })
+        .unwrap();
+    let changed = esc(&html_rich_label(&display, &edited, None));
+    assert!(exported.contains(&original));
+    let edited_xml = exported.replacen(&original, &changed, 1);
+    let report = import(edited_xml.as_bytes()).unwrap();
+    assert!(report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == display)
+        .unwrap();
+    assert!(matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_none()));
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].end as usize,
+        display.chars().count()
+    );
 }
 
 #[test]
@@ -1557,11 +2077,11 @@ fn vertex_label_font_size_loss_is_reported_for_shapes_and_text() {
     for (shape, prefix, font, label, warned) in [
         ("rectangle", "", "", "Label", false),
         ("rectangle", "", "fontSize=12;", "Label", false),
-        ("rectangle", "", "fontSize=11;", "Label", true),
-        ("ellipse", "", "fontSize=11;", "Label", true),
-        ("text", "", "fontSize=11;", "Label", true),
-        ("rectangle", "", "fontSize=none;", "Label", true),
-        ("rectangle", ";", "", "Label", true),
+        ("rectangle", "", "fontSize=11;", "Label", false),
+        ("ellipse", "", "fontSize=11;", "Label", false),
+        ("text", "", "fontSize=11;", "Label", false),
+        ("rectangle", "", "fontSize=none;", "Label", false),
+        ("rectangle", ";", "", "Label", false),
         ("rectangle", ";", "fontSize=12;", "Label", false),
         ("rectangle", "", "fontSize=invalid;", "Label", true),
         ("rectangle", "", "fontSize=11;", "", false),
@@ -2262,7 +2782,7 @@ fn flowchart_annotation_imports_as_an_editable_open_bracket() {
     assert_eq!(connectors(sheet)[0].from, Endpoint::Object(bracket.id));
     assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
     report.workbook.validate().unwrap();
-    assert_eq!(crate::required_native_version(&report.workbook), 20);
+    assert_eq!(feature_version(&report.workbook), 20);
     assert!(matches!(
         crate::import_bytes(Format::DrawIo, xml.as_bytes()),
         Err(IoError::ImportNeedsConfirmation(warnings))
@@ -3641,6 +4161,71 @@ fn plain_drawio_shapes_resolve_through_the_stencil_import_map() {
 }
 
 #[test]
+fn drawio_js_shapes_bind_numeric_and_choice_style_keys() {
+    let cell = |id: &str, style: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="{style}" vertex="1" parent="1"><mxGeometry x="10" y="10" width="100" height="80" as="geometry"/></mxCell>"#
+        )
+    };
+    let cells = [
+        cell("wall", "shape=mxgraph.floorplan.wall;wallThickness=20;"),
+        cell(
+            "end",
+            "shape=mxgraph.bpmn.event;outline=end;symbol=terminate;",
+        ),
+        cell("bare", "shape=mxgraph.bpmn.event;"),
+        cell(
+            "bogus",
+            "shape=mxgraph.bpmn.event;outline=standard;symbol=bogus;",
+        ),
+        cell("gateway", "shape=mxgraph.bpmn.gateway2;gwType=parallel;"),
+        cell("task", "shape=mxgraph.bpmn.task2;taskMarker=user;"),
+        cell("person", "shape=mxgraph.c4.person2;"),
+    ]
+    .concat();
+    let sheet = clean(&page(&cells));
+    let objects = shapes(&sheet);
+    let stencil = |label: &str| {
+        objects
+            .iter()
+            .find(|object| object.label() == label)
+            .and_then(|object| object.stencil.clone())
+            .unwrap_or_else(|| panic!("{label} has no stencil"))
+    };
+    let param = |label: &str, key: &str| stencil(label).parameters.get(key).copied();
+    let defined = |label: &str| stencil(label).definition;
+
+    assert_eq!(defined("wall"), "floorplan-wall");
+    assert_eq!(param("wall", "wallThickness"), Some(20.0));
+    assert_eq!(param("end", "outline"), Some(8.0));
+    assert_eq!(param("end", "symbol"), Some(12.0));
+    // draw.io draws no outline when the key is missing; Thinoda's own default is a circle.
+    assert_eq!(param("bare", "outline"), Some(0.0));
+    assert_eq!(param("bogus", "symbol").unwrap_or(0.0), 0.0);
+    assert_eq!(param("gateway", "gwType"), Some(2.0));
+    assert_eq!(defined("task"), "bpmn-task");
+    assert_eq!(defined("person"), "c4-person2");
+    for object in &objects {
+        assert!(thinoda_core::stencil_object::render(object).is_some());
+    }
+
+    let xml = String::from_utf8(export(&Workbook::new(sheet.clone())).unwrap()).unwrap();
+    assert!(xml.contains("outline=end;symbol=terminate;"), "{xml}");
+    assert!(xml.contains("gwType=parallel;"));
+    assert!(xml.contains("wallThickness=20;"));
+    assert_eq!(
+        shapes(&clean(&xml))
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn inline_drawio_stencils_import_render_and_round_trip() {
     use base64::Engine as _;
     let encode = |stencil: &str| {
@@ -3701,6 +4286,86 @@ fn inline_drawio_stencils_import_render_and_round_trip() {
     let reopened = shapes(&again)[0];
     assert_eq!(reopened.stencil.as_ref(), Some(&reference));
     assert!(thinoda_core::stencil_object::render(reopened).is_some());
+}
+
+#[test]
+fn bundled_drawio_shapes_embed_one_closure_per_package_per_page() {
+    let bundle = crate::drawio_bundle::bundle();
+    let aliases: Vec<String> = bundle
+        .catalog()
+        .packages
+        .iter()
+        .flat_map(|package| package.shapes.iter().map(move |shape| package.alias(shape)))
+        .step_by(7)
+        .take(170)
+        .collect();
+    // Shapes a native kind draws exactly stay native; the bundle draws the rest.
+    let (aliases, native): (Vec<String>, Vec<String>) = aliases.into_iter().partition(|alias| {
+        let sheet = clean(&page(&format!(
+            r#"<mxCell id="x" style="shape={alias};" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+        )));
+        shapes(&sheet)[0].stencil.is_some()
+    });
+    assert!(native.len() < 5, "{native:?}");
+    let mut cells = String::new();
+    for (i, alias) in aliases.iter().enumerate() {
+        cells.push_str(&format!(
+            r#"<mxCell id="s{i}" style="shape={alias};html=1;" vertex="1" parent="1"><mxGeometry x="{}" y="{}" width="40" height="40" as="geometry"/></mxCell>"#,
+            (i % 20) * 50,
+            (i / 20) * 50
+        ));
+    }
+    for i in 0..3 {
+        cells.push_str(&format!(
+            r#"<mxCell id="p{i}" style="shape=image;image=data:image/png,{};" vertex="1" parent="1"><mxGeometry x="{}" y="500" width="20" height="20" as="geometry"/></mxCell>"#,
+            b64(&tiny_png(4 + i, 4)),
+            i * 30
+        ));
+    }
+    let report = load(&page(&cells));
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.sheets.into_iter().next().unwrap();
+    let objects = shapes(&sheet);
+    assert_eq!(objects.len(), aliases.len());
+    let stencils: Vec<_> = objects
+        .iter()
+        .map(|object| object.stencil.clone().expect("bundled stencil"))
+        .collect();
+    let definitions: BTreeSet<_> = stencils
+        .iter()
+        .map(|stencil| (stencil.package.clone(), stencil.definition.clone()))
+        .collect();
+    let packages: BTreeSet<_> = stencils.iter().map(|s| s.package.clone()).collect();
+    assert!(definitions.len() > 128, "{}", definitions.len());
+    assert!(
+        objects
+            .iter()
+            .all(|object| thinoda_core::stencil_object::render(object).is_some())
+    );
+    assert!(stencils.iter().all(|s| s.package_resource.is_some()));
+    assert_eq!(image_cards(&sheet).len(), 3);
+    assert_eq!(sheet.resources.entries.len(), packages.len() + 3);
+
+    let book = Workbook::new(sheet.clone());
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    for alias in &aliases {
+        assert!(exported.contains(&format!("shape={alias};")), "{alias}");
+    }
+    let again = clean(&exported);
+    let reopened: Vec<_> = shapes(&again)
+        .into_iter()
+        .map(|object| object.stencil.clone().unwrap())
+        .collect();
+    assert_eq!(reopened, stencils);
 }
 
 #[test]
@@ -3990,7 +4655,7 @@ fn drawio_standard_rounding_imports_and_exports_arc_modes() {
             shapes(&report.workbook.sheets[0])[0].rounding,
             Some(expected)
         );
-        assert_eq!(crate::required_native_version(&report.workbook), 23);
+        assert_eq!(feature_version(&report.workbook), 23);
         let exported = export(&report.workbook).unwrap();
         let text = std::str::from_utf8(&exported).unwrap();
         assert!(
@@ -4225,7 +4890,7 @@ fn mockup_rectangle_radius_and_inherited_color_report_approximations() {
             "##fff",
             "light-dark(#aabbcc,#ddeeff)",
         ] {
-            if value == "red" && key != "gradientColor" {
+            if value == "red" {
                 continue;
             }
             let xml = page(&format!(
@@ -6089,10 +6754,11 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "endArrow=cross;",
+        "endArrow=sysMLReqInt;",
+        "startArrow=mermaidCircle;",
         "startFill=0;",
         "endArrow=none;endFill=0;",
-        "endArrow=cross;endFill=0;",
+        "endArrow=sysMLProvInt;endFill=0;",
         "endFill=invalid;",
         "endFill=2;",
         "startSize=12;",
@@ -6183,7 +6849,7 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
                 assert_eq!(connector.start_marker_size, Some(12.5));
                 assert_eq!(connector.end_marker_size, Some(0.0));
                 assert_eq!(
-                    crate::required_native_version(&report.workbook),
+                    feature_version(&report.workbook),
                     if matches!(kind, "baseDash" | "dash") {
                         18
                     } else if kind == "halfCircle" {
@@ -6251,7 +6917,7 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
             assert_eq!(connector.start_marker_size, (size != 6.0).then_some(size));
             assert_eq!(connector.end_marker_size, Some(12.5));
             assert_eq!(
-                crate::required_native_version(&report.workbook),
+                feature_version(&report.workbook),
                 if matches!(kind, "baseDash" | "dash") {
                     18
                 } else if kind == "halfCircle" {
@@ -6331,7 +6997,7 @@ fn supported_connector_markers_round_trip_with_both_ends() {
                 marker(start)
             );
             assert_eq!(connector.end_marker.map(|value| value.kind), marker(end));
-            let native_version = crate::required_native_version(&report.workbook);
+            let native_version = feature_version(&report.workbook);
             assert_eq!(
                 native_version,
                 if [marker(start), marker(end)]
@@ -6402,7 +7068,7 @@ fn drawio_default_classic_and_legacy_triangle_are_distinct() {
             ConnectorMarkerKind::Classic,
             "{style}"
         );
-        assert_eq!(crate::required_native_version(&report.workbook), 12);
+        assert_eq!(feature_version(&report.workbook), 12);
     }
     let no_default = load(&cell(";"));
     let connector = connectors(&no_default.workbook.sheets[0])[0];
@@ -6683,7 +7349,7 @@ fn attached_fixed_connector_ports_survive_file_link_and_clipboard_conversion() {
             perimeter: true,
         })
     );
-    assert_eq!(crate::required_native_version(&report.workbook), 22);
+    assert_eq!(feature_version(&report.workbook), 22);
     let paste = crate::drawio_clipboard::decode(&xml).unwrap();
     assert!(paste.warnings.is_empty(), "{:?}", paste.warnings);
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
@@ -6953,7 +7619,7 @@ fn fixed_connector_port_offsets_and_invalid_constraints_are_disclosed() {
         let report = load(&cells(style, source));
         assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
         assert_eq!(connectors(&report.workbook.sheets[0])[0].from_port, None);
-        assert_ne!(crate::required_native_version(&report.workbook), 22);
+        assert_ne!(feature_version(&report.workbook), 22);
     }
 }
 
@@ -6985,7 +7651,7 @@ fn fixed_connector_port_perimeter_and_orientation_differences_are_disclosed() {
         ("shape=mxgraph.basic.star;", false, false),
         ("shape=waypoint;", false, true),
         ("triangle;direction=north;", false, true),
-        ("ellipse;flipH=1;", false, true),
+        ("ellipse;flipH=1;", false, false),
     ] {
         for source in [true, false] {
             let xml = diagram(target_style, perimeter, source);
@@ -7270,13 +7936,24 @@ fn nested_geometry_groups_containers_and_edge_labels() {
     assert_eq!(zone.name, "Pool");
     assert_eq!(zone.objects.len(), 3, "inside, pin and the free edge");
     let links = connectors(sheet);
-    let deferred = links.iter().find(|c| c.label == "edge label").unwrap();
+    let deferred = links
+        .iter()
+        .find(|c| {
+            c.extra_labels
+                .first()
+                .is_some_and(|l| l.text == "edge label")
+        })
+        .unwrap();
+    assert_eq!(deferred.extra_labels[0].placement.along, -0.2);
     assert_eq!(
         (deferred.from, deferred.to),
         (Endpoint::Object(a), Endpoint::Object(inside))
     );
     assert!(!deferred.arrow_end);
-    let free = links.iter().find(|c| c.label.is_empty()).unwrap();
+    let free = links
+        .iter()
+        .find(|c| c.label.is_empty() && c.extra_labels.is_empty())
+        .unwrap();
     assert_eq!(free.from, Endpoint::Point(Vec2::new(500.0, 0.0)));
     assert_eq!(free.to, Endpoint::Point(Vec2::new(510.0, 10.0)));
 }
@@ -8217,7 +8894,7 @@ fn notes_text_lines_directions_and_user_objects() {
 fn unsupported_content_is_reported_not_dropped_silently() {
     let xml = page(
         r#"
-        <mxCell id="d" value="Dashed" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="d" value="Patterned" style="rounded=0;fillStyle=future;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="k" value="Unknown" style="shape=mxgraph.aws4.lambda;" vertex="1" parent="1"><mxGeometry y="20" width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="i" style="shape=image;image=https://example.com/a.png;" vertex="1" parent="1"><mxGeometry y="40" width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="h" value="Hidden" vertex="1" visible="0" parent="1"><mxGeometry y="60" width="10" height="10" as="geometry"/></mxCell>
@@ -9073,7 +9750,7 @@ fn waypoint_connector_positions_survive_moves_and_format_round_trips() {
     book.active_mut()
         .move_canvas_objects(&[dot], delta)
         .unwrap();
-    assert_eq!(crate::required_native_version(&book), 22);
+    assert_eq!(feature_version(&book), 22);
     for format in [Format::Thinoda, Format::DrawIo] {
         let bytes =
             crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
@@ -9508,4 +10185,1002 @@ fn stencil_import_keeps_orientation_and_unknown_fallback_shapes() {
         (&before.kind, before.rect, before.rotation)
     );
     assert_eq!(after.stencil, before.stencil);
+}
+
+#[test]
+fn installed_user_stencil_libraries_resolve_plain_drawio_shapes() {
+    let cell = r#"<mxCell id="x" style="shape=mxgraph.thinodauser.gear_box;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#;
+    let unresolved = load(&page(cell));
+    assert!(
+        unresolved
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes)
+    );
+    let library = crate::drawio_stencil::import_drawio_stencil_library(
+        r#"<shapes name="mxgraph.thinodaUser"><shape name="Gear Box" w="10" h="10"><foreground><rect x="0" y="0" w="10" h="10"/><fillstroke/></foreground></shape></shapes>"#,
+        "",
+    )
+    .unwrap();
+    crate::drawio_stencil::set_user_stencil_packages(
+        library.packages.into_iter().map(std::sync::Arc::new),
+    );
+    let sheet = clean(&page(cell));
+    let stencil = shapes(&sheet)[0].stencil.clone().expect("user stencil");
+    assert_eq!(stencil.package, "user.drawio.thinodauser");
+    assert!(thinoda_core::stencil_object::render(shapes(&sheet)[0]).is_some());
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(exported.contains("shape=mxgraph.thinodauser.gear_box;"));
+    crate::drawio_stencil::set_user_stencil_packages([]);
+}
+
+#[test]
+fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
+    let xml = page(concat!(
+        r#"<UserObject label="A" id="node-a" owner="ops" placeholders="1"><mxCell style="rounded=0;whiteSpace=wrap;html=1;customKey=alpha;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell></UserObject>"#,
+        r#"<mxCell id="e1" value="B" style="ellipse;whiteSpace=wrap;html=1;anotherKey=7;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge-1" style="endArrow=classic;html=1;edgeKey=x;" edge="1" parent="1" source="node-a" target="e1"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
+    ));
+    let xml = xml
+        .replace("<diagram name=\"P\">", "<diagram id=\"diag-1\" name=\"P\">")
+        .replace("<mxGraphModel>", "<mxGraphModel futureFlag=\"on\">");
+    let report = load(&xml);
+    let sheet = &report.workbook.sheets[0];
+    let a = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("node-a"))
+        .unwrap();
+    let drawio = a.drawio.as_ref().unwrap();
+    assert!(
+        drawio.style.contains(&("customKey".into(), "alpha".into())),
+        "{:?}",
+        drawio.style
+    );
+    assert!(
+        !drawio.style.iter().any(|(k, _)| k == "fillColor"),
+        "{:?}",
+        drawio.style
+    );
+    assert!(drawio.attributes.is_empty(), "{:?}", drawio.attributes);
+    let data = a.data.as_ref().unwrap();
+    assert_eq!(data.properties, [("owner".into(), "ops".into())]);
+    assert!(data.placeholders);
+    let page = sheet.drawio.as_ref().unwrap();
+    assert_eq!(page.diagram_id.as_deref(), Some("diag-1"));
+    assert_eq!(page.model_attributes, [("futureFlag".into(), "on".into())]);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert!(reopened.has_drawio_passthrough());
+    assert_eq!(crate::required_native_version(&reopened), 44);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":2,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    for needle in [
+        "<diagram id=\"diag-1\"",
+        "futureFlag=\"on\"",
+        "id=\"node-a\" placeholders=\"1\" owner=\"ops\"",
+        "customKey=alpha;",
+        "id=\"e1\"",
+        "anotherKey=7;",
+        "id=\"edge-1\"",
+        "edgeKey=x;",
+        "source=\"node-a\" target=\"e1\"",
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let again = load(&out);
+    let a = again.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("node-a"))
+        .unwrap();
+    assert_eq!(a.data, reopened.sheets[0].canvas.objects[0].data);
+}
+
+#[test]
+fn drawio_object_data_imports_edits_and_exports() {
+    let xml = page(concat!(
+        r#"<UserObject label="Web" id="web" tooltip="Front door" link="https://example.com/web" tags="prod  web prod" subnet="10.0.0.0/24" placeholder="1"><mxCell style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell></UserObject>"#,
+        r#"<mxCell id="db" value="DB" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<UserObject label="reads" id="flow" link="data:page/id,page-2" protocol="tcp"><mxCell style="endArrow=classic;html=1;" edge="1" parent="1" source="web" target="db"><mxGeometry relative="1" as="geometry"/></mxCell></UserObject>"#,
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Links),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = &report.workbook.sheets[0];
+    let source = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let web = source("web");
+    assert_eq!(web.alt_text, "Front door");
+    let data = web.data.as_ref().unwrap();
+    assert_eq!(data.link.as_deref(), Some("https://example.com/web"));
+    assert_eq!(data.tags, ["prod", "web"]);
+    assert_eq!(data.properties, [("subnet".into(), "10.0.0.0/24".into())]);
+    // `placeholder` has a draw.io meaning of its own and stays passthrough.
+    assert_eq!(
+        web.drawio.as_ref().unwrap().attributes,
+        [("placeholder".into(), "1".into())]
+    );
+    let flow = source("flow").data.as_ref().unwrap();
+    assert_eq!(flow.page_link(), Some("page-2"));
+    assert_eq!(flow.property("protocol"), Some("tcp"));
+    assert_eq!(source("db").data, None);
+
+    let mut book = report.workbook.clone();
+    let id = source("web").id;
+    let object = book.sheets[0].canvas.object_mut(id).unwrap();
+    let mut edited = (**object.data.as_ref().unwrap()).clone();
+    edited.tags = vec!["edited".into()];
+    edited.properties.push(("owner".into(), "Ada & Bob".into()));
+    object.data = Some(Arc::new(edited));
+    let out = String::from_utf8(export(&book).unwrap()).unwrap();
+    for needle in [
+        r#"tooltip="Front door""#,
+        r#"link="https://example.com/web" tags="edited" subnet="10.0.0.0/24" owner="Ada &amp; Bob" placeholder="1""#,
+        r#"link="data:page/id,page-2" protocol="tcp""#,
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let again = load(&out).workbook;
+    let reopened: Vec<_> = again.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .map(|o| o.data.clone())
+        .collect();
+    let expected: Vec<_> = book.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .map(|o| o.data.clone())
+        .collect();
+    assert_eq!(reopened, expected);
+    assert!(!book.masked_copy().has_object_data());
+}
+
+#[test]
+fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
+    let xml = page(concat!(
+        r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="gone" value="B" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let mut book = load(&xml).workbook;
+    let sheet = &mut book.sheets[0];
+    let removed = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("gone"))
+        .unwrap()
+        .id;
+    sheet.canvas.objects.retain(|o| o.id != removed);
+    let first = &mut sheet.canvas.objects[0];
+    first.style.fill = None;
+    let mut copy = first.clone();
+    copy.drawio = Passthrough::for_copy(&copy.drawio);
+    assert!(copy.drawio.as_ref().is_none_or(|d| d.source_id.is_none()));
+    let out = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!out.contains("fillColor=#ff0000"), "{out}");
+    assert!(out.contains("dashed=1;dashPattern=1 4;"), "{out}");
+    assert!(!out.contains("id=\"gone\""), "{out}");
+    // `t1` is reserved for topics, so the shape falls back to its own id.
+    assert!(!out.contains("id=\"t1\""), "{out}");
+    let masked = book.masked_copy();
+    assert!(!masked.has_drawio_passthrough());
+}
+
+#[test]
+fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
+    let drawio = Passthrough {
+        source_id: None,
+        style: vec![
+            ("strokeColor".into(), "#ff0000".into()),
+            ("dashPattern".into(), "1 4".into()),
+            ("jettySize".into(), "auto".into()),
+            ("custom".into(), "1".into()),
+        ],
+        attributes: Vec::new(),
+    };
+    let mut style = String::from("edgeStyle=none;strokeColor=#000000;");
+    passthrough_style(&mut style, Some(&drawio));
+    assert_eq!(style, "edgeStyle=none;strokeColor=#000000;custom=1;");
+}
+
+#[test]
+fn library_connector_markers_round_trip_and_require_native_version_thirty_eight() {
+    use ConnectorMarkerKind as K;
+    for (name, kind) in [
+        ("ERone", K::ErOne),
+        ("ERmandOne", K::ErMandOne),
+        ("ERmany", K::ErMany),
+        ("ERoneToMany", K::ErOneToMany),
+        ("ERzeroToOne", K::ErZeroToOne),
+        ("ERzeroToMany", K::ErZeroToMany),
+        ("manyOptional", K::ManyOptional),
+        ("box", K::Box),
+        ("cross", K::Cross),
+        ("circle", K::Circle),
+        ("circlePlus", K::CirclePlus),
+        ("async", K::Async),
+        ("openAsync", K::OpenAsync),
+        ("doubleBlock", K::DoubleBlock),
+        ("sysMLx", K::SysmlX),
+        ("sysMLLost", K::SysmlLost),
+        ("sysMLFound", K::SysmlFound),
+        ("sysMLPackCont", K::SysmlPackCont),
+    ] {
+        for fill in [0, 1] {
+            let xml = page(&format!(
+                r#"<mxCell id="e" style="startArrow={name};startFill={fill};endArrow={name};endFill={fill};endSize=10;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            let connector = connectors(&report.workbook.sheets[0])[0].clone();
+            assert_eq!(connector.start_marker.unwrap().kind, kind);
+            assert_eq!(connector.end_marker.unwrap().kind, kind);
+            assert_eq!(connector.end_marker_size, Some(10.0));
+            assert_eq!(connector.end_marker_unfilled, fill == 0);
+            assert_eq!(crate::required_native_version(&report.workbook), 38);
+            let exported = export(&report.workbook).unwrap();
+            let restored = import(&exported).unwrap();
+            assert!(
+                restored.warnings.is_empty(),
+                "{name}: {:?}",
+                restored.warnings
+            );
+            let restored = connectors(&restored.workbook.sheets[0])[0].clone();
+            assert_eq!(restored.start_marker, connector.start_marker);
+            assert_eq!(restored.end_marker, connector.end_marker);
+            assert_eq!(restored.end_marker_size, connector.end_marker_size);
+            assert_eq!(restored.end_marker_unfilled, connector.end_marker_unfilled);
+            let native = crate::formats::native_export(&report.workbook).unwrap();
+            assert_eq!(
+                crate::formats::native_import(&native).unwrap(),
+                report.workbook
+            );
+        }
+    }
+
+    let report = load(&page(
+        r#"<mxCell id="e" style="endArrow=ERmany;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let content = serde_json::to_vec(&report.workbook).unwrap();
+    let older = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":37,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&older),
+        Err(IoError::NewerVersion(message)) if message.contains("version 38")
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
+}
+
+#[test]
+fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
+    let edge = |style: &str, points: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/>{points}</mxGeometry></mxCell>"#
+        ))
+    };
+    let hint = r#"<Array as="points"><mxPoint x="40" y="70"/><mxPoint x="60" y="80"/></Array>"#;
+    for (style, expected) in [
+        ("edgeStyle=elbowEdgeStyle;", ConnectorRoute::ElbowHorizontal),
+        (
+            "edgeStyle=elbowEdgeStyle;elbow=horizontal;",
+            ConnectorRoute::ElbowHorizontal,
+        ),
+        (
+            "edgeStyle=elbowEdgeStyle;elbow=vertical;",
+            ConnectorRoute::ElbowVertical,
+        ),
+        ("edgeStyle=sideToSideEdgeStyle;", ConnectorRoute::SideToSide),
+        (
+            "edgeStyle=topToBottomEdgeStyle;",
+            ConnectorRoute::TopToBottom,
+        ),
+        (
+            "edgeStyle=entityRelationEdgeStyle;",
+            ConnectorRoute::EntityRelation,
+        ),
+        (
+            "edgeStyle=entityRelationEdgeStyle;segment=30;",
+            ConnectorRoute::EntityRelation,
+        ),
+        ("edgeStyle=segmentEdgeStyle;", ConnectorRoute::Segment),
+        (
+            "edgeStyle=isometricEdgeStyle;",
+            ConnectorRoute::IsometricHorizontal,
+        ),
+        (
+            "edgeStyle=isometricEdgeStyle;elbow=vertical;",
+            ConnectorRoute::IsometricVertical,
+        ),
+    ] {
+        // Waypoints are routing hints draw.io honours the same way.
+        let report = load(&edge(style, hint));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.route, expected, "{style}");
+        assert_eq!(connector.waypoints.len(), 2);
+        assert_eq!(
+            feature_version(&report.workbook),
+            if expected.is_segment_or_isometric() {
+                41
+            } else {
+                40
+            }
+        );
+        let exported = export(&report.workbook).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&exported).contains("elbow=vertical"),
+            matches!(
+                expected,
+                ConnectorRoute::ElbowVertical | ConnectorRoute::IsometricVertical
+            )
+        );
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        let restored = connectors(&restored.workbook.sheets[0])[0];
+        assert_eq!(restored.route, expected, "{style}");
+        assert_eq!(restored.waypoints, connector.waypoints, "{style}");
+    }
+    // Routers Thinoda only approximates with its orthogonal elbow still warn,
+    // as do non-default entity-relation segments and hints on orthogonal edges.
+    for (style, points) in [
+        ("edgeStyle=loopEdgeStyle;", ""),
+        ("edgeStyle=entityRelationEdgeStyle;segment=12;", ""),
+        ("edgeStyle=orthogonalEdgeStyle;", hint),
+    ] {
+        let report = load(&edge(style, points));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+    let report = load(&edge("edgeStyle=loopEdgeStyle;", ""));
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].route,
+        ConnectorRoute::Elbow
+    );
+    // Without a routed style the orientation key means nothing and is dropped.
+    let report = load(&edge("elbow=vertical;", ""));
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].route,
+        ConnectorRoute::Straight
+    );
+    assert!(
+        !String::from_utf8(export(&report.workbook).unwrap())
+            .unwrap()
+            .contains("elbow=")
+    );
+}
+
+#[test]
+fn self_loops_import_silently_unless_the_loop_is_customised() {
+    let looped = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="v" value="" style="rounded=0;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell><mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1" source="v" target="v"><mxGeometry relative="1" as="geometry"/></mxCell>"#
+        ))
+    };
+    for style in ["", "direction=west;segment=10;"] {
+        let report = load(&looped(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.from, connector.to);
+    }
+    for style in ["direction=north;", "segment=20;"] {
+        let report = load(&looped(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn line_jumps_round_trip_and_warn_for_unmodelled_jump_options() {
+    use thinoda_core::board::{LineJumpStyle, LineJumps};
+
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    for (style, expected) in [
+        ("jumpStyle=arc;", Some(LineJumps::new(LineJumpStyle::Arc))),
+        (
+            "jumpStyle=gap;jumpSize=6;",
+            Some(LineJumps::new(LineJumpStyle::Gap)),
+        ),
+        (
+            "jumpStyle=sharp;jumpSize=12.9;",
+            Some(LineJumps {
+                style: LineJumpStyle::Sharp,
+                size: 12.0,
+            }),
+        ),
+        (
+            "jumpStyle=line;jumpSize=0;",
+            Some(LineJumps {
+                style: LineJumpStyle::Line,
+                size: 0.0,
+            }),
+        ),
+        // draw.io keeps but does not paint jumps on curves; so does Thinoda.
+        (
+            "jumpStyle=gap;curved=1;",
+            Some(LineJumps::new(LineJumpStyle::Gap)),
+        ),
+        ("jumpStyle=none;jumpSize=20;", None),
+    ] {
+        let report = load(&edge(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.line_jumps, expected, "{style}");
+        if expected.is_some() {
+            assert_eq!(feature_version(&report.workbook), 39);
+        }
+        let exported = export(&report.workbook).unwrap();
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(
+            connectors(&restored.workbook.sheets[0])[0].line_jumps,
+            expected
+        );
+    }
+    for style in [
+        "jumpStyle=wave;",
+        "jumpStyle=arc;jumpSize=1000;",
+        "jumpStyle=arc;jumpSize=big;",
+        "noJump=1;",
+        "jumpStyle=arc;jumpLayers=1;",
+    ] {
+        let report = load(&edge(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn edge_shapes_round_trip_and_warn_for_unrepresentable_parameters() {
+    use thinoda_core::board::{EdgeShape, EdgeShapeKind};
+
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=classic;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    let shape = |kind| Some(EdgeShape::new(kind));
+    for (style, expected) in [
+        ("shape=flexArrow;", shape(EdgeShapeKind::FlexArrow)),
+        (
+            "shape=flexArrow;width=14;endWidth=8.5;fillColor=#00994D;",
+            Some(EdgeShape {
+                width: Some(14.0),
+                end_width: Some(8.5),
+                fill: Some(Color::rgb(0x00, 0x99, 0x4d)),
+                ..EdgeShape::new(EdgeShapeKind::FlexArrow)
+            }),
+        ),
+        (
+            "shape=taperedArrow;startWidth=20;endWidth=0;",
+            Some(EdgeShape {
+                start_width: Some(20.0),
+                end_width: Some(0.0),
+                ..EdgeShape::new(EdgeShapeKind::TaperedArrow)
+            }),
+        ),
+        (
+            "shape=link;width=6;fillColor=#FF0000;",
+            Some(EdgeShape {
+                width: Some(6.0),
+                ..EdgeShape::new(EdgeShapeKind::Link)
+            }),
+        ),
+        (
+            "shape=pipe;fillColor=#FFFFFF;",
+            Some(EdgeShape {
+                fill: Some(Color::WHITE),
+                ..EdgeShape::new(EdgeShapeKind::Pipe)
+            }),
+        ),
+        (
+            "shape=filledEdge;fillColor=none;",
+            shape(EdgeShapeKind::FilledEdge),
+        ),
+        ("shape=wire;width=9;", shape(EdgeShapeKind::Wire)),
+        ("shape=connector;", None),
+    ] {
+        let report = load(&edge(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.edge_shape, expected, "{style}");
+        if expected.is_some() {
+            assert_eq!(feature_version(&report.workbook), 42, "{style}");
+        }
+        let exported = export(&report.workbook).unwrap();
+        let xml = String::from_utf8(exported.clone()).unwrap();
+        assert!(!xml.contains("width=9"), "{style}: {xml}");
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(
+            connectors(&restored.workbook.sheets[0])[0].edge_shape,
+            expected,
+            "{style}"
+        );
+    }
+    for style in [
+        "shape=arrow;",
+        "shape=flexArrow;width=1000;",
+        "shape=taperedArrow;endWidth=wide;",
+    ] {
+        let report = load(&edge(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn connector_labels_import_positioned_and_round_trip() {
+    use thinoda_core::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+    let child = |id: &str, value: &str, style: &str, geometry: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{value}" style="{style}" vertex="1" connectable="0" parent="e"><mxGeometry {geometry} as="geometry"><mxPoint x="3" y="-4" as="offset"/></mxGeometry></mxCell>"#
+        )
+    };
+    let label_style = "edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;";
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="main" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry x="0.5" y="-10" relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><mxPoint x="1" y="2" as="offset"/></mxGeometry></mxCell>{}{}"##,
+        child("c1", "1", label_style, r#"x="-0.8" y="6" relative="1""#),
+        child(
+            "c2",
+            "n",
+            label_style,
+            r#"x="1" width="20" height="10" relative="1""#
+        ),
+    ));
+    let sheet = clean(&xml);
+    let connector = connectors(&sheet)[0];
+    assert_eq!(connector.label, "main");
+    assert_eq!(
+        connector.label_placement,
+        Some(ConnectorLabelPlacement {
+            along: 0.5,
+            orthogonal: -10.0,
+            offset: Vec2::new(1.0, 2.0),
+        })
+    );
+    assert_eq!(
+        connector.extra_labels,
+        vec![
+            ConnectorLabel {
+                text: "1".into(),
+                placement: ConnectorLabelPlacement {
+                    along: -0.8,
+                    orthogonal: 6.0,
+                    offset: Vec2::new(3.0, -4.0),
+                },
+                rich_text: None,
+            },
+            ConnectorLabel {
+                text: "n".into(),
+                placement: ConnectorLabelPlacement {
+                    along: 1.0,
+                    orthogonal: 0.0,
+                    offset: Vec2::new(13.0, 1.0),
+                },
+                rich_text: None,
+            },
+        ]
+    );
+    let book = load(&xml).workbook;
+    assert_eq!(feature_version(&book), 43);
+    let exported = export(&book).unwrap();
+    let restored = import(&exported).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let back = connectors(&restored.workbook.sheets[0])[0];
+    assert_eq!(back.label_placement, connector.label_placement);
+    assert_eq!(back.extra_labels, connector.extra_labels);
+
+    // Clamped positions, absolute children and styled children are disclosed.
+    for extra in [
+        child("c", "x", label_style, r#"x="2" relative="1""#),
+        child(
+            "c",
+            "x",
+            label_style,
+            r#"x="10" y="10" width="5" height="5""#,
+        ),
+        child(
+            "c",
+            "x",
+            &format!("{label_style}fontStyle=1;"),
+            r#"relative="1""#,
+        ),
+        child(
+            "c",
+            "x",
+            "edgeLabel;fontSize=11;fontColor=#000000;",
+            r#"relative="1""#,
+        ),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>{extra}"##
+        ));
+        assert!(
+            load(&xml).warnings.contains(&ImportWarning::Formatting),
+            "{extra}"
+        );
+    }
+}
+
+#[test]
+fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip() {
+    let xml = concat!(
+        r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,
+        r#"<mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="base-a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="notes" value="Notes" parent="0"/>"#,
+        r#"<mxCell id="n1" value="N" style="ellipse;" vertex="1" parent="notes"><mxGeometry x="100" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="secret" value="Secret" visible="0" parent="0"/>"#,
+        r#"<mxCell id="s1" value="S" style="rounded=0;" vertex="1" parent="secret"><mxGeometry x="200" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="fixed" value="Fixed" style="locked=1;" parent="0"/>"#,
+        r#"<mxCell id="f1" value="F" style="rounded=0;" vertex="1" parent="fixed"><mxGeometry x="300" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="f2" value="F2" style="rounded=0;" vertex="1" parent="fixed"><mxGeometry x="400" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel></diagram></mxfile>"#,
+    );
+    let report = load(xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sheet = &report.workbook.sheets[0];
+    let layers: Vec<_> = sheet
+        .canvas
+        .layers
+        .iter()
+        .map(|l| (l.name.as_str(), l.visible, l.locked, l.source_id.as_deref()))
+        .collect();
+    assert_eq!(
+        layers,
+        [
+            ("Notes", true, false, Some("notes")),
+            ("Secret", false, false, Some("secret")),
+            ("Fixed", true, true, Some("fixed")),
+        ]
+    );
+    let layer_of = |sheet: &Sheet, source: &str| {
+        let object = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(source))
+            .unwrap_or_else(|| panic!("missing {source}"));
+        object
+            .layer
+            .map(|id| sheet.canvas.board_layer(id).unwrap().name.clone())
+    };
+    assert_eq!(layer_of(sheet, "base-a"), None);
+    assert_eq!(layer_of(sheet, "n1").as_deref(), Some("Notes"));
+    assert_eq!(layer_of(sheet, "s1").as_deref(), Some("Secret"));
+    assert_eq!(layer_of(sheet, "f2").as_deref(), Some("Fixed"));
+    let f1 = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("f1"))
+        .unwrap();
+    assert!(sheet.canvas.is_locked(f1.id));
+    assert!(!f1.locked);
+    assert_eq!(crate::required_native_version(&report.workbook), 45);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(reopened.sheets[0].canvas.layers, sheet.canvas.layers);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":44,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(crate::formats::native_import(&old).is_err());
+
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    for needle in [
+        r#"<mxCell id="notes" value="Notes" parent="0"/>"#,
+        r#"<mxCell id="secret" value="Secret" visible="0" parent="0"/>"#,
+        r#"<mxCell id="fixed" value="Fixed" style="locked=1;" parent="0"/>"#,
+        r#"id="n1""#,
+        r#"id="s1""#,
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let layer_pos = out.find(r#"id="secret""#).unwrap();
+    assert!(out.find(r#"id="s1""#).unwrap() > layer_pos);
+    assert!(out.contains(r#"parent="secret""#), "{out}");
+    let again = load(&out);
+    assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+    let again = &again.workbook.sheets[0];
+    assert_eq!(again.canvas.layers, sheet.canvas.layers);
+    for source in ["base-a", "n1", "s1", "f1", "f2"] {
+        assert_eq!(layer_of(again, source), layer_of(sheet, source), "{source}");
+    }
+}
+
+#[test]
+fn drawio_named_first_layer_and_layered_cards_stay_explicit() {
+    let xml = concat!(
+        r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,
+        r#"<mxCell id="1" value="Sketch" parent="0"/>"#,
+        r#"<mxCell id="a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="2" value="Cards" parent="0"/>"#,
+        r#"<mxCell id="c" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="2"><mxGeometry x="100" width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel></diagram></mxfile>"#,
+    );
+    let mut report = load(xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioLayerContentFlattened),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(cards(&report.workbook.sheets[0]).len(), 1);
+    let sheet = report.workbook.sheets.remove(0);
+    assert_eq!(sheet.canvas.layers.len(), 2);
+    assert_eq!(sheet.canvas.layers[0].name, "Sketch");
+    // Reserved ids are never kept as layer source ids.
+    assert_eq!(sheet.canvas.layers[0].source_id, None);
+    assert!(sheet.canvas.objects.iter().all(|o| o.layer.is_some()));
+    let out = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(out.contains(r#"value="Sketch" parent="0"/>"#), "{out}");
+}
+
+type TableSummary = (
+    Vec<f32>,
+    Vec<f32>,
+    Vec<(u16, u16, u16, u16, String)>,
+    thinoda_core::scene_table::TableStripes,
+);
+
+/// Grid, spans and labels of the only table, independent of object ids.
+fn table_summary(sheet: &Sheet) -> TableSummary {
+    assert_eq!(sheet.canvas.scene.tables.len(), 1);
+    let (id, table) = sheet.canvas.scene.tables.iter().next().unwrap();
+    assert!(table.validate().is_ok());
+    assert!(sheet.canvas.scene.containers.contains(id));
+    let cells = table
+        .cells
+        .iter()
+        .map(|cell| {
+            assert_eq!(sheet.canvas.scene.parents.get(&cell.id), Some(id));
+            let object = sheet.canvas.object(cell.id).unwrap();
+            (
+                cell.row,
+                cell.column,
+                cell.row_span,
+                cell.column_span,
+                object.label().to_string(),
+            )
+        })
+        .collect();
+    (
+        table.rows.clone(),
+        table.columns.clone(),
+        cells,
+        table.stripes,
+    )
+}
+
+#[test]
+fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
+    let cell = |id: &str, parent: &str, x: f32, w: f32, h: f32, extra: &str, visible: bool| {
+        format!(
+            r#"<mxCell id="{id}" value="{}" style="shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;strokeColor=inherit;overflow=hidden;fillColor=none;top=0;left=0;bottom=0;right=0;pointerEvents=1;fontColor=#000000;{extra}" {} vertex="1" parent="{parent}"><mxGeometry x="{x}" width="{w}" height="{h}" as="geometry"><mxRectangle width="{}" height="40" as="alternateBounds"/></mxGeometry></mxCell>"#,
+            if visible { id } else { "" },
+            if visible { "" } else { r#"visible="0""# },
+            if extra.contains("colspan") { 60.0 } else { w },
+        )
+    };
+    let row = |id: &str, y: f32| {
+        format!(
+            r#"<mxCell id="{id}" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;swimlaneBody=0;strokeColor=inherit;top=0;left=0;bottom=0;right=0;collapsible=0;dropTarget=0;fillColor=none;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;" vertex="1" parent="t"><mxGeometry y="{y}" width="180" height="40" as="geometry"/></mxCell>"#
+        )
+    };
+    let xml = page(&format!(
+        r#"<mxCell id="t" value="Table" style="shape=table;startSize=30;container=1;collapsible=0;childLayout=tableLayout;strokeColor=#333333;fillColor=#FFFFFF;fontColor=#000000;evenRowColor=#EEEEEE;oddColumnColor=#DDEEFF;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="180" height="150" as="geometry"/></mxCell>
+        {}{}{}{}
+        {}{}{}{}
+        <mxCell id="note" value="Inside" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;" vertex="1" parent="c10"><mxGeometry x="5" y="5" width="40" height="20" as="geometry"/></mxCell>
+        {}{}{}{}"#,
+        row("r0", 30.0),
+        cell("c00", "r0", 0.0, 120.0, 40.0, "colspan=2;", true),
+        cell("c01", "r0", 60.0, 60.0, 40.0, "", false),
+        cell("c02", "r0", 120.0, 60.0, 40.0, "", true),
+        row("r1", 70.0),
+        cell("c10", "r1", 0.0, 60.0, 40.0, "", true),
+        cell("c11", "r1", 60.0, 60.0, 40.0, "", true),
+        cell("c12", "r1", 120.0, 60.0, 80.0, "rowspan=2;", true),
+        row("r2", 110.0),
+        cell("c20", "r2", 0.0, 60.0, 40.0, "", true),
+        cell("c21", "r2", 60.0, 60.0, 40.0, "", true),
+        cell("c22", "r2", 120.0, 60.0, 40.0, "", false),
+    ))
+    .replace("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#);
+    let sheet = clean(&xml);
+    let summary = table_summary(&sheet);
+    let label = |r: u16, c: u16, rs: u16, cs: u16, label: &str| (r, c, rs, cs, label.to_string());
+    assert_eq!(summary.0, vec![40.0; 3]);
+    assert_eq!(summary.1, vec![60.0; 3]);
+    assert_eq!(
+        summary.2,
+        vec![
+            label(0, 0, 1, 2, "c00"),
+            label(0, 2, 1, 1, "c02"),
+            label(1, 0, 1, 1, "c10"),
+            label(1, 1, 1, 1, "c11"),
+            label(1, 2, 2, 1, "c12"),
+            label(2, 0, 1, 1, "c20"),
+            label(2, 1, 1, 1, "c21"),
+        ]
+    );
+    assert_eq!(summary.3.even_rows, Some(Color::rgb(0xEE, 0xEE, 0xEE)));
+    assert_eq!(summary.3.odd_columns, Some(Color::rgb(0xDD, 0xEE, 0xFF)));
+    let (&table, _) = sheet.canvas.scene.tables.iter().next().unwrap();
+    assert_eq!(
+        thinoda_core::scene_table::table_header(&sheet.canvas, table).map(|h| h.extent),
+        Some(30.0)
+    );
+    let note = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.label() == "Inside")
+        .unwrap();
+    let host = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.label() == "c10")
+        .unwrap();
+    assert_eq!(sheet.canvas.scene.parents.get(&note.id), Some(&host.id));
+    assert_eq!(host.rect, rect(100.0, 120.0, 60.0, 40.0));
+    assert_eq!(
+        host.style.stroke,
+        Some(Color::rgb(0x33, 0x33, 0x33)),
+        "inherited grid stroke"
+    );
+    assert_eq!(note.rect.min, Vec2::new(105.0, 125.0));
+    assert!(sheet.validate().is_ok());
+
+    let drawio = String::from_utf8(
+        export_bytes(
+            &Workbook::new(sheet.clone()),
+            Format::DrawIo,
+            &ExportOptions::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(drawio.contains("childLayout=tableLayout"));
+    assert_eq!(drawio.matches("shape=tableRow").count(), 3);
+    assert_eq!(drawio.matches(r#"visible="0""#).count(), 2);
+    assert!(drawio.contains("colspan=2;") && drawio.contains("rowspan=2;"));
+    // The export drops the page's adaptiveColors="none", so fixed colours warn.
+    let report = load(&drawio);
+    assert_eq!(
+        report.warnings.iter().collect::<Vec<_>>(),
+        vec![&ImportWarning::Formatting]
+    );
+    let round_trip = report.workbook.sheets.into_iter().next().unwrap();
+    assert_eq!(table_summary(&round_trip), summary);
+    assert_eq!(
+        round_trip
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.label() == "Inside")
+            .unwrap()
+            .rect,
+        note.rect
+    );
+}
+
+#[test]
+fn native_tables_export_to_drawio_and_back() {
+    use thinoda_core::scene_table::{TableAxis, TableStripes};
+    let mut sheet = Sheet::new("Board", "Root");
+    let table = sheet
+        .insert_canvas_table(Vec2::new(20.0, 20.0), 3, 3, None)
+        .unwrap();
+    let ids: Vec<_> = sheet.canvas.scene.tables[&table]
+        .cells
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    for (n, id) in ids.iter().enumerate() {
+        if let CanvasObjectKind::Shape { label, .. } =
+            &mut sheet.canvas.object_mut(*id).unwrap().kind
+        {
+            *label = format!("cell {n}");
+        }
+    }
+    sheet.merge_canvas_table_cells(table, &ids[0..2]).unwrap();
+    sheet
+        .merge_canvas_table_cells(table, &[ids[5], ids[8]])
+        .unwrap();
+    sheet
+        .resize_canvas_table_track(table, TableAxis::Column, 0, 80.0)
+        .unwrap();
+    sheet
+        .set_canvas_table_stripes(
+            table,
+            TableStripes {
+                even_rows: Some(Color::rgb(240, 240, 240)),
+                ..TableStripes::default()
+            },
+        )
+        .unwrap();
+    let summary = table_summary(&sheet);
+    let frame = sheet.canvas.object(table).unwrap().rect;
+    let drawio = export_bytes(
+        &Workbook::new(sheet),
+        Format::DrawIo,
+        &ExportOptions::default(),
+    )
+    .unwrap();
+    let round_trip = clean(std::str::from_utf8(&drawio).unwrap());
+    assert_eq!(table_summary(&round_trip), summary);
+    let (&id, _) = round_trip.canvas.scene.tables.iter().next().unwrap();
+    assert_eq!(round_trip.canvas.object(id).unwrap().rect, frame);
+    assert!(thinoda_core::scene_table::table_header(&round_trip.canvas, id).is_none());
 }

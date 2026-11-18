@@ -17,3 +17,4 @@ image.workspace = true
 pulldown-cmark.workspace = true
 sha2 = "0.10"
 quick-xml.workspace = true
+log.workspace = true

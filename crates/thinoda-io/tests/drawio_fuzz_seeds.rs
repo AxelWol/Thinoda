@@ -95,11 +95,8 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             let objects = &report.workbook.sheets[0].canvas.objects;
             assert!(objects.iter().any(|object| object.label() == "Small shape"));
             assert!(objects.iter().any(|object| object.label() == "Named text"));
-            assert!(
-                objects
-                    .iter()
-                    .any(|object| object.label() == "Parent\nChild")
-            );
+            assert!(objects.iter().any(|object| object.label() == "Parent"
+                && object.label_texts().any(|text| text == "Child")));
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);

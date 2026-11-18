@@ -344,7 +344,7 @@ mod tests {
         assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
         assert_eq!(kinds(&pasted.payload), (2, 1));
 
-        let unsupported = adjusted.replace("rounded=1;", "rounded=1;dashed=1;");
+        let unsupported = adjusted.replace("rounded=1;", "rounded=1;fillStyle=future;");
         let report = drawio::import(unsupported.as_bytes()).unwrap();
         assert!(report.warnings.contains(&ImportWarning::Formatting));
         let pasted = decode(&unsupported).unwrap();
@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn placeholder_warning_follows_the_pasted_page() {
-        let marked = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="a" label="%width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
+        let marked = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="a" label="%pagenumber%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
         for (first, later, marked_is_pasted) in [(MODEL, marked, false), (marked, MODEL, true)] {
             let file = format!(
                 "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Later\">{later}</diagram></mxfile>"

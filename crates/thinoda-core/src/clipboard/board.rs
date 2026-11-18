@@ -8,6 +8,7 @@ use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
 };
+use crate::drawio_passthrough::DrawioCellPassthrough;
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{ApproxMeasure, Layout, layout_sheet};
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
@@ -47,6 +48,21 @@ const GROW_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-26\n";
 const FIT_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-27\n";
 const DISTRIBUTE_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-28\n";
 const CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-29\n";
+const DRAWIO_PASSTHROUGH_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-30\n";
+const MARKER_LIBRARY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-31\n";
+const LINE_JUMPS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-32\n";
+const EDGE_ROUTES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-33\n";
+const SEGMENT_ROUTES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-34\n";
+const EDGE_SHAPES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-35\n";
+const CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-36\n";
+const OBJECT_DATA_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-37\n";
+const LAYERS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-38\n";
+const TABLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-39\n";
+const SHAPE_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-40\n";
+const LABEL_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-41\n";
+const RICH_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-42\n";
+const RICH_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-43\n";
+const RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-44\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -65,7 +81,37 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_cross_axis_fill() {
+        if self.fragment.has_rich_extra_connector_labels() {
+            RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_rich_connector_labels() {
+            RICH_CONNECTOR_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_rich_labels() {
+            RICH_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_label_styles() {
+            LABEL_STYLES_BOARD_PREFIX
+        } else if self.fragment.has_shape_styles() {
+            SHAPE_STYLES_BOARD_PREFIX
+        } else if self.fragment.has_tables() {
+            TABLES_BOARD_PREFIX
+        } else if self.fragment.has_layers() {
+            LAYERS_BOARD_PREFIX
+        } else if self.fragment.has_object_data() {
+            OBJECT_DATA_BOARD_PREFIX
+        } else if self.fragment.has_connector_labels() {
+            CONNECTOR_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_connector_edge_shapes() {
+            EDGE_SHAPES_BOARD_PREFIX
+        } else if self.fragment.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_BOARD_PREFIX
+        } else if self.fragment.has_drawio_edge_routes() {
+            EDGE_ROUTES_BOARD_PREFIX
+        } else if self.fragment.has_connector_line_jumps() {
+            LINE_JUMPS_BOARD_PREFIX
+        } else if self.fragment.has_library_connector_markers() {
+            MARKER_LIBRARY_BOARD_PREFIX
+        } else if self.fragment.has_drawio_passthrough() {
+            DRAWIO_PASSTHROUGH_BOARD_PREFIX
+        } else if self.fragment.has_scene_cross_axis_fill() {
             CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX
         } else if self.fragment.has_scene_distribute_resize() {
             DISTRIBUTE_LAYOUT_BOARD_PREFIX
@@ -325,9 +371,84 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
-        .map(|json| (29, json))
+        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-44\r\n"))
+        .map(|json| (44, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_CONNECTOR_LABELS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-43\r\n"))
+                .map(|json| (43, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(RICH_LABELS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-42\r\n"))
+                .map(|json| (42, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LABEL_STYLES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-41\r\n"))
+                .map(|json| (41, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SHAPE_STYLES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-40\r\n"))
+                .map(|json| (40, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(TABLES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-39\r\n"))
+                .map(|json| (39, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LAYERS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-38\r\n"))
+                .map(|json| (38, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(OBJECT_DATA_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-37\r\n"))
+                .map(|json| (37, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(CONNECTOR_LABELS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-36\r\n"))
+                .map(|json| (36, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EDGE_SHAPES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-35\r\n"))
+                .map(|json| (35, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SEGMENT_ROUTES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-34\r\n"))
+                .map(|json| (34, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EDGE_ROUTES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-33\r\n"))
+                .map(|json| (33, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LINE_JUMPS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-32\r\n"))
+                .map(|json| (32, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(MARKER_LIBRARY_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-31\r\n"))
+                .map(|json| (31, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(DRAWIO_PASSTHROUGH_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-30\r\n"))
+                .map(|json| (30, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
+                .map(|json| (29, json))
+        })
         .or_else(|| {
             text.strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
@@ -472,6 +593,51 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 44 && payload.fragment.has_rich_extra_connector_labels() {
+        return Err("rich extra connector labels require board clipboard version 44".into());
+    }
+    if version < 30 && payload.fragment.has_drawio_passthrough() {
+        return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
+    if version < 43 && payload.fragment.has_rich_connector_labels() {
+        return Err("rich connector labels require board clipboard version 43".into());
+    }
+    if version < 42 && payload.fragment.has_rich_labels() {
+        return Err("rich labels require board clipboard version 42".into());
+    }
+    if version < 41 && payload.fragment.has_label_styles() {
+        return Err("label styles require board clipboard version 41".into());
+    }
+    if version < 40 && payload.fragment.has_shape_styles() {
+        return Err("shape styles require board clipboard version 40".into());
+    }
+    if version < 39 && payload.fragment.has_tables() {
+        return Err("tables require board clipboard version 39".into());
+    }
+    if version < 38 && payload.fragment.has_layers() {
+        return Err("layers require board clipboard version 38".into());
+    }
+    if version < 37 && payload.fragment.has_object_data() {
+        return Err("object data requires board clipboard version 37".into());
+    }
+    if version < 36 && payload.fragment.has_connector_labels() {
+        return Err("connector labels require board clipboard version 36".into());
+    }
+    if version < 35 && payload.fragment.has_connector_edge_shapes() {
+        return Err("connector edge shapes require board clipboard version 35".into());
+    }
+    if version < 34 && payload.fragment.has_drawio_segment_routes() {
+        return Err("draw.io segment routes require board clipboard version 34".into());
+    }
+    if version < 33 && payload.fragment.has_drawio_edge_routes() {
+        return Err("draw.io edge routes require board clipboard version 33".into());
+    }
+    if version < 32 && payload.fragment.has_connector_line_jumps() {
+        return Err("connector line jumps require board clipboard version 32".into());
+    }
+    if version < 31 && payload.fragment.has_library_connector_markers() {
+        return Err("draw.io library connector markers require board clipboard version 31".into());
+    }
     if version < 25 && payload.fragment.has_scene_fill_last_resize() {
         return Err("fill-last stack resizing requires board clipboard version 25".into());
     }
@@ -1012,6 +1178,14 @@ fn copy_prepared_board_selection(
         .filter(|(id, _)| objects.contains(id))
         .map(|(id, policy)| (*id, *policy))
         .collect();
+    fragment.canvas.scene.tables = sheet
+        .canvas
+        .scene
+        .tables
+        .iter()
+        .filter(|(id, _)| objects.contains(id))
+        .map(|(id, table)| (*id, table.clone()))
+        .collect();
     for mut object in copied_objects {
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             let from_external = is_external(connector.from, &owned, &objects);
@@ -1031,6 +1205,7 @@ fn copy_prepared_board_selection(
                 }
             }
         }
+        object.drawio = DrawioCellPassthrough::for_copy(&object.drawio);
         fragment.canvas.objects.push(object);
     }
     fragment.canvas.card_states = sheet
@@ -1059,6 +1234,23 @@ fn copy_prepared_board_selection(
         .iter()
         .filter(|group| groups.contains(&group.id))
         .copied()
+        .collect();
+    let layers: HashSet<_> = fragment
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object.layer)
+        .collect();
+    fragment.canvas.layers = sheet
+        .canvas
+        .layers
+        .iter()
+        .filter(|layer| layers.contains(&layer.id))
+        .map(|layer| {
+            let mut layer = layer.clone();
+            layer.source_id = None;
+            layer
+        })
         .collect();
 
     let text = plain_text(sheet, &roots, &fragment.canvas.objects)?;
@@ -1528,9 +1720,38 @@ pub fn paste_board_selection(
             .layout_policies
             .insert(map_object(*id)?, *policy);
     }
+    for (id, table) in &source.canvas.scene.tables {
+        let mut table = table.clone();
+        for cell in &mut table.cells {
+            cell.id = map_object(cell.id)?;
+        }
+        candidate
+            .canvas
+            .scene
+            .tables
+            .insert(map_object(*id)?, table);
+    }
+    // Copied layers land on a usable target layer of the same name, else on the base layer.
+    let layer_map: HashMap<_, _> = source
+        .canvas
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            let target = candidate
+                .canvas
+                .layers
+                .iter()
+                .find(|target| target.name == layer.name && target.visible && !target.locked)?;
+            Some((layer.id, target.id))
+        })
+        .collect();
     for original in &source.canvas.objects {
         let mut object = original.clone();
         object.id = map_object(original.id)?;
+        object.layer = object
+            .layer
+            .and_then(|layer| layer_map.get(&layer).copied());
+        object.drawio = DrawioCellPassthrough::for_copy(&object.drawio);
         object.group = object.group.map(map_group).transpose()?;
         object.rect = object.rect.translate(delta);
         match &mut object.kind {
@@ -1566,6 +1787,7 @@ pub fn paste_board_selection(
         pasted_objects.push(object.id);
         candidate.canvas.objects.push(object);
     }
+    candidate.canvas.normalize_layer_order();
     candidate.hydrate_stencil_packages()?;
     candidate.validate()?;
     *sheet = candidate;

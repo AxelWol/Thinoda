@@ -75,6 +75,7 @@ pub enum Cmd {
     BoardGrid(GridKind),
     BoardSnap,
     BoardMinimap,
+    BoardLayers,
     BoardImage,
     BoardZoomSelection,
     New,
@@ -367,6 +368,8 @@ pub struct ThinodaApp {
     pub(crate) attachment_request: Option<crate::images::ImageRequest>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
+    pub(crate) draft_font_source: std::collections::BTreeSet<String>,
+    pub(crate) label_font_families: Option<Arc<[String]>>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
     pub(crate) stencils: crate::stencils::StencilPanel,
@@ -488,6 +491,8 @@ impl ThinodaApp {
             attachment_request: None,
             fonts: Default::default(),
             font_source: None,
+            draft_font_source: Default::default(),
+            label_font_families: None,
             quick_style_dialog: None,
             theme_dialog: None,
             stencils: Default::default(),
@@ -930,6 +935,7 @@ impl ThinodaApp {
             &cmd,
             Cmd::BoardTool(_)
                 | Cmd::BoardMinimap
+                | Cmd::BoardLayers
                 | Cmd::New
                 | Cmd::NewFromTemplate(_)
                 | Cmd::Home
@@ -1046,6 +1052,13 @@ impl ThinodaApp {
                     self.toasts.warning(t("Not possible here"));
                 } else if let Some(doc) = self.doc_mut() {
                     doc.view.set_minimap_visible(!doc.view.show_minimap);
+                }
+            }
+            Cmd::BoardLayers => {
+                if !self.command_available(&Cmd::BoardLayers) {
+                    self.toasts.warning(t("Not possible here"));
+                } else if let Some(doc) = self.doc_mut() {
+                    doc.show_layers = !doc.show_layers;
                 }
             }
             Cmd::BoardImage => {
@@ -2080,6 +2093,7 @@ impl ThinodaApp {
             | Cmd::BoardGrid(_)
             | Cmd::BoardSnap
             | Cmd::BoardMinimap
+            | Cmd::BoardLayers
             | Cmd::BoardImage => {
                 !self.any_modal_open() && self.mode == CenterMode::Map && self.doc().is_some()
             }
@@ -2161,7 +2175,7 @@ impl ThinodaApp {
                     );
                 let objects = d.view.selection.is_empty()
                     && !d.view.board_selection.is_empty()
-                    && self.board_style_clipboard.is_some_and(|style| {
+                    && self.board_style_clipboard.as_ref().is_some_and(|style| {
                         d.view.board_selection.iter().all(|id| {
                             sheet
                                 .canvas
@@ -2236,7 +2250,10 @@ impl ThinodaApp {
             .doc()
             .is_some_and(|d| !d.view.board_selection.is_empty())
         {
-            let style = self.board_style_clipboard.expect("command availability");
+            let style = self
+                .board_style_clipboard
+                .clone()
+                .expect("command availability");
             let d = self.doc_mut().unwrap();
             let selection = d.view.board_selection.clone();
             if let Err(error) = d.doc.edit_sheet("Paste Style", |sheet| {
@@ -2276,6 +2293,25 @@ impl ThinodaApp {
         }
     }
     pub fn open_link(&mut self, link: &str) {
+        if let Some(page) = thinoda_core::object_data::page_link_target(link) {
+            let index = self.doc().and_then(|doc| {
+                doc.doc.workbook().sheets.iter().position(|sheet| {
+                    sheet
+                        .drawio
+                        .as_ref()
+                        .and_then(|drawio| drawio.diagram_id.as_deref())
+                        == Some(page)
+                })
+            });
+            match index {
+                Some(index) => self.switch_sheet(index),
+                None => {
+                    self.toasts
+                        .warning(t("The linked page is not in this document"));
+                }
+            }
+            return;
+        }
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
         }
@@ -2441,6 +2477,7 @@ impl ThinodaApp {
             (Cmd::BoardGrid(GridKind::Lines), "Line grid"),
             (Cmd::BoardSnap, "Snap to grid"),
             (Cmd::BoardMinimap, "Board minimap"),
+            (Cmd::BoardLayers, "Layers"),
             (
                 Cmd::BoardAction(BoardAction::Group),
                 "Group board selection",
@@ -5718,6 +5755,33 @@ mod tests {
     }
 
     #[test]
+    fn page_links_switch_to_the_linked_drawio_page() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut other = thinoda_core::Sheet::new("Network", "Anchor");
+        other.drawio = Some(std::sync::Arc::new(
+            thinoda_core::drawio_passthrough::DrawioPagePassthrough {
+                diagram_id: Some("page-2".into()),
+                ..Default::default()
+            },
+        ));
+        doc.doc.add_sheet(other).unwrap();
+        doc.doc.set_active(0);
+
+        app.open_link("data:page/id,page-2");
+        assert_eq!(app.doc().unwrap().doc.active_index(), 1);
+
+        app.switch_sheet(0);
+        app.open_link("data:page/id,missing");
+        assert_eq!(app.doc().unwrap().doc.active_index(), 0);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains(t("The linked page is not in this document")))
+        );
+    }
+
+    #[test]
     fn board_search_navigates_sheets_and_replaces_atomically() {
         use thinoda_core::{CanvasObject, CanvasObjectKind, Rect, ShapeKind, Sheet, Vec2};
 
@@ -5804,7 +5868,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_rejects_formatted_titles_without_cross_sheet_partial_changes() {
+    fn replace_all_preserves_formatted_titles_across_sheets_and_is_atomic() {
         use thinoda_core::{Card, CardKind, Sheet, Vec2};
 
         let mut app = ThinodaApp::headless();
@@ -5843,9 +5907,24 @@ mod tests {
 
         app.replace_all();
 
+        let after = app.doc().unwrap().doc.workbook().clone();
+        assert_eq!(after.sheets[0].root_topic().title, "Goal topic");
+        let card = after.sheets[1]
+            .topics
+            .values()
+            .find(|topic| topic.title == "Goal card")
+            .unwrap();
+        assert_eq!(card.inline_text.runs[0].style.bold, Some(true));
+        assert_eq!(
+            (card.inline_text.runs[0].start, card.inline_text.runs[0].end),
+            (0, 4)
+        );
+        assert!(app.doc_mut().unwrap().doc.undo());
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
-        assert_eq!(app.search.hits.len(), 2);
-        assert_eq!(app.search.canvas_hits.len(), 0);
+
+        app.search.replace = "x".repeat(thinoda_core::rich_text::MAX_INLINE_TEXT_CHARS);
+        app.replace_all();
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 
     #[test]

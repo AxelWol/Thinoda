@@ -2,9 +2,11 @@
 //!
 //! Built-in libraries mirror draw.io's General, Basic, Flowchart and Arrows
 //! sections; users can import draw.io `<mxlibrary>` files or versioned JSON
-//! packages and collect board content in a scratchpad. Templates use the draw.io
-//! decoder; package definitions use the shared interpreter. Both insert through
-//! validated board clipboard payloads and retain the same click/drag behavior.
+//! packages and collect board content in a scratchpad. The bundled generic
+//! draw.io families are opt-in sections of one "draw.io" group. Templates use
+//! the draw.io decoder; package definitions use the shared interpreter. Both
+//! insert through validated board clipboard payloads and retain the same
+//! click/drag behavior.
 
 use std::{
     collections::HashMap,
@@ -18,9 +20,13 @@ use thinoda_core::{
     CanvasObjectKind, Layout, ShapeKind, Sheet, SheetRootMode, Vec2,
     clipboard::{BoardClipboardPayload, paste_board_selection},
     layout::{ApproxMeasure, layout_sheet},
+    resources::Resource,
     stencil::{StencilDefinition, StencilPackage},
 };
-use thinoda_io::drawio_library::{self, StencilEntry, StencilLibrary};
+use thinoda_io::{
+    drawio_bundle::{self, BundledShape},
+    drawio_library::{self, StencilEntry, StencilLibrary},
+};
 use thinoda_platform::stencils::{SavedLibrary, SavedPackage, StencilState};
 use thinoda_ui::widgets;
 
@@ -39,6 +45,10 @@ const DECODES_PER_FRAME: usize = 12;
 const CACHE_LIMIT: usize = 600;
 /// Approximate retained preview size; one oversized preview may exceed it.
 const CACHE_ESTIMATED_BYTES: usize = 64 * 1024 * 1024;
+/// Collapse ID of the group holding the bundled draw.io families.
+const DRAWIO_GROUP_ID: &str = "drawio";
+/// Bundled shapes listed by one search; refining the query reveals the rest.
+const MAX_BUNDLED_RESULTS: usize = 240;
 /// Undo label of an inserted stencil.
 pub(crate) const INSERT_LABEL: &str = "Insert stencil";
 
@@ -50,6 +60,8 @@ pub(crate) struct Prepared {
     layout: Layout,
     /// draw.io content that was omitted or simplified while converting.
     pub(crate) simplified: bool,
+    /// Bytes of an embedded package shared with every tile of that package.
+    shared_bytes: usize,
 }
 
 fn prepare(entry: &StencilEntry, dark: bool, builtin: bool) -> Option<Prepared> {
@@ -80,13 +92,17 @@ fn prepare(entry: &StencilEntry, dark: bool, builtin: bool) -> Option<Prepared> 
         sheet,
         layout,
         simplified: !pasted.warnings.is_empty() || !pasted.losses.is_empty(),
+        shared_bytes: 0,
     })
 }
 
+/// Prepares `definition`. With `embedded`, the object draws from that whole
+/// package resource, so every shape inserted from it shares one resource.
 fn prepare_definition(
     package: &StencilPackage,
     definition: &StencilDefinition,
     dark: bool,
+    embedded: Option<(Arc<StencilPackage>, Resource)>,
 ) -> Result<Prepared, String> {
     let parameters = definition.resolve_parameters(&Default::default());
     let [width, height] = definition.default_size();
@@ -103,7 +119,26 @@ fn prepare_definition(
         .map_err(|error| error.to_string())?;
     let mut sheet = Sheet::new("Stencil", "");
     sheet.root_mode = SheetRootMode::Hidden;
-    let object = thinoda_core::stencil_object::new_object(package, definition, Vec2::ZERO);
+    let mut shared_bytes = 0;
+    let object = match embedded {
+        Some((shared, resource)) => {
+            shared_bytes = resource.bytes().len();
+            let reference = sheet.resources.insert(resource)?;
+            let size = Vec2::new(width as f32, height as f32);
+            let mut object = thinoda_core::CanvasObject::shape(
+                ShapeKind::Rectangle,
+                thinoda_core::Rect::from_center_size(Vec2::ZERO, size),
+            );
+            let mut stencil = thinoda_core::stencil_object::StencilRef::with_package(
+                Arc::clone(&shared),
+                &definition.id,
+            );
+            stencil.embed_package(shared, reference);
+            object.stencil = Some(stencil);
+            object
+        }
+        None => thinoda_core::stencil_object::new_object(package, definition, Vec2::ZERO),
+    };
     let id = sheet
         .add_canvas_object(object)
         .map_err(|error| error.to_string())?;
@@ -120,6 +155,7 @@ fn prepare_definition(
         sheet,
         layout,
         simplified: false,
+        shared_bytes,
     })
 }
 
@@ -191,7 +227,14 @@ fn prepared_cache_bytes(prepared: &Prepared) -> usize {
         .saturating_add(prepared.layout.relationships.len());
     thinoda_core::document::approx_sheet_bytes(&prepared.sheet)
         .saturating_mul(2)
-        .saturating_add(prepared.sheet.resources.byte_len().saturating_mul(2))
+        .saturating_add(
+            prepared
+                .sheet
+                .resources
+                .byte_len()
+                .saturating_sub(prepared.shared_bytes)
+                .saturating_mul(2),
+        )
         .saturating_add(shared_points.saturating_mul(2))
         .saturating_add(layout_items.saturating_mul(512))
 }
@@ -217,6 +260,8 @@ pub(crate) struct StencilPanel {
     cache: HashMap<CacheKey, CachedPrepared>,
     cache_bytes: usize,
     cache_dark: bool,
+    /// Bundled packages by catalog index, with their shared resource.
+    bundled: HashMap<usize, (Arc<StencilPackage>, Resource)>,
     pub(crate) search: String,
 }
 
@@ -231,12 +276,22 @@ struct Section {
 enum SectionContent {
     Drawio(Arc<StencilLibrary>),
     Package(Arc<StencilPackage>),
+    /// A bundled draw.io family, listed from the catalog without decoding.
+    Bundled(&'static str),
 }
+
+/// An entry with its section-wide index.
+type IndexedEntry<'a> = (usize, SectionEntry<'a>);
 
 #[derive(Clone, Copy)]
 enum SectionEntry<'a> {
     Drawio(&'a StencilEntry),
     Definition(&'a StencilDefinition),
+    /// A shape of the bundled package with this catalog index.
+    Bundled {
+        package: usize,
+        shape: &'static BundledShape,
+    },
 }
 
 impl<'a> SectionEntry<'a> {
@@ -244,13 +299,81 @@ impl<'a> SectionEntry<'a> {
         match self {
             Self::Drawio(entry) => &entry.title,
             Self::Definition(definition) => &definition.title,
+            Self::Bundled { shape, .. } => &shape.title,
         }
     }
 
     fn matches_query(self, query: &str) -> bool {
         self.title().to_lowercase().contains(query)
-            || matches!(self, Self::Definition(definition) if definition.tags.iter().any(|tag| tag.to_lowercase().contains(query)))
+            || match self {
+                Self::Drawio(_) => false,
+                Self::Definition(definition) => definition
+                    .tags
+                    .iter()
+                    .any(|tag| tag.to_lowercase().contains(query)),
+                Self::Bundled { package, shape } => {
+                    shape.name.replace('_', " ").contains(query)
+                        || drawio_bundle::bundle().catalog().packages[package]
+                            .title
+                            .to_lowercase()
+                            .contains(query)
+                }
+            }
     }
+}
+
+/// English titles of the bundled draw.io families, by family id. Proper names
+/// are kept as written; the others are catalog keys.
+pub(crate) const DRAWIO_FAMILY_TITLES: &[(&str, &str)] = &[
+    ("basic", "Basic"),
+    ("arrows", "Arrows"),
+    ("flowchart", "Flowchart"),
+    ("bpmn", "BPMN"),
+    ("electrical", "Electrical"),
+    ("pid", "P&ID"),
+    ("floorplan", "Floorplans"),
+    ("mockup", "Mockups"),
+    ("cabinets", "Cabinets"),
+    ("eip", "Enterprise integration patterns"),
+    ("fluid_power", "Fluid power"),
+    ("lean_mapping", "Lean mapping"),
+    ("sitemap", "Sitemap"),
+    ("signs", "Signs"),
+    ("networks", "Networks"),
+    ("networks2", "Network icons"),
+    ("bootstrap", "Bootstrap"),
+];
+
+/// Family titles that are names rather than translatable words.
+const DRAWIO_PROPER_TITLES: &[&str] = &["BPMN", "P&ID", "Bootstrap"];
+
+fn drawio_family_title(family: &str) -> String {
+    match DRAWIO_FAMILY_TITLES.iter().find(|(id, _)| *id == family) {
+        Some((_, title)) if DRAWIO_PROPER_TITLES.contains(title) => (*title).to_owned(),
+        Some((_, title)) => t(title).to_owned(),
+        None => family.to_owned(),
+    }
+}
+
+fn drawio_section_id(family: &str) -> String {
+    format!("{DRAWIO_GROUP_ID}.{family}")
+}
+
+/// Catalog indexes of a family's packages, in catalog order.
+fn family_packages(family: &str) -> impl Iterator<Item = usize> + '_ {
+    drawio_bundle::bundle()
+        .catalog()
+        .packages
+        .iter()
+        .enumerate()
+        .filter(move |(_, package)| package.family == family)
+        .map(|(index, _)| index)
+}
+
+/// The caption of a package within its family, e.g. "Resistors".
+fn package_caption(index: usize) -> &'static str {
+    let title = &drawio_bundle::bundle().catalog().packages[index].title;
+    title.rsplit(" / ").next().unwrap_or(title)
 }
 
 impl Section {
@@ -268,22 +391,68 @@ impl Section {
                 .enumerate()
                 .map(|(index, definition)| (index, SectionEntry::Definition(definition)))
                 .collect(),
+            SectionContent::Bundled(family) => family_packages(family)
+                .flat_map(|package| {
+                    drawio_bundle::bundle().catalog().packages[package]
+                        .shapes
+                        .iter()
+                        .map(move |shape| SectionEntry::Bundled { package, shape })
+                })
+                .enumerate()
+                .collect(),
         }
+    }
+
+    fn removable(&self) -> bool {
+        !self.builtin
+            && self.id != SCRATCHPAD_ID
+            && !matches!(self.content, SectionContent::Bundled(_))
     }
 
     #[cfg(test)]
     fn library(&self) -> &Arc<StencilLibrary> {
         match &self.content {
             SectionContent::Drawio(library) => library,
-            SectionContent::Package(_) => panic!("expected a draw.io template library"),
+            _ => panic!("expected a draw.io template library"),
         }
     }
+}
+
+/// What the user did in the Stencils tab this frame.
+#[derive(Default)]
+struct TabOutcome {
+    action: Option<(usize, TileAction)>,
+    add_selection: bool,
+    remove_library: Option<String>,
+    collapse_changes: Vec<(String, bool)>,
+    pending: bool,
 }
 
 enum TileAction {
     Insert(Arc<Prepared>),
     Remove(usize),
     Unavailable(String),
+}
+
+/// Whether `text` is draw.io stencil XML (`<shapes>` or `<shape>` root)
+/// rather than an `<mxlibrary>` palette.
+fn is_stencil_xml(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    while let Some(tail) = rest.strip_prefix('<') {
+        if tail.starts_with('?') || tail.starts_with('!') {
+            let Some(end) = tail.find('>') else {
+                return false;
+            };
+            rest = tail[end + 1..].trim_start();
+            continue;
+        }
+        let name: String = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        return name == "shapes" || name == "shape";
+    }
+    false
 }
 
 fn parse_package(text: &str) -> Result<StencilPackage, String> {
@@ -404,6 +573,7 @@ impl StencilPanel {
             }
         });
         self.packages = packages;
+        self.sync_drawio_registry();
         if !self.imported.iter().any(|lib| lib.id == SCRATCHPAD_ID) {
             if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
                 messages.push(t("Too many stencil libraries; remove one first").to_owned());
@@ -443,6 +613,12 @@ impl StencilPanel {
     }
 
     fn sections(&self) -> Vec<Section> {
+        self.sections_with(false)
+    }
+
+    /// Sections in display order; `all_drawio` adds hidden draw.io families,
+    /// which search covers.
+    fn sections_with(&self, all_drawio: bool) -> Vec<Section> {
         let imported = self.imported.iter().map(|library| Section {
             id: library.id.clone(),
             title: if library.id == SCRATCHPAD_ID {
@@ -472,12 +648,22 @@ impl StencilPanel {
             builtin: false,
             content: SectionContent::Package(Arc::clone(package)),
         });
+        let bundled = drawio_bundle::FAMILIES
+            .iter()
+            .filter(|family| all_drawio || self.state.shown_drawio.iter().any(|id| id == *family))
+            .map(|family| Section {
+                id: drawio_section_id(family),
+                title: drawio_family_title(family),
+                builtin: false,
+                content: SectionContent::Bundled(family),
+            });
         // Like draw.io: the scratchpad first, then the shape sections, then imports.
         let (scratchpad, others): (Vec<_>, Vec<_>) =
             imported.partition(|section| section.id == SCRATCHPAD_ID);
         scratchpad
             .into_iter()
             .chain(builtin)
+            .chain(bundled)
             .chain(others)
             .chain(packages)
             .collect()
@@ -509,15 +695,28 @@ impl StencilPanel {
                     .ok_or_else(|| t("Some library entries could not be used").to_owned())
             }
             (SectionContent::Package(package), SectionEntry::Definition(definition)) => {
-                prepare_definition(package, definition, dark)
+                prepare_definition(package, definition, dark, None)
             }
+            (SectionContent::Bundled(_), SectionEntry::Bundled { package, shape }) => self
+                .bundled_package(package)
+                .and_then(|(shared, resource)| {
+                    let definition = shared
+                        .definition(&shape.definition)
+                        .ok_or_else(|| t("Some library entries could not be used").to_owned())?;
+                    prepare_definition(
+                        &shared,
+                        definition,
+                        dark,
+                        Some((Arc::clone(&shared), resource)),
+                    )
+                }),
             _ => Err(t("Some library entries could not be used").to_owned()),
         };
         let failure = result.as_ref().err().cloned();
         let prepared = result.ok().map(Arc::new);
         let source_bytes = match entry {
             SectionEntry::Drawio(entry) => entry.xml.len(),
-            SectionEntry::Definition(_) => 0,
+            SectionEntry::Definition(_) | SectionEntry::Bundled { .. } => 0,
         };
         let estimated_bytes = prepared.as_ref().map_or(256, |prepared| {
             prepared_cache_bytes(prepared).saturating_add(source_bytes)
@@ -560,6 +759,21 @@ impl StencilPanel {
         );
     }
 
+    /// A bundled package and its resource, decoded and encoded once.
+    fn bundled_package(&mut self, index: usize) -> Result<(Arc<StencilPackage>, Resource), String> {
+        if let Some(found) = self.bundled.get(&index) {
+            return Ok(found.clone());
+        }
+        let package = drawio_bundle::bundle()
+            .package(index)
+            .ok_or_else(|| t("Some library entries could not be used").to_owned())?;
+        let bytes = serde_json::to_vec(package.as_ref()).map_err(|error| error.to_string())?;
+        let resource = Resource::new("stencil-package.json", "application/json", bytes)?;
+        self.bundled
+            .insert(index, (Arc::clone(&package), resource.clone()));
+        Ok((package, resource))
+    }
+
     fn clear_cache(&mut self) {
         self.cache.clear();
         self.cache_bytes = 0;
@@ -587,6 +801,9 @@ impl StencilPanel {
     ) -> Result<(String, usize), String> {
         if text.trim_start().starts_with('{') {
             return self.import_package(text);
+        }
+        if is_stencil_xml(text) {
+            return self.import_stencil_xml(title, text);
         }
         if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
             return Err(t("Too many stencil libraries; remove one first").into());
@@ -640,6 +857,71 @@ impl StencilPanel {
             .ok_or_else(|| t("Too many stencil libraries; remove one first").to_owned())
     }
 
+    /// Installs a draw.io stencil library (`<shapes>` XML, e.g. a vendor
+    /// family) as one or more packages whose draw.io aliases resolve shapes
+    /// in opened diagrams; returns the first ID and the unavailable count.
+    fn import_stencil_xml(&mut self, title: &str, text: &str) -> Result<(String, usize), String> {
+        let import = thinoda_io::drawio_stencil::import_drawio_stencil_library(text, title)
+            .map_err(|error| format!("{}: {error}", t("Not a valid draw.io stencil library")))?;
+        if self.library_count() + import.packages.len() > thinoda_platform::stencils::MAX_LIBRARIES
+        {
+            return Err(t("Too many stencil libraries; remove one first").into());
+        }
+        if import.packages.iter().any(|package| {
+            self.packages
+                .iter()
+                .any(|(_, installed)| installed.id == package.id)
+        }) {
+            return Err(t("A stencil package with this ID is already installed").into());
+        }
+        let saved = self.state.packages.len();
+        let mut installed = Vec::with_capacity(import.packages.len());
+        let mut unavailable = 0;
+        for package in import.packages {
+            let id = match self.next_library_id() {
+                Ok(id) => id,
+                Err(error) => {
+                    self.state.packages.truncate(saved);
+                    return Err(error);
+                }
+            };
+            unavailable += package
+                .definitions
+                .iter()
+                .filter(|definition| !definition.missing_capabilities().is_empty())
+                .count();
+            // Compact JSON: the converter sized each part for this form.
+            let json = match serde_json::to_string(&package) {
+                Ok(json) => json,
+                Err(error) => {
+                    self.state.packages.truncate(saved);
+                    return Err(error.to_string());
+                }
+            };
+            self.state.packages.push(SavedPackage {
+                id: id.clone(),
+                json,
+            });
+            installed.push((id, Arc::new(package)));
+        }
+        if let Err(error) = thinoda_platform::stencils::validate(&self.state) {
+            self.state.packages.truncate(saved);
+            return Err(saved_state_error(error));
+        }
+        let first = installed[0].0.clone();
+        self.packages.extend(installed);
+        self.sync_drawio_registry();
+        Ok((first, unavailable))
+    }
+
+    /// Publishes installed packages to the draw.io importer, so diagrams
+    /// using their `drawio.import` aliases open as stencils.
+    fn sync_drawio_registry(&self) {
+        thinoda_io::drawio_stencil::set_user_stencil_packages(
+            self.packages.iter().map(|(_, package)| Arc::clone(package)),
+        );
+    }
+
     fn import_package(&mut self, text: &str) -> Result<(String, usize), String> {
         if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
             return Err(t("Too many stencil libraries; remove one first").into());
@@ -667,6 +949,7 @@ impl StencilPanel {
             return Err(saved_state_error(error));
         }
         self.packages.push((id.clone(), Arc::new(package)));
+        self.sync_drawio_registry();
         Ok((id, unavailable))
     }
 
@@ -692,6 +975,7 @@ impl StencilPanel {
         self.imported.retain(|library| library.id != id);
         self.state.packages.retain(|package| package.id != id);
         self.packages.retain(|(package_id, _)| package_id != id);
+        self.sync_drawio_registry();
         self.state.collapsed.retain(|collapsed| collapsed != id);
         self.invalidate(id);
     }
@@ -790,6 +1074,13 @@ impl StencilPanel {
             self.state.hidden_builtin.push(id.to_owned());
         }
     }
+
+    pub(crate) fn set_drawio_visible(&mut self, family: &str, visible: bool) {
+        self.state.shown_drawio.retain(|entry| entry != family);
+        if visible && drawio_bundle::FAMILIES.contains(&family) {
+            self.state.shown_drawio.push(family.to_owned());
+        }
+    }
 }
 
 /// English titles of the built-in libraries and their entries, as catalog keys.
@@ -876,6 +1167,40 @@ pub(crate) const BUILTIN_TITLES: &[&str] = &[
     "Shaded cube",
     "Pyramid step",
     "Shaded cylinder",
+    "Window",
+    "Wall",
+    "Wall corner",
+    "Door (left)",
+    "Door (right)",
+    "Double door",
+    "Stairs",
+    "Margin rectangle",
+    "Margin rectangle (square)",
+    "Left button",
+    "Button",
+    "Scroll bar",
+    "Checkbox",
+    "Curly brace",
+    "Browser window",
+    "BPMN event",
+    "BPMN shape",
+    "BPMN gateway",
+    "BPMN task",
+    "Person",
+    "Person (C4)",
+    "Stylised arrow",
+    "Shaded pyramid",
+    "Circular callout",
+    "Bar callout",
+    "Inventory",
+    "Manufacturing process",
+    "Shared process",
+    "Push arrow",
+    "Physical pull",
+    "Data box",
+    "Supermarket",
+    "FIFO lane",
+    "Outside sources",
 ];
 
 /// Catalog key of a built-in title.
@@ -979,79 +1304,35 @@ impl ThinodaApp {
         ui.add_space(4.0);
 
         let query = self.stencils.search.trim().to_lowercase();
-        let sections = self.stencils.sections();
+        let mut out = TabOutcome::default();
         let mut budget = DECODES_PER_FRAME;
-        let mut action = None;
-        let mut add_selection = false;
-        let mut remove_library = None;
-        let mut collapse_changes = Vec::new();
-        let mut pending = false;
 
         ui.add_enabled_ui(available, |ui| {
             if query.is_empty() {
-                for section in &sections {
-                    let collapsed = self.stencils.state.collapsed.contains(&section.id);
-                    let header =
-                        egui::CollapsingHeader::new(egui::RichText::new(&section.title).strong())
-                            .id_salt(("stencil_section", &section.id))
-                            .default_open(!collapsed)
-                            .show(ui, |ui| {
-                                if section.id == SCRATCHPAD_ID {
-                                    let response = ui
-                                        .add(egui::Button::new(t("Add selection")))
-                                        .on_hover_text(t(
-                                            "Add the selected board items to the scratchpad",
-                                        ));
-                                    add_selection |= response.clicked()
-                                        && widgets::touch_activation_allowed(ui.ctx());
-                                    if section.entries().is_empty() {
-                                        widgets::caption(
-                                            ui,
-                                            t("Select board items and add them here for reuse"),
-                                        );
-                                    }
-                                }
-                                let entries = section.entries();
-                                let (picked, waiting) =
-                                    self.stencil_grid(ui, section, &entries, dark, &mut budget);
-                                action = action.take().or(picked);
-                                pending |= waiting;
-                            });
-                    if header.header_response.clicked() {
-                        // Read egui's toggled state rather than inverting ours,
-                        // which can lag behind restored UI memory.
-                        let open = egui::collapsing_header::CollapsingState::load(
-                            ui.ctx(),
-                            ui.make_persistent_id(("stencil_section", &section.id)),
-                        )
-                        .is_some_and(|state| state.is_open());
-                        collapse_changes.push((section.id.clone(), !open));
+                let sections = self.stencils.sections();
+                let (bundled, regular): (Vec<_>, Vec<_>) = sections
+                    .iter()
+                    .partition(|section| matches!(section.content, SectionContent::Bundled(_)));
+                // The draw.io group follows the built-in sections, before imports.
+                let mut group_done = bundled.is_empty();
+                for section in regular {
+                    if !group_done && section.removable() {
+                        self.drawio_group(ui, &bundled, dark, &mut budget, &mut out);
+                        group_done = true;
                     }
-                    if !section.builtin && section.id != SCRATCHPAD_ID {
-                        header.header_response.context_menu(|ui| {
-                            if ui.button(t("Remove library")).clicked() {
-                                remove_library = Some(section.id.clone());
-                                ui.close();
-                            }
-                        });
-                    }
-                    if let SectionContent::Package(package) = &section.content {
-                        header.header_response.on_hover_ui(|ui| {
-                            ui.label(format!("{} · v{}", package.id, package.revision));
-                            if let Some(license) = &package.license {
-                                ui.label(license);
-                            }
-                            widgets::caption(
-                                ui,
-                                t("Removing a library does not change existing objects"),
-                            );
-                        });
-                    }
+                    self.stencil_section(ui, section, dark, &mut budget, &mut out);
+                }
+                if !group_done {
+                    self.drawio_group(ui, &bundled, dark, &mut budget, &mut out);
                 }
             } else {
+                let sections = self.stencils.sections_with(true);
                 let mut found = false;
+                let mut bundled_left = MAX_BUNDLED_RESULTS;
+                let mut truncated = false;
                 for section in &sections {
-                    let entries: Vec<_> = section
+                    let is_bundled = matches!(section.content, SectionContent::Bundled(_));
+                    let mut entries: Vec<_> = section
                         .entries()
                         .into_iter()
                         .filter(|(_, entry)| {
@@ -1060,23 +1341,43 @@ impl ThinodaApp {
                                 || section.title.to_lowercase().contains(&query)
                         })
                         .collect();
+                    if is_bundled {
+                        truncated |= entries.len() > bundled_left;
+                        entries.truncate(bundled_left);
+                        bundled_left -= entries.len();
+                    }
                     if entries.is_empty() {
                         continue;
                     }
                     found = true;
-                    widgets::caption(ui, &section.title);
+                    let caption = if is_bundled {
+                        format!("draw.io · {}", section.title)
+                    } else {
+                        section.title.clone()
+                    };
+                    widgets::caption(ui, caption);
                     ui.push_id(("stencil_results", &section.id), |ui| {
                         let (picked, waiting) =
                             self.stencil_grid(ui, section, &entries, dark, &mut budget);
-                        action = action.take().or(picked);
-                        pending |= waiting;
+                        out.action = out.action.take().or(picked);
+                        out.pending |= waiting;
                     });
+                }
+                if truncated {
+                    widgets::caption(ui, t("Refine the search to see more"));
                 }
                 if !found {
                     widgets::caption(ui, t("No results"));
                 }
             }
         });
+        let TabOutcome {
+            action,
+            add_selection,
+            remove_library,
+            collapse_changes,
+            pending,
+        } = out;
         if pending {
             ui.ctx().request_repaint();
         }
@@ -1092,6 +1393,23 @@ impl ThinodaApp {
                         .changed()
                     {
                         self.stencils.set_builtin_visible(&library.id, visible);
+                        self.save_stencils();
+                    }
+                }
+                ui.separator();
+                widgets::caption(ui, t("draw.io shapes"));
+                for family in drawio_bundle::FAMILIES {
+                    let mut visible = self
+                        .stencils
+                        .state
+                        .shown_drawio
+                        .iter()
+                        .any(|id| id == family);
+                    if ui
+                        .checkbox(&mut visible, drawio_family_title(family))
+                        .changed()
+                    {
+                        self.stencils.set_drawio_visible(family, visible);
                         self.save_stencils();
                     }
                 }
@@ -1128,6 +1446,131 @@ impl ThinodaApp {
         }
         if changed {
             self.save_stencils();
+        }
+    }
+
+    /// A collapsible section header with persisted state. Returns its
+    /// response and, when clicked, whether it is now collapsed.
+    fn stencil_header<R>(
+        &mut self,
+        ui: &mut Ui,
+        id: &str,
+        title: &str,
+        body: impl FnOnce(&mut Self, &mut Ui) -> R,
+    ) -> (egui::Response, Option<bool>) {
+        let collapsed = self
+            .stencils
+            .state
+            .collapsed
+            .iter()
+            .any(|entry| entry == id);
+        let header = egui::CollapsingHeader::new(egui::RichText::new(title).strong())
+            .id_salt(("stencil_section", id))
+            .default_open(!collapsed)
+            .show(ui, |ui| body(self, ui));
+        // Read egui's toggled state rather than inverting ours,
+        // which can lag behind restored UI memory.
+        let toggled = header.header_response.clicked().then(|| {
+            !egui::collapsing_header::CollapsingState::load(
+                ui.ctx(),
+                ui.make_persistent_id(("stencil_section", id)),
+            )
+            .is_some_and(|state| state.is_open())
+        });
+        (header.header_response, toggled)
+    }
+
+    /// The "draw.io" group holding the shown bundled families.
+    fn drawio_group(
+        &mut self,
+        ui: &mut Ui,
+        sections: &[&Section],
+        dark: bool,
+        budget: &mut usize,
+        out: &mut TabOutcome,
+    ) {
+        let catalog = drawio_bundle::bundle().catalog();
+        let about = format!("draw.io {} · {}", catalog.upstream.version, catalog.license);
+        let (header, toggled) = self.stencil_header(ui, DRAWIO_GROUP_ID, "draw.io", |panel, ui| {
+            for section in sections {
+                panel.stencil_section(ui, section, dark, budget, out);
+            }
+        });
+        if let Some(collapsed) = toggled {
+            out.collapse_changes
+                .push((DRAWIO_GROUP_ID.to_owned(), collapsed));
+        }
+        header.on_hover_ui(|ui| {
+            ui.label(&about);
+            widgets::caption(ui, t("Removing a library does not change existing objects"));
+        });
+    }
+
+    /// One library section with its tiles.
+    fn stencil_section(
+        &mut self,
+        ui: &mut Ui,
+        section: &Section,
+        dark: bool,
+        budget: &mut usize,
+        out: &mut TabOutcome,
+    ) {
+        let (header, toggled) =
+            self.stencil_header(ui, &section.id, &section.title, |panel, ui| {
+                if section.id == SCRATCHPAD_ID {
+                    let response = ui
+                        .add(egui::Button::new(t("Add selection")))
+                        .on_hover_text(t("Add the selected board items to the scratchpad"));
+                    out.add_selection |=
+                        response.clicked() && widgets::touch_activation_allowed(ui.ctx());
+                    if section.entries().is_empty() {
+                        widgets::caption(ui, t("Select board items and add them here for reuse"));
+                    }
+                }
+                let entries = section.entries();
+                let mut groups: Vec<(Option<usize>, Vec<IndexedEntry<'_>>)> = Vec::new();
+                match &section.content {
+                    SectionContent::Bundled(family) if family_packages(family).nth(1).is_some() => {
+                        for entry in entries {
+                            let SectionEntry::Bundled { package, .. } = entry.1 else {
+                                continue;
+                            };
+                            match groups.last_mut() {
+                                Some((Some(last), group)) if *last == package => group.push(entry),
+                                _ => groups.push((Some(package), vec![entry])),
+                            }
+                        }
+                    }
+                    _ => groups.push((None, entries)),
+                }
+                for (package, entries) in groups {
+                    if let Some(package) = package {
+                        widgets::caption(ui, package_caption(package));
+                    }
+                    let (picked, waiting) = panel.stencil_grid(ui, section, &entries, dark, budget);
+                    out.action = out.action.take().or(picked);
+                    out.pending |= waiting;
+                }
+            });
+        if let Some(collapsed) = toggled {
+            out.collapse_changes.push((section.id.clone(), collapsed));
+        }
+        if section.removable() {
+            header.context_menu(|ui| {
+                if ui.button(t("Remove library")).clicked() {
+                    out.remove_library = Some(section.id.clone());
+                    ui.close();
+                }
+            });
+        }
+        if let SectionContent::Package(package) = &section.content {
+            header.on_hover_ui(|ui| {
+                ui.label(format!("{} · v{}", package.id, package.revision));
+                if let Some(license) = &package.license {
+                    ui.label(license);
+                }
+                widgets::caption(ui, t("Removing a library does not change existing objects"));
+            });
         }
     }
 

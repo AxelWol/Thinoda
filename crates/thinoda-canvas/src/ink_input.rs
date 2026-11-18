@@ -14,7 +14,9 @@ use thinoda_core::board::{
     MAX_TOTAL_INK_POINTS, MIN_STROKE_WIDTH, distance_to_segment, point_in_polygon, rotate_around,
     rotated_corners, validate_object,
 };
-use thinoda_core::scene::{SceneGeometry, connector_stroke_path};
+use thinoda_core::scene::{
+    ConnectorMarkerGeometry, EdgeBody, SceneGeometry, connector_stroke_path,
+};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, InkStroke, InkTool, Rect, Scene,
     SceneHit, SceneId, SceneItem, Vec2,
@@ -818,14 +820,26 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
             SceneGeometry::Ribbon {
                 outline,
                 label_bounds,
+                extra_label_bounds,
                 ..
             } => {
-                polygon_touches_lasso(outline, polygon, &mut budget)?
+                let mut intersects = polygon_touches_lasso(outline, polygon, &mut budget)?
                     || polygon_touches_lasso(
                         &rotated_corners(*label_bounds, 0.0),
                         polygon,
                         &mut budget,
-                    )?
+                    )?;
+                for bounds in extra_label_bounds {
+                    if intersects {
+                        break;
+                    }
+                    intersects = polygon_touches_lasso(
+                        &rotated_corners(*bounds, 0.0),
+                        polygon,
+                        &mut budget,
+                    )?;
+                }
+                intersects
             }
             SceneGeometry::Polygon { outline, details } => {
                 let mut intersects = polygon_touches_lasso(outline, polygon, &mut budget)?;
@@ -862,28 +876,70 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                 width,
                 markers,
                 label_bounds,
+                body,
                 ..
             } => {
-                let trimmed;
-                let stroke = if markers.iter().any(Option::is_some) {
-                    trimmed = connector_stroke_path(points, markers);
-                    trimmed.as_slice()
-                } else {
-                    points.as_slice()
+                let width = &body
+                    .as_ref()
+                    .map_or(*width, |body| body.stroke_width(*width));
+                let radius = f64::from(*width) / 2.0;
+                let mut intersects = match body.as_deref() {
+                    Some(EdgeBody::Rails(rails)) => {
+                        let mut touches = false;
+                        for rail in rails {
+                            if touches {
+                                break;
+                            }
+                            touches = path_touches_lasso(
+                                rail,
+                                false,
+                                |point| point,
+                                radius,
+                                polygon,
+                                &mut budget,
+                            )?;
+                        }
+                        touches
+                    }
+                    Some(EdgeBody::Band { outline, .. }) => {
+                        budget.charge(outline.len())?;
+                        (!outline.is_empty() && point_in_polygon(polygon[0], outline))
+                            || path_touches_lasso(
+                                outline,
+                                true,
+                                |point| point,
+                                radius,
+                                polygon,
+                                &mut budget,
+                            )?
+                    }
+                    _ => {
+                        let trimmed;
+                        let stroke = if markers.iter().any(Option::is_some) {
+                            trimmed = connector_stroke_path(points, markers);
+                            trimmed.as_slice()
+                        } else {
+                            points.as_slice()
+                        };
+                        path_touches_lasso(
+                            stroke,
+                            false,
+                            |point| point,
+                            radius,
+                            polygon,
+                            &mut budget,
+                        )?
+                    }
                 };
-                let mut intersects = path_touches_lasso(
-                    stroke,
-                    false,
-                    |point| point,
-                    f64::from(*width) / 2.0,
-                    polygon,
-                    &mut budget,
-                )?;
                 if let Some(rect) = label_bounds {
                     intersects |=
                         polygon_touches_lasso(&rotated_corners(*rect, 0.0), polygon, &mut budget)?;
                 }
-                for marker in markers.iter().flatten() {
+                for marker in markers
+                    .iter()
+                    .flatten()
+                    .flat_map(ConnectorMarkerGeometry::parts)
+                {
                     if intersects {
                         break;
                     }
@@ -1006,16 +1062,28 @@ fn validate_scene_geometry(
                 return Err(invalid());
             }
         }
-        SceneGeometry::Ribbon { outline, mass, .. } => {
+        SceneGeometry::Ribbon {
+            outline,
+            mass,
+            label_bounds,
+            extra_label_bounds,
+            ..
+        } => {
             if outline.is_empty()
                 || outline.len() > MAX_INPUT_SAMPLES
                 || !mass.is_finite()
                 || !(0.0..=100.0).contains(mass)
                 || outline.iter().any(|&p| !finite_point(p))
+                || !valid_rect(*label_bounds)
+                || extra_label_bounds.iter().any(|bounds| !valid_rect(*bounds))
             {
                 return Err(invalid());
             }
-            budget.charge(outline.len())?;
+            budget.charge(
+                outline
+                    .len()
+                    .saturating_add(4 * (1 + extra_label_bounds.len())),
+            )?;
         }
         SceneGeometry::Polygon { outline, details } => {
             let count = details.iter().fold(outline.len(), |sum, detail| {
@@ -1056,6 +1124,7 @@ fn validate_scene_geometry(
             points,
             width,
             markers,
+            body,
             ..
         } => {
             if points.is_empty() || points.len() > MAX_INPUT_SAMPLES || !valid_width(*width) {
@@ -1065,26 +1134,58 @@ fn validate_scene_geometry(
             if points.iter().any(|&point| !finite_point(point)) {
                 return Err(invalid());
             }
-            for marker in markers.iter().flatten() {
-                budget.charge(marker.points().len())?;
-                let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
-                    !finite_point(center)
-                        || !radius.is_finite()
-                        || radius < 0.0
-                        || !(center.x + radius).is_finite()
-                        || !(center.x - radius).is_finite()
-                        || !(center.y + radius).is_finite()
-                        || !(center.y - radius).is_finite()
-                });
-                if invalid_circle
-                    || marker
-                        .curve()
-                        .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
-                    || marker.points().iter().any(|&point| !finite_point(point))
-                    || !marker.line_inset.is_finite()
-                    || marker.line_inset < 0.0
-                {
+            match body.as_deref() {
+                Some(EdgeBody::Lines { casing, inner }) => {
+                    if !casing.is_finite()
+                        || *casing < 0.0
+                        || inner.is_some_and(|(inner, _)| !inner.is_finite() || inner < 0.0)
+                    {
+                        return Err(invalid());
+                    }
+                }
+                Some(EdgeBody::Rails(rails)) => {
+                    for rail in rails {
+                        budget.charge(rail.len())?;
+                        if rail.len() > MAX_INPUT_SAMPLES
+                            || rail.iter().any(|&point| !finite_point(point))
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                Some(EdgeBody::Band { outline, .. }) => {
+                    budget.charge(outline.len())?;
+                    if outline.len() > MAX_INPUT_SAMPLES
+                        || outline.iter().any(|&point| !finite_point(point))
+                    {
+                        return Err(invalid());
+                    }
+                }
+                None => {}
+            }
+            for geometry in markers.iter().flatten() {
+                if !geometry.line_inset.is_finite() || geometry.line_inset < 0.0 {
                     return Err(invalid());
+                }
+                for marker in geometry.parts() {
+                    budget.charge(marker.points().len())?;
+                    let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
+                        !finite_point(center)
+                            || !radius.is_finite()
+                            || radius < 0.0
+                            || !(center.x + radius).is_finite()
+                            || !(center.x - radius).is_finite()
+                            || !(center.y + radius).is_finite()
+                            || !(center.y - radius).is_finite()
+                    });
+                    if invalid_circle
+                        || marker
+                            .curve()
+                            .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
+                        || marker.points().iter().any(|&point| !finite_point(point))
+                    {
+                        return Err(invalid());
+                    }
                 }
             }
         }
@@ -2655,6 +2756,42 @@ mod tests {
     }
 
     #[test]
+    fn lasso_selects_edge_shape_bodies_away_from_the_centre_line() {
+        use thinoda_core::{EdgeShape, EdgeShapeKind, SheetRootMode};
+
+        for (kind, lasso) in [
+            (EdgeShapeKind::FlexArrow, rectangle(50.0, 5.5, 0.5, 0.5)),
+            (EdgeShapeKind::FlexArrow, rectangle(50.0, 3.5, 0.5, 0.5)),
+            (EdgeShapeKind::Link, rectangle(50.0, 2.5, 0.5, 0.5)),
+            (EdgeShapeKind::Pipe, rectangle(50.0, 2.5, 0.5, 0.5)),
+        ] {
+            let mut sheet = Sheet::new("Edge shapes", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            let plain = scene(&{
+                let mut sheet = sheet.clone();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(connector.clone()))
+                    .unwrap();
+                sheet
+            });
+            assert!(lasso_hits(&plain, &lasso).unwrap().is_empty(), "{kind:?}");
+            connector.edge_shape = Some(EdgeShape::new(kind));
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            assert_eq!(
+                lasso_hits(&scene(&sheet), &lasso).unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn sankey_narrow_band_label_is_in_shared_hits_lasso_and_crop_bounds() {
         let mut book = thinoda_core::templates::instantiate("sankey-budget");
         let sheet = book.active_mut();
@@ -2665,12 +2802,28 @@ mod tests {
         };
         c.sankey.as_mut().unwrap().weight = Some(1);
         c.label = "A long descriptive label on an extremely narrow positive flow".into();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("Extra", 0..5, |style| style.font_size = Some(48.0))
+            .unwrap();
+        c.extra_labels.push(thinoda_core::board::ConnectorLabel {
+            text: "Extra".into(),
+            placement: thinoda_core::board::ConnectorLabelPlacement {
+                orthogonal: -600.0,
+                ..Default::default()
+            },
+            rich_text: Some(std::sync::Arc::new(rich)),
+        });
         let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
         let scene = thinoda_core::scene::build_scene(sheet, &layout);
         let item = scene
             .item(thinoda_core::scene::SceneId::Object(id))
             .unwrap();
-        let thinoda_core::scene::SceneGeometry::Ribbon { label_bounds, .. } = &item.geometry else {
+        let thinoda_core::scene::SceneGeometry::Ribbon {
+            label_bounds,
+            extra_label_bounds,
+            ..
+        } = &item.geometry
+        else {
             panic!()
         };
         let point = label_bounds.min + Vec2::new(8.0, 8.0);
@@ -2687,6 +2840,20 @@ mod tests {
         let bounds = thinoda_core::scene::canvas_bounds(sheet, &layout).unwrap();
         assert!(bounds.contains(label_bounds.min));
         assert!(bounds.contains(label_bounds.max()));
+        let extra = extra_label_bounds[0];
+        let point = extra.center();
+        assert_eq!(scene.hit_test(point), Some(SceneHit::Object(id)));
+        let polygon = thinoda_core::board::rotated_corners(
+            thinoda_core::Rect::from_center_size(point, Vec2::new(2.0, 2.0)),
+            0.0,
+        );
+        assert!(
+            lasso_hits(&scene, &polygon)
+                .unwrap()
+                .contains(&SceneHit::Object(id))
+        );
+        assert!(bounds.contains(extra.min));
+        assert!(bounds.contains(extra.max()));
     }
 
     #[test]
@@ -3040,6 +3207,7 @@ mod tests {
                 clip: None,
                 geometry: root_item.geometry,
                 stencil_render: None,
+                outside_label: None,
             },
         );
         let center = root_item.bounds.center();
@@ -3243,6 +3411,7 @@ mod tests {
                 rotation: 0.0,
             },
             stencil_render: None,
+            outside_label: None,
         };
         let scene = Scene {
             grid: None,
@@ -3275,6 +3444,7 @@ mod tests {
                     rotation: 0.0,
                 },
                 stencil_render: None,
+                outside_label: None,
             }],
         };
         assert_eq!(

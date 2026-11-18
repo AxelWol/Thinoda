@@ -351,7 +351,9 @@ fn viewport_off_frame_objects(
                     object.style.stroke_width / 2.0 + 1.0
                 }
                 CanvasObjectKind::Ink(_) => 1.0,
-                CanvasObjectKind::Connector(connector) if connector.label.trim().is_empty() => {
+                CanvasObjectKind::Connector(connector)
+                    if connector.label.trim().is_empty() && connector.extra_labels.is_empty() =>
+                {
                     7.0 + 2.0 * connector.width
                 }
                 _ => return None,

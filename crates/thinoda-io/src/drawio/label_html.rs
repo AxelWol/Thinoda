@@ -1,19 +1,38 @@
-//! Convert draw.io HTML labels to inert, editable plain text.
+//! Convert draw.io HTML labels to inert, editable text and bounded inline styles.
 
 use super::{ImportWarning, MAX_BYTES, MAX_XML_ELEMENTS};
 use lol_html::{
     HtmlRewriter, MemorySettings, Settings, doc_text, element, end_tag, html_content::TextType,
 };
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+use thinoda_core::{
+    InlineBaseline, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
+    rich_text::{
+        MAX_INLINE_FONT_FAMILY_BYTES, MAX_INLINE_FONT_SIZE, MAX_INLINE_TEXT_CHARS,
+        MAX_INLINE_TEXT_RUNS, MIN_INLINE_FONT_SIZE,
+    },
+};
+
+#[derive(Default)]
+struct RichLabel {
+    text: InlineText,
+    style: InlineTextStyle,
+    lists: Vec<ListKind>,
+    pending_item: Option<ListKind>,
+    overflow: bool,
+}
 
 #[derive(Default)]
 struct LabelText {
     output: String,
     text_node: String,
+    scalar_count: usize,
+    paragraph: u32,
     pending_breaks: u8,
     hidden: usize,
     open_blocks: usize,
     formatting_loss: bool,
+    rich: Option<RichLabel>,
 }
 
 impl LabelText {
@@ -26,15 +45,68 @@ impl LabelText {
 
     fn flush_boundary(&mut self) {
         for _ in 0..self.pending_breaks {
-            self.output.push('\n');
+            self.push_newline();
         }
         self.pending_breaks = 0;
+    }
+
+    fn push_newline(&mut self) {
+        self.output.push('\n');
+        self.scalar_count += 1;
+        self.paragraph = self.paragraph.saturating_add(1);
     }
 
     fn line_break(&mut self) {
         self.formatting_loss |= self.output.ends_with(' ');
         self.flush_boundary();
-        self.output.push('\n');
+        self.record_list_item();
+        self.record_run(1);
+        self.push_newline();
+    }
+
+    fn record_list_item(&mut self) {
+        if let Some(rich) = &mut self.rich
+            && let Some(list) = rich.pending_item.take()
+        {
+            if rich
+                .text
+                .paragraphs
+                .last()
+                .is_some_and(|item| item.index == self.paragraph)
+            {
+                self.formatting_loss = true;
+            } else {
+                rich.text.paragraphs.push(InlineParagraph {
+                    index: self.paragraph,
+                    list,
+                });
+            }
+        }
+    }
+
+    fn record_run(&mut self, length: usize) {
+        if let Some(rich) = &mut self.rich {
+            if self.scalar_count.saturating_add(length) > MAX_INLINE_TEXT_CHARS {
+                rich.overflow = true;
+            } else if !rich.style.is_empty() && length > 0 && !rich.overflow {
+                let start = self.scalar_count as u32;
+                let end = (self.scalar_count + length) as u32;
+                if let Some(last) = rich.text.runs.last_mut()
+                    && last.end == start
+                    && last.style == rich.style
+                {
+                    last.end = end;
+                } else if rich.text.runs.len() < MAX_INLINE_TEXT_RUNS {
+                    rich.text.runs.push(InlineTextRun {
+                        start,
+                        end,
+                        style: rich.style.clone(),
+                    });
+                } else {
+                    rich.overflow = true;
+                }
+            }
+        }
     }
 
     fn text_chunk(&mut self, text: &str, last: bool, decode_references: bool) {
@@ -57,8 +129,116 @@ impl LabelText {
         let follows_space = self.pending_breaks == 0 && self.output.ends_with(' ');
         self.formatting_loss |= collapsible_whitespace(&text, at_line_start, follows_space);
         self.flush_boundary();
+        let length = text.chars().count();
+        self.record_list_item();
+        self.record_run(length);
+        self.scalar_count += length;
+        self.paragraph = self
+            .paragraph
+            .saturating_add(text.chars().filter(|ch| *ch == '\n').count() as u32);
         self.output.push_str(&text);
     }
+}
+
+fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
+    let mut loss = false;
+    for declaration in value.split(';').filter(|part| !part.trim().is_empty()) {
+        let Some((name, value)) = declaration.split_once(':') else {
+            loss = true;
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim();
+        let lower = value.to_ascii_lowercase();
+        match name.as_str() {
+            "font-weight" => match lower.as_str() {
+                "bold" | "bolder" => style.bold = Some(true),
+                "normal" | "lighter" => style.bold = Some(false),
+                _ => match lower.parse::<u16>() {
+                    Ok(weight) if (100..=900).contains(&weight) => {
+                        style.bold = Some(weight >= 600);
+                    }
+                    _ => loss = true,
+                },
+            },
+            "font-style" => match lower.as_str() {
+                "italic" | "oblique" => style.italic = Some(true),
+                "normal" => style.italic = Some(false),
+                _ => loss = true,
+            },
+            "text-decoration" | "text-decoration-line" => {
+                if lower == "none" {
+                    style.underline = Some(false);
+                    style.strikethrough = Some(false);
+                } else {
+                    let mut underline = false;
+                    let mut strike = false;
+                    for part in lower.split_whitespace() {
+                        match part {
+                            "underline" => underline = true,
+                            "line-through" => strike = true,
+                            _ => loss = true,
+                        }
+                    }
+                    style.underline = Some(underline);
+                    style.strikethrough = Some(strike);
+                }
+            }
+            "font-family" => {
+                let mut input = cssparser::ParserInput::new(value);
+                let mut parser = cssparser::Parser::new(&mut input);
+                let quoted = parser
+                    .try_parse(|parser| parser.expect_string().map(|name| name.to_string()))
+                    .ok()
+                    .filter(|_| parser.is_exhausted());
+                let family = quoted.as_deref().unwrap_or(value).trim();
+                if family.is_empty()
+                    || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
+                    || family.chars().any(char::is_control)
+                {
+                    loss = true;
+                } else {
+                    style.font_family = Some(family.to_owned());
+                }
+            }
+            "font-size" => {
+                let size = lower
+                    .strip_suffix("px")
+                    .and_then(|value| value.trim().parse::<f32>().ok())
+                    .or_else(|| {
+                        lower
+                            .strip_suffix("pt")
+                            .and_then(|value| value.trim().parse::<f32>().ok())
+                            .map(|value| value * 4.0 / 3.0)
+                    });
+                match size {
+                    Some(size)
+                        if size.is_finite()
+                            && (MIN_INLINE_FONT_SIZE..=MAX_INLINE_FONT_SIZE).contains(&size) =>
+                    {
+                        style.font_size = Some(size)
+                    }
+                    _ => loss = true,
+                }
+            }
+            "color" => match super::parse_style_color(value) {
+                Some(parsed) if parsed.color.is_some() => {
+                    style.color = parsed.color;
+                    loss |= parsed.approximate;
+                }
+                _ => loss = true,
+            },
+            "vertical-align" => match lower.as_str() {
+                "sub" => style.baseline = Some(InlineBaseline::Subscript),
+                "super" => style.baseline = Some(InlineBaseline::Superscript),
+                "baseline" => style.baseline = Some(InlineBaseline::Normal),
+                _ => loss = true,
+            },
+            "white-space" if lower == "normal" => {}
+            _ => loss = true,
+        }
+    }
+    loss
 }
 
 fn collapsible_whitespace(text: &str, mut at_line_start: bool, mut follows_space: bool) -> bool {
@@ -199,11 +379,27 @@ pub(super) fn strip_html(text: &str, warnings: &mut BTreeSet<ImportWarning>) -> 
     strip_html_with_limit(text, warnings, MAX_BYTES)
 }
 
+pub(super) fn parse_rich_html(
+    text: &str,
+    warnings: &mut BTreeSet<ImportWarning>,
+) -> (String, Option<InlineText>) {
+    parse_html_with_limit(text, warnings, MAX_BYTES, true)
+}
+
 fn strip_html_with_limit(
     text: &str,
     warnings: &mut BTreeSet<ImportWarning>,
     memory_limit: usize,
 ) -> String {
+    parse_html_with_limit(text, warnings, memory_limit, false).0
+}
+
+fn parse_html_with_limit(
+    text: &str,
+    warnings: &mut BTreeSet<ImportWarning>,
+    memory_limit: usize,
+    rich: bool,
+) -> (String, Option<InlineText>) {
     if !text.contains('<') {
         let decoded = decode_entities(text);
         if unresolved_entity(text)
@@ -212,10 +408,13 @@ fn strip_html_with_limit(
         {
             warnings.insert(ImportWarning::Formatting);
         }
-        return decoded;
+        return (decoded, None);
     }
 
-    let result = Rc::new(RefCell::new(LabelText::default()));
+    let result = Rc::new(RefCell::new(LabelText {
+        rich: rich.then(RichLabel::default),
+        ..Default::default()
+    }));
     let parsed = {
         let elements = Rc::clone(&result);
         let chunks = Rc::clone(&result);
@@ -250,30 +449,121 @@ fn strip_html_with_limit(
                 if state.hidden > 0 {
                     return Ok(());
                 }
-                if !el.attributes().is_empty() || !matches!(name.as_str(), "br" | "div" | "span") {
-                    state.formatting_loss = true;
-                }
                 if name == "br" {
+                    if !el.attributes().is_empty() {
+                        state.formatting_loss = true;
+                    }
                     state.line_break();
                     return Ok(());
                 }
 
+                let mut previous_style = None;
+                let mut previous_lists = 0usize;
+                let marker = name == "span"
+                    && el.get_attribute("data-thinoda-break").as_deref() == Some("1")
+                    && state.rich.is_some();
+                if let Some(rich) = &mut state.rich {
+                    previous_style = Some(rich.style.clone());
+                    previous_lists = rich.lists.len();
+                    let inherited_underline = rich.style.underline;
+                    let inherited_strike = rich.style.strikethrough;
+                    let mut loss = false;
+                    match name.as_str() {
+                        "b" | "strong" => rich.style.bold = Some(true),
+                        "i" | "em" => rich.style.italic = Some(true),
+                        "u" => rich.style.underline = Some(true),
+                        "s" | "strike" | "del" => rich.style.strikethrough = Some(true),
+                        "sub" => rich.style.baseline = Some(InlineBaseline::Subscript),
+                        "sup" => rich.style.baseline = Some(InlineBaseline::Superscript),
+                        "ul" | "ol" => {
+                            loss |= !rich.lists.is_empty();
+                            rich.lists.push(if name == "ul" {
+                                ListKind::Bulleted
+                            } else {
+                                ListKind::Numbered
+                            });
+                        }
+                        "li" => {
+                            rich.pending_item = rich.lists.last().copied();
+                            loss |= rich.pending_item.is_none();
+                        }
+                        "div" | "span" | "p" => {}
+                        _ => loss = true,
+                    }
+                    let mut inherit_underline = false;
+                    let mut inherit_strike = false;
+                    for attribute in el.attributes() {
+                        match attribute.name().to_ascii_lowercase().as_str() {
+                            "style" => loss |= inline_css(&mut rich.style, &attribute.value()),
+                            "data-thinoda-underline" if attribute.value() == "inherit" => {
+                                inherit_underline = true;
+                            }
+                            "data-thinoda-strike" if attribute.value() == "inherit" => {
+                                inherit_strike = true;
+                            }
+                            "data-thinoda-break" if marker => {}
+                            _ => loss = true,
+                        }
+                    }
+                    if inherit_underline {
+                        rich.style.underline = inherited_underline;
+                    }
+                    if inherit_strike {
+                        rich.style.strikethrough = inherited_strike;
+                    }
+                    state.formatting_loss |= loss;
+                } else if !el.attributes().is_empty() || !matches!(name.as_str(), "div" | "span") {
+                    state.formatting_loss = true;
+                }
+                let marker_end = if marker {
+                    state.line_break();
+                    Some(state.scalar_count)
+                } else {
+                    None
+                };
                 let breaks = match name.as_str() {
                     "p" => 2,
                     "div" | "li" | "ul" | "ol" | "blockquote" | "pre" | "table" | "tr" | "h1"
                     | "h2" | "h3" | "h4" | "h5" | "h6" => 1,
                     _ => 0,
                 };
-                if breaks > 0 && el.can_have_content() {
-                    state.block_boundary(breaks);
-                    state.open_blocks += 1;
+                if el.can_have_content() {
+                    if breaks > 0 {
+                        state.block_boundary(breaks);
+                        state.open_blocks += 1;
+                    }
                     let state = Rc::clone(&elements);
                     el.on_end_tag(end_tag!(move |_| {
                         let mut state = state.borrow_mut();
-                        state.block_boundary(breaks);
-                        state.open_blocks -= 1;
+                        if breaks > 0 {
+                            state.block_boundary(breaks);
+                            state.open_blocks -= 1;
+                        }
+                        if marker_end.is_some_and(|end| state.scalar_count != end) {
+                            state.formatting_loss = true;
+                        }
+                        if name == "li"
+                            && state
+                                .rich
+                                .as_ref()
+                                .is_some_and(|rich| rich.pending_item.is_some())
+                        {
+                            state.flush_boundary();
+                            state.record_list_item();
+                        }
+                        if let Some(previous_style) = previous_style.take()
+                            && let Some(rich) = &mut state.rich
+                        {
+                            rich.style = previous_style;
+                            rich.lists.truncate(previous_lists);
+                        }
                         Ok(())
                     }))?;
+                } else if let Some(previous_style) = previous_style
+                    && let Some(rich) = &mut state.rich
+                {
+                    rich.style = previous_style;
+                    rich.lists.truncate(previous_lists);
                 }
                 Ok(())
             }))
@@ -297,7 +587,7 @@ fn strip_html_with_limit(
     if parsed.is_err() {
         warnings.insert(ImportWarning::Formatting);
         warnings.insert(ImportWarning::Other);
-        return text.to_owned();
+        return (text.to_owned(), None);
     }
     let mut result = result.borrow_mut();
     if result.formatting_loss
@@ -307,12 +597,79 @@ fn strip_html_with_limit(
     {
         warnings.insert(ImportWarning::Formatting);
     }
-    std::mem::take(&mut result.output)
+    let output = std::mem::take(&mut result.output);
+    let rich = result.rich.take().and_then(|rich| {
+        if rich.overflow || rich.text.validate(&output).is_err() {
+            warnings.insert(ImportWarning::Formatting);
+            None
+        } else {
+            (!rich.text.is_empty()).then_some(rich.text)
+        }
+    });
+    (output, rich)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rich_html_preserves_nested_styles_and_unicode_scalar_ranges() {
+        let mut warnings = BTreeSet::new();
+        let (text, rich) = parse_rich_html(
+            r#"<b>A<span style="font-style:italic;color:#ff0000">🙂</span>B</b>"#,
+            &mut warnings,
+        );
+        assert_eq!(text, "A🙂B");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let runs = rich.unwrap().runs;
+        assert_eq!((runs[0].start, runs[0].end), (0, 1));
+        assert_eq!(runs[1].style.bold, Some(true));
+        assert_eq!(runs[1].style.italic, Some(true));
+        assert_eq!(
+            runs[1].style.color,
+            Some(thinoda_core::Color::rgb(255, 0, 0))
+        );
+        assert_eq!((runs[2].start, runs[2].end), (2, 3));
+    }
+
+    #[test]
+    fn rich_html_keeps_lists_and_warns_for_inert_unsupported_content() {
+        let mut warnings = BTreeSet::new();
+        let (text, rich) = parse_rich_html(
+            "<ul><li>one</li><li><sup>two</sup></li></ul>",
+            &mut warnings,
+        );
+        assert_eq!(text, "one\ntwo");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let rich = rich.unwrap();
+        assert_eq!(
+            rich.paragraphs,
+            vec![
+                InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                },
+            ]
+        );
+        assert_eq!(
+            rich.runs[0].style.baseline,
+            Some(InlineBaseline::Superscript)
+        );
+
+        let mut warnings = BTreeSet::new();
+        let (text, rich) = parse_rich_html(
+            r#"<span style="font-weight:bold;background-image:url(https://example.invalid/x)">ok</span><script>hidden</script>"#,
+            &mut warnings,
+        );
+        assert_eq!(text, "ok");
+        assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
+        assert!(warnings.contains(&ImportWarning::Formatting));
+    }
 
     #[test]
     fn parser_limit_keeps_inert_source_and_reports_the_loss() {

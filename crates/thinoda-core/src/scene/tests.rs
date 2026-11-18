@@ -41,11 +41,7 @@ fn fixed_connector_ports_follow_shape_geometry_for_every_route() {
         offset: Vec2::new(5.0, -3.0),
         perimeter: false,
     });
-    for route in [
-        ConnectorRoute::Straight,
-        ConnectorRoute::Elbow,
-        ConnectorRoute::Curve,
-    ] {
+    for route in ConnectorRoute::ALL {
         connector.route = route;
         for waypoints in [vec![], vec![Vec2::new(250.0, 180.0)]] {
             connector.waypoints = waypoints.into();
@@ -589,7 +585,8 @@ fn custom_marker_geometry_matches_published_drawio() {
 
 #[test]
 fn marker_shapes_keep_scene_geometry_compact() {
-    assert!(std::mem::size_of::<ConnectorMarkerGeometry>() <= 64);
+    // Library markers compose up to three parts; the pair is boxed inside `SceneGeometry`.
+    assert!(std::mem::size_of::<ConnectorMarkerGeometry>() <= 160);
     assert!(std::mem::size_of::<SceneGeometry>() <= 192);
 }
 
@@ -1878,6 +1875,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
         rotation: 0.0,
         shape: Some((ShapeKind::RoundedRectangle, Some(rounding))),
         custom_outline: None,
+        flip: (false, false),
     };
     let toward = Vec2::new(220.0, 20.0);
     assert!((target.clip(toward) - Vec2::new(104.4259, 120.1642)).length() < 0.001);
@@ -1951,6 +1949,7 @@ fn drawio_standard_rectangle_clips_very_thin_frames() {
                 }),
             )),
             custom_outline: None,
+            flip: (false, false),
         };
         let endpoint = target.clip(Vec2::new(0.000_001, 51.0));
         assert!(
@@ -1978,6 +1977,7 @@ fn drawio_rounded_perimeter_is_stable_for_wide_frames() {
             }),
         )),
         custom_outline: None,
+        flip: (false, false),
     };
     let endpoint = target.clip(Vec2::new(1_000_000.0, 2.0));
     assert!(
@@ -2004,6 +2004,7 @@ fn drawio_fixed_rounded_port_handles_subpixel_corner_radii() {
             }),
         )),
         custom_outline: None,
+        flip: (false, false),
     };
     let endpoint = target
         .with_port(Some(ConnectorPort {
@@ -2291,9 +2292,12 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
         SceneGeometry::Polyline {
             points: path,
             width: connector.width,
-            markers: [None, None],
+            markers: Box::new([None, None]),
             label_bounds: None,
+            text_labels: Vec::new(),
             color: None,
+            jumps: None,
+            body: None,
         }
     );
 
@@ -2432,4 +2436,994 @@ fn rotated_card_topic_hit_test() {
         Some(SceneHit::Topic(id))
     );
     assert_eq!(sc.hit_test(Vec2::new(1090.0, 0.0)), None);
+}
+
+fn close(actual: Vec2, expected: Vec2) -> bool {
+    (actual - expected).length() < 0.001
+}
+
+#[test]
+fn library_marker_geometry_matches_drawio_marker_sources() {
+    use ConnectorMarkerKind as K;
+    let line = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
+    let end = |kind, fill| connector_marker_geometry(&line, false, kind, 1.0, 6.0, fill).unwrap();
+    // n = size + width + 1 = 8; direction (1, 0); normal (0, 1).
+    for (kind, parts, inset) in [
+        (K::ErOne, 1, 0.0),
+        (K::ErMandOne, 2, 0.0),
+        (K::ErMany, 1, 0.0),
+        (K::ErOneToMany, 2, 0.0),
+        (K::ErZeroToOne, 3, 15.5),
+        (K::ErZeroToMany, 3, 15.5),
+        (K::ManyOptional, 3, 15.5),
+        (K::Box, 1, 8.0),
+        (K::Cross, 2, 0.0),
+        (K::Circle, 1, 15.0),
+        (K::CirclePlus, 3, 15.0),
+        (K::Async, 1, 8.118),
+        (K::OpenAsync, 1, 0.0),
+        (K::DoubleBlock, 2, 15.118),
+        (K::SysmlX, 2, 0.0),
+        (K::SysmlLost, 2, 0.0),
+        (K::SysmlFound, 1, 0.0),
+        (K::SysmlPackCont, 2, 0.0),
+    ] {
+        assert!(kind.requires_marker_library_format(), "{kind:?}");
+        let marker = end(kind, true);
+        assert_eq!(marker.parts().count(), parts, "{kind:?}");
+        assert!((marker.line_inset - inset).abs() < 0.001, "{kind:?}");
+        let fills: Vec<_> = marker.parts().map(|part| part.filled).collect();
+        let unfilled: Vec<_> = end(kind, false).parts().map(|part| part.filled).collect();
+        assert_eq!(
+            fills != unfilled,
+            kind.is_fillable(),
+            "{kind:?} fill flag drives rendering"
+        );
+        let trimmed = connector_stroke_path(&line, &[None, Some(marker)]);
+        assert!(close(
+            *trimmed.last().unwrap(),
+            Vec2::new(300.0 - inset, 100.0)
+        ));
+    }
+
+    let er_one = end(K::ErOne, true);
+    assert_eq!(
+        er_one.points(),
+        [Vec2::new(296.0, 104.0), Vec2::new(296.0, 96.0)]
+    );
+    let ring = end(K::ErZeroToMany, true)
+        .parts()
+        .next()
+        .unwrap()
+        .circle()
+        .unwrap();
+    assert!(close(ring.0, Vec2::new(288.0, 100.0)) && ring.1 == 3.0);
+    let boxed = end(K::Box, false);
+    assert!(boxed.closed && !boxed.filled);
+    assert_eq!(
+        boxed.points(),
+        [
+            Vec2::new(300.0, 104.0),
+            Vec2::new(300.0, 96.0),
+            Vec2::new(292.0, 96.0),
+            Vec2::new(292.0, 104.0),
+        ]
+    );
+    let circle = end(K::Circle, true).circle().unwrap();
+    assert!(close(circle.0, Vec2::new(292.0, 100.0)) && circle.1 == 7.0);
+    let lost: Vec<_> = end(K::SysmlLost, false).parts().collect();
+    assert!(lost[1].filled && lost[1].circle().is_some());
+    let pack: Vec<_> = end(K::SysmlPackCont, true).parts().collect();
+    assert!(!pack[1].filled);
+
+    // Async barbs keep draw.io's handedness: left of travel at the source, right at the target.
+    let barb = |at_start| {
+        connector_marker_geometry(&line, at_start, K::Async, 1.0, 6.0, true)
+            .unwrap()
+            .points()[1]
+    };
+    assert!(close(barb(false), Vec2::new(291.882, 96.5)));
+    assert!(close(barb(true), Vec2::new(108.118, 96.5)));
+}
+
+#[test]
+fn library_marker_parts_drive_hit_testing_and_bounds() {
+    use crate::board::ConnectorMarker;
+
+    let mut sheet = Sheet::new("Library marker", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.width = 1.0;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::ErZeroToMany,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    // The ring is centred 12 units before the tip with radius 3; its hollow is not a hit.
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(88.0, 3.0), 0.1),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(88.0, 1.0), 0.0), None);
+    assert!(sheet.has_library_connector_markers());
+}
+
+fn crossing_sheet(
+    first: Option<crate::board::LineJumps>,
+    second: Option<crate::board::LineJumps>,
+    second_route: ConnectorRoute,
+) -> (Sheet, CanvasObjectId, CanvasObjectId) {
+    let mut sheet = Sheet::new("Jumps", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut vertical = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(50.0, 0.0)),
+        Endpoint::Point(Vec2::new(50.0, 100.0)),
+    );
+    vertical.arrow_end = false;
+    vertical.line_jumps = first;
+    let mut horizontal = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 50.0)),
+        Endpoint::Point(Vec2::new(100.0, 50.0)),
+    );
+    horizontal.arrow_end = false;
+    horizontal.route = second_route;
+    horizontal.line_jumps = second;
+    let first = sheet
+        .add_canvas_object(CanvasObject::connector(vertical))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(CanvasObject::connector(horizontal))
+        .unwrap();
+    (sheet, first, second)
+}
+
+fn jump_paths(scene: &Scene, id: CanvasObjectId) -> Option<Vec<Vec<Vec2>>> {
+    let SceneGeometry::Polyline { jumps, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("connector polyline");
+    };
+    jumps.as_ref().map(|jumps| jumps.paths.clone())
+}
+
+#[test]
+fn line_jumps_follow_drawio_geometry_for_each_style() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    // Width 2 and size 6 give draw.io's half jump of (6 - 2) / 2 + 2 = 4.
+    let p = Vec2::new;
+    for (style, expected) in [
+        (
+            LineJumpStyle::Sharp,
+            vec![vec![
+                p(0.0, 50.0),
+                p(46.0, 50.0),
+                p(46.0, 46.0),
+                p(54.0, 46.0),
+                p(54.0, 50.0),
+                p(100.0, 50.0),
+            ]],
+        ),
+        (
+            LineJumpStyle::Gap,
+            vec![
+                vec![p(0.0, 50.0), p(46.0, 50.0)],
+                vec![p(54.0, 50.0), p(100.0, 50.0)],
+            ],
+        ),
+        (
+            LineJumpStyle::Line,
+            vec![
+                vec![p(0.0, 50.0), p(46.0, 50.0)],
+                vec![p(46.0, 54.0), p(46.0, 46.0)],
+                vec![p(54.0, 54.0), p(54.0, 46.0)],
+                vec![p(54.0, 50.0), p(100.0, 50.0)],
+            ],
+        ),
+    ] {
+        let (sheet, _, id) =
+            crossing_sheet(None, Some(LineJumps::new(style)), ConnectorRoute::Straight);
+        let (_, built) = scene(&sheet);
+        assert_eq!(jump_paths(&built, id), Some(expected), "{style:?}");
+    }
+
+    let (sheet, _, id) = crossing_sheet(
+        None,
+        Some(LineJumps::new(LineJumpStyle::Arc)),
+        ConnectorRoute::Straight,
+    );
+    let (_, built) = scene(&sheet);
+    let paths = jump_paths(&built, id).unwrap();
+    assert_eq!(paths.len(), 1);
+    let path = &paths[0];
+    assert_eq!(path.first(), Some(&p(0.0, 50.0)));
+    assert_eq!(path.last(), Some(&p(100.0, 50.0)));
+    // The arc bulges upward for a left-to-right line, 0.75 * 1.3 * 4 at its apex.
+    let apex = path
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!((apex - (50.0 - 3.9)).abs() < 1e-4, "{apex}");
+    let bounds = built.item(SceneId::Object(id)).unwrap().bounds;
+    assert!(bounds.min.y <= apex - 1.0);
+}
+
+#[test]
+fn line_jumps_only_cross_earlier_straight_or_elbow_connectors() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    let jumps = Some(LineJumps::new(LineJumpStyle::Gap));
+    // The first connector has nothing painted before it to jump over.
+    let (sheet, first, second) = crossing_sheet(jumps, None, ConnectorRoute::Straight);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, first), None);
+    assert_eq!(jump_paths(&built, second), None);
+    // Curves neither jump nor are jumped over, matching draw.io.
+    let (sheet, first, second) = crossing_sheet(jumps, jumps, ConnectorRoute::Curve);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, first), None);
+    assert_eq!(jump_paths(&built, second), None);
+    // A jump too close to the stroke end is skipped, leaving the plain stroke.
+    let mut big = LineJumps::new(LineJumpStyle::Gap);
+    big.size = 200.0;
+    let (sheet, _, second) = crossing_sheet(None, Some(big), ConnectorRoute::Straight);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, second), None);
+    assert!(sheet.has_connector_line_jumps());
+}
+
+#[test]
+fn line_jump_size_round_trips_and_rejects_out_of_range_values() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    let mut jumps = LineJumps::new(LineJumpStyle::Arc);
+    assert_eq!(serde_json::to_string(&jumps).unwrap(), r#"{"style":"arc"}"#);
+    jumps.size = 12.0;
+    let json = serde_json::to_string(&jumps).unwrap();
+    assert_eq!(serde_json::from_str::<LineJumps>(&json).unwrap(), jumps);
+    let (mut sheet, _, id) = crossing_sheet(None, Some(jumps), ConnectorRoute::Straight);
+    sheet.validate().unwrap();
+    if let Some(CanvasObjectKind::Connector(c)) = sheet.canvas.object_mut(id).map(|o| &mut o.kind) {
+        c.line_jumps.as_mut().unwrap().size = 1000.0;
+    }
+    assert!(sheet.validate().unwrap_err().contains("line jump size"));
+}
+
+fn drawio_route(
+    source: Rect,
+    target: Rect,
+    route: ConnectorRoute,
+    waypoints: &[Vec2],
+) -> (Vec<Vec2>, Vec<ConnectorInsertHandle>) {
+    let mut sheet = Sheet::new("Routes", "Root");
+    let a = shape(&mut sheet, ShapeKind::Rectangle, source, Band::Above);
+    let b = shape(&mut sheet, ShapeKind::Rectangle, target, Band::Above);
+    let mut connector = CanvasConnector::new(Endpoint::Object(a), Endpoint::Object(b));
+    connector.route = route;
+    connector.waypoints = waypoints.to_vec().into();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    (
+        connector_path(&sheet, &layout, &connector),
+        connector_insert_handles(&sheet, &layout, &connector),
+    )
+}
+
+fn points(values: &[(f32, f32)]) -> Vec<Vec2> {
+    values.iter().map(|&(x, y)| Vec2::new(x, y)).collect()
+}
+
+#[test]
+fn side_to_side_and_top_to_bottom_match_drawio_routers() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let far = rect(300.0, 100.0, 100.0, 60.0);
+    let below = rect(200.0, 200.0, 100.0, 60.0);
+    let cases = [
+        (
+            far,
+            ConnectorRoute::SideToSide,
+            vec![],
+            points(&[(100.0, 30.0), (200.0, 30.0), (200.0, 130.0), (300.0, 130.0)]),
+        ),
+        // The hint moves the vertical segment and, within the source's
+        // vertical span, the source row as well.
+        (
+            far,
+            ConnectorRoute::SideToSide,
+            vec![Vec2::new(150.0, 40.0)],
+            points(&[(100.0, 40.0), (150.0, 40.0), (150.0, 130.0), (300.0, 130.0)]),
+        ),
+        // JavaScript's Math.round rounds the midpoint 200.5 up.
+        (
+            rect(301.0, 100.0, 100.0, 60.0),
+            ConnectorRoute::SideToSide,
+            vec![],
+            points(&[(100.0, 30.0), (201.0, 30.0), (201.0, 130.0), (301.0, 130.0)]),
+        ),
+        (
+            below,
+            ConnectorRoute::TopToBottom,
+            vec![],
+            points(&[(50.0, 60.0), (50.0, 130.0), (250.0, 130.0), (250.0, 200.0)]),
+        ),
+        // A hint whose x lies inside only the source moves just that column.
+        (
+            below,
+            ConnectorRoute::TopToBottom,
+            vec![Vec2::new(80.0, 100.0)],
+            points(&[(80.0, 60.0), (80.0, 100.0), (250.0, 100.0), (250.0, 200.0)]),
+        ),
+    ];
+    for (target, route, waypoints, expected) in cases {
+        let (path, _) = drawio_route(source, target, route, &waypoints);
+        assert_eq!(path, expected, "{route:?} {waypoints:?}");
+    }
+}
+
+#[test]
+fn side_to_side_drops_route_points_inside_terminals_like_drawio() {
+    let source = rect(0.0, 0.0, 100.0, 100.0);
+    // Only the target row survives; draw.io then repeats the hint row.
+    let (path, _) = drawio_route(
+        source,
+        rect(200.0, 50.0, 100.0, 100.0),
+        ConnectorRoute::SideToSide,
+        &[Vec2::new(50.0, 120.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[(50.0, 100.0), (50.0, 120.0), (200.0, 120.0)])
+    );
+    // Overlapping spans leave no route points: the source aims at the target
+    // centre and the target at the resulting source point, both orthogonally.
+    let (path, _) = drawio_route(
+        source,
+        rect(50.0, 150.0, 100.0, 100.0),
+        ConnectorRoute::SideToSide,
+        &[],
+    );
+    assert_eq!(path, points(&[(100.0, 100.0), (100.0, 150.0)]));
+}
+
+#[test]
+fn elbow_edge_style_chooses_its_router_like_drawio() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    let side = points(&[(100.0, 30.0), (150.0, 30.0), (150.0, 230.0), (200.0, 230.0)]);
+    let vertical = points(&[(50.0, 60.0), (50.0, 130.0), (250.0, 130.0), (250.0, 200.0)]);
+    let cases = [
+        (target, ConnectorRoute::ElbowHorizontal, vec![], side),
+        (target, ConnectorRoute::ElbowVertical, vec![], vertical),
+        // Touching horizontal spans force the vertical router.
+        (
+            rect(100.0, 200.0, 100.0, 60.0),
+            ConnectorRoute::ElbowHorizontal,
+            vec![],
+            points(&[(50.0, 60.0), (50.0, 130.0), (150.0, 130.0), (150.0, 200.0)]),
+        ),
+        // A hint below both terminals forces top-to-bottom routing.
+        (
+            target,
+            ConnectorRoute::ElbowHorizontal,
+            vec![Vec2::new(150.0, 300.0)],
+            points(&[(50.0, 60.0), (50.0, 300.0), (250.0, 300.0), (250.0, 260.0)]),
+        ),
+        // A hint beside both terminals forces side-to-side routing.
+        (
+            target,
+            ConnectorRoute::ElbowVertical,
+            vec![Vec2::new(350.0, 100.0)],
+            points(&[(100.0, 30.0), (350.0, 30.0), (350.0, 230.0), (300.0, 230.0)]),
+        ),
+    ];
+    for (target, route, waypoints, expected) in cases {
+        let (path, _) = drawio_route(source, target, route, &waypoints);
+        assert_eq!(path, expected, "{route:?} {waypoints:?}");
+    }
+    // Only the first waypoint is a hint; draw.io ignores the rest.
+    let (path, handles) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::ElbowHorizontal,
+        &[Vec2::new(150.0, 300.0), Vec2::new(900.0, 900.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[(50.0, 60.0), (50.0, 300.0), (250.0, 300.0), (250.0, 260.0)])
+    );
+    assert!(handles.is_empty());
+    let (path, handles) = drawio_route(source, target, ConnectorRoute::ElbowHorizontal, &[]);
+    assert_eq!(
+        handles,
+        vec![ConnectorInsertHandle {
+            point: crate::board::polyline_midpoint(&path).unwrap(),
+            insert_at: 0,
+        }]
+    );
+}
+
+#[test]
+fn entity_relation_matches_drawio_and_ignores_waypoints() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let cases = [
+        (
+            rect(300.0, 100.0, 100.0, 60.0),
+            points(&[(100.0, 30.0), (130.0, 30.0), (270.0, 130.0), (300.0, 130.0)]),
+        ),
+        // Both terminals on the same side share an outer vertical segment.
+        (
+            rect(50.0, 100.0, 100.0, 60.0),
+            points(&[(100.0, 30.0), (180.0, 30.0), (180.0, 130.0), (150.0, 130.0)]),
+        ),
+        // Segments that would cross fold back through the vertical midpoint.
+        (
+            rect(140.0, 100.0, 100.0, 60.0),
+            points(&[
+                (100.0, 30.0),
+                (130.0, 30.0),
+                (130.0, 80.0),
+                (110.0, 80.0),
+                (110.0, 130.0),
+                (140.0, 130.0),
+            ]),
+        ),
+    ];
+    for (target, expected) in cases {
+        for waypoints in [vec![], vec![Vec2::new(500.0, 500.0)]] {
+            let (path, handles) =
+                drawio_route(source, target, ConnectorRoute::EntityRelation, &waypoints);
+            assert_eq!(path, expected, "{target:?} {waypoints:?}");
+            assert!(handles.is_empty());
+        }
+    }
+}
+
+#[test]
+fn segment_route_matches_drawio_segment_connector() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    // Without waypoints, the route leaves horizontally and bends once.
+    let (path, handles) = drawio_route(source, target, ConnectorRoute::Segment, &[]);
+    assert_eq!(
+        path,
+        points(&[(100.0, 30.0), (250.0, 30.0), (250.0, 200.0)])
+    );
+    assert_eq!(handles.len(), 1);
+    // A waypoint fixes a horizontal and the following vertical segment.
+    let (path, handles) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::Segment,
+        &[Vec2::new(150.0, 100.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[
+            (50.0, 60.0),
+            (50.0, 100.0),
+            (150.0, 100.0),
+            (150.0, 230.0),
+            (200.0, 230.0)
+        ])
+    );
+    assert!(handles.is_empty());
+    // Every waypoint counts, alternating the segment orientation; the last
+    // horizontal segment then runs to the target centre.
+    let (path, _) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::Segment,
+        &[Vec2::new(150.0, 100.0), Vec2::new(350.0, 150.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[
+            (50.0, 60.0),
+            (50.0, 100.0),
+            (150.0, 100.0),
+            (150.0, 150.0),
+            (250.0, 150.0),
+            (250.0, 200.0)
+        ])
+    );
+}
+
+#[test]
+fn isometric_routes_follow_thirty_degree_axes() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    let near = |a: Vec2, b: Vec2| (a - b).length() < 0.1;
+    for (route, bends) in [
+        (
+            ConnectorRoute::IsometricHorizontal,
+            [(13.4, 51.13), (150.0, 130.0), (286.6, 208.87)],
+        ),
+        (
+            ConnectorRoute::IsometricVertical,
+            [(186.6, 108.87), (150.0, 130.0), (113.4, 151.13)],
+        ),
+    ] {
+        let (path, handles) = drawio_route(source, target, route, &[]);
+        assert_eq!(path.len(), 5, "{route:?} {path:?}");
+        for (point, expected) in path[1..4].iter().zip(points(&bends)) {
+            assert!(near(*point, expected), "{route:?} {path:?}");
+        }
+        let slope = 30f32.to_radians().tan();
+        for pair in path.windows(2) {
+            let delta = pair[1] - pair[0];
+            assert!(
+                (delta.y.abs() - delta.x.abs() * slope).abs() < 0.1,
+                "{route:?} {path:?}"
+            );
+        }
+        assert_eq!(handles.len(), 1);
+        // The first waypoint moves the middle bend.
+        let (path, handles) = drawio_route(source, target, route, &[Vec2::new(150.0, 200.0)]);
+        assert!(
+            path.iter().any(|&p| near(p, Vec2::new(150.0, 200.0))),
+            "{path:?}"
+        );
+        assert!(handles.is_empty());
+    }
+}
+
+#[test]
+fn self_loops_route_like_drawio_loop() {
+    let looped = |route: ConnectorRoute, waypoints: &[Vec2]| {
+        let mut sheet = Sheet::new("Loops", "Root");
+        let a = shape(
+            &mut sheet,
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 100.0, 60.0),
+            Band::Above,
+        );
+        let mut connector = CanvasConnector::new(Endpoint::Object(a), Endpoint::Object(a));
+        connector.route = route;
+        connector.waypoints = waypoints.to_vec().into();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        (
+            connector_path(&sheet, &layout, &connector),
+            connector_insert_handles(&sheet, &layout, &connector),
+        )
+    };
+    for route in [
+        ConnectorRoute::Straight,
+        ConnectorRoute::Elbow,
+        ConnectorRoute::EntityRelation,
+    ] {
+        // Without a hint the loop sits beside the right edge.
+        let (path, handles) = looped(route, &[]);
+        assert_eq!(path.len(), 4, "{route:?} {path:?}");
+        assert_eq!(path[1..3], points(&[(120.0, 20.0), (120.0, 40.0)]));
+        assert_eq!((path[0].x, path[3].x), (100.0, 100.0));
+        assert_eq!(handles.len(), 1);
+        // A hint above the shape loops over it.
+        let (path, handles) = looped(route, &[Vec2::new(50.0, -40.0)]);
+        assert_eq!(path[1..3], points(&[(40.0, -40.0), (60.0, -40.0)]));
+        assert_eq!((path[0].y, path[3].y), (0.0, 0.0));
+        assert!(handles.is_empty());
+    }
+    // A curved loop stays smooth but passes through the loop bends.
+    let (path, _) = looped(ConnectorRoute::Curve, &[]);
+    assert!(path.len() > 4);
+    assert!(path.iter().all(|p| p.x >= 99.0));
+}
+
+fn edge_shape_scene(
+    kind: crate::board::EdgeShapeKind,
+    configure: impl FnOnce(&mut CanvasConnector),
+) -> (Scene, CanvasObjectId) {
+    let mut sheet = Sheet::new("Edge shapes", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(20.0, 80.0)),
+        Endpoint::Point(Vec2::new(220.0, 80.0)),
+    );
+    connector.width = 1.0;
+    connector.edge_shape = Some(crate::board::EdgeShape::new(kind));
+    configure(&mut connector);
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    (scene(&sheet).1, id)
+}
+
+fn edge_body_of(scene: &Scene, id: CanvasObjectId) -> Option<EdgeBody> {
+    let SceneGeometry::Polyline { body, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("expected connector");
+    };
+    body.as_deref().cloned()
+}
+
+fn assert_points(actual: &[Vec2], expected: &[(f32, f32)]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?}");
+    for (point, (x, y)) in actual.iter().zip(expected) {
+        assert!(
+            (point.x - x).abs() < 0.01 && (point.y - y).abs() < 0.01,
+            "{actual:?} != {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn flex_arrow_and_link_bodies_match_published_drawio() {
+    use crate::board::EdgeShapeKind;
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::FlexArrow, |c| c.arrow_end = true);
+    let Some(EdgeBody::Band { outline, fill }) = edge_body_of(&scene, id) else {
+        panic!("expected band");
+    };
+    assert_eq!(fill, None);
+    assert_points(
+        &outline,
+        &[
+            (20.5, 75.0),
+            (200.5, 75.0),
+            (200.5, 64.5),
+            (219.5, 80.0),
+            (200.5, 95.5),
+            (200.5, 85.0),
+            (20.5, 85.0),
+        ],
+    );
+    let item = scene.item(SceneId::Object(id)).unwrap();
+    assert!(item.bounds.contains(Vec2::new(205.0, 65.0)));
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 83.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::Link, |c| c.arrow_end = true);
+    let Some(EdgeBody::Rails(rails)) = edge_body_of(&scene, id) else {
+        panic!("expected rails");
+    };
+    assert_points(&rails[0], &[(20.0, 78.0), (220.0, 78.0)]);
+    assert_points(&rails[1], &[(220.0, 82.0), (20.0, 82.0)]);
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(100.0, 80.0), 0.0), None);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 82.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+}
+
+#[test]
+fn tapered_arrow_merges_classic_heads_like_drawio() {
+    use crate::board::{ConnectorMarker, ConnectorMarkerKind, EdgeShapeKind};
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::TaperedArrow, |c| {
+        c.arrow_end = true;
+        c.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+    });
+    let Some(EdgeBody::Band { outline, .. }) = edge_body_of(&scene, id) else {
+        panic!("expected band");
+    };
+    assert_points(
+        &outline,
+        &[
+            (20.0, 86.0),
+            (212.13, 81.0),
+            (209.88, 84.5),
+            (218.88, 80.0),
+            (209.88, 75.5),
+            (212.13, 79.0),
+            (20.0, 74.0),
+        ],
+    );
+    let SceneGeometry::Polyline { markers, .. } =
+        &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        unreachable!();
+    };
+    assert_eq!(**markers, [None, None]);
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::TaperedArrow, |c| {
+        c.arrow_end = true;
+        c.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+    });
+    let SceneGeometry::Polyline { markers, .. } =
+        &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        unreachable!();
+    };
+    assert!(markers[1].is_some());
+    assert!(matches!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Band { .. })
+    ));
+}
+
+#[test]
+fn line_edge_shapes_paint_casings_and_fills() {
+    use crate::board::EdgeShapeKind;
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::Pipe, |_| {});
+    assert_eq!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Lines {
+            casing: 6.0,
+            inner: None
+        })
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 82.5), 0.0),
+        Some(SceneHit::Object(id))
+    );
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::FilledEdge, |c| {
+        c.width = 6.0;
+        c.edge_shape.as_mut().unwrap().fill = Some(Color::WHITE);
+    });
+    assert_eq!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Lines {
+            casing: 6.0,
+            inner: Some((4.0, Color::WHITE))
+        })
+    );
+
+    for kind in [EdgeShapeKind::FilledEdge, EdgeShapeKind::Wire] {
+        let (scene, id) = edge_shape_scene(kind, |c| c.width = 6.0);
+        assert_eq!(edge_body_of(&scene, id), None, "{kind:?}");
+    }
+}
+
+#[test]
+fn only_wire_and_filled_edges_draw_line_jumps() {
+    use crate::board::{EdgeShape, EdgeShapeKind, LineJumpStyle, LineJumps};
+
+    for (kind, jumps) in [
+        (None, true),
+        (Some(EdgeShapeKind::Wire), true),
+        (Some(EdgeShapeKind::FilledEdge), true),
+        (Some(EdgeShapeKind::Pipe), false),
+        (Some(EdgeShapeKind::FlexArrow), false),
+    ] {
+        let mut sheet = Sheet::new("Jumps", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+                Endpoint::Point(Vec2::new(100.0, 200.0)),
+            )))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, 100.0)),
+            Endpoint::Point(Vec2::new(200.0, 100.0)),
+        );
+        connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Arc));
+        connector.edge_shape = kind.map(EdgeShape::new);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let (_, scene) = scene(&sheet);
+        let SceneGeometry::Polyline { jumps: found, .. } =
+            &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            unreachable!();
+        };
+        assert_eq!(found.is_some(), jumps, "{kind:?}");
+    }
+}
+
+#[test]
+fn positioned_connector_labels_are_hit_and_bounded_away_from_the_path() {
+    use crate::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.extra_labels.push(ConnectorLabel {
+        text: "far".into(),
+        placement: ConnectorLabelPlacement {
+            along: 0.0,
+            orthogonal: -60.0,
+            offset: Vec2::ZERO,
+        },
+        rich_text: None,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(50.0, 60.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(50.0, 30.0), 0.0), None);
+    let bounds = scene.item(SceneId::Object(id)).unwrap().bounds;
+    assert!(bounds.contains(Vec2::new(50.0, 65.0)));
+}
+
+#[test]
+fn rich_connector_labels_extend_scene_bounds_and_empty_lists_are_selectable() {
+    use crate::board::ConnectorLabelPlacement;
+    use crate::{InlineParagraph, InlineText, ListKind};
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label_placement = Some(ConnectorLabelPlacement {
+        along: 0.0,
+        orthogonal: -60.0,
+        offset: Vec2::ZERO,
+    });
+    let mut object = CanvasObject::connector(connector);
+    object.label_rich_text = Some(Arc::new(InlineText {
+        paragraphs: vec![InlineParagraph {
+            index: 0,
+            list: ListKind::Bulleted,
+        }],
+        ..Default::default()
+    }));
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (_, scene) = scene(&sheet);
+    let anchor = Vec2::new(50.0, 60.0);
+    assert_eq!(
+        scene.hit_test_tolerance(anchor, 0.0),
+        Some(SceneHit::Object(id))
+    );
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(anchor)
+    );
+}
+
+#[test]
+fn rich_extra_connector_label_extends_scene_bounds_and_hit_testing() {
+    use crate::InlineText;
+    use crate::board::{ConnectorLabel, ConnectorLabelPlacement};
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut rich = InlineText::default();
+    rich.update_range("BIG", 0..3, |style| style.font_size = Some(48.0))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "BIG".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(rich)),
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    let point = Vec2::new(85.0, 60.0);
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(point)
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(point, 0.0),
+        Some(SceneHit::Object(id))
+    );
+}
+
+#[test]
+fn rich_connector_bounds_include_expanded_placeholder_text() {
+    use crate::InlineText;
+    use crate::board::ConnectorLabelPlacement;
+    use crate::object_data::ObjectData;
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "%name%".into();
+    connector.label_placement = Some(ConnectorLabelPlacement {
+        orthogonal: -60.0,
+        ..Default::default()
+    });
+    let mut object = CanvasObject::connector(connector);
+    let mut rich = InlineText::default();
+    rich.update_range(object.label(), 0..6, |style| style.font_size = Some(40.0))
+        .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    object.data = Some(Arc::new(ObjectData {
+        placeholders: true,
+        properties: vec![("name".into(), "Expanded connector label".into())],
+        ..Default::default()
+    }));
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (_, scene) = scene(&sheet);
+    let point = Vec2::new(200.0, 60.0);
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(point)
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(point, 0.0),
+        Some(SceneHit::Object(id))
+    );
+}
+
+#[test]
+fn flipped_shapes_mirror_fixed_ports_and_their_perimeter() {
+    let rect = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 50.0));
+    let port = ConnectorPort {
+        position: Vec2::new(0.25, 0.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    };
+    let at = |flip, shape| fixed_flipped_connector_port_position(rect, 0.0, shape, flip, port);
+    assert_eq!(at((false, false), None), Vec2::new(25.0, 0.0));
+    assert_eq!(at((true, false), None), Vec2::new(75.0, 0.0));
+    assert_eq!(at((false, true), None), Vec2::new(25.0, 50.0));
+    // A right triangle's slanted side follows the mirror, so the projected
+    // perimeter point moves with it.
+    let triangle = Some((ShapeKind::Triangle, None));
+    let plain = at((false, false), triangle);
+    let flipped = at((false, true), triangle);
+    assert!((plain.x - flipped.x).abs() < 0.01, "{plain:?} {flipped:?}");
+    assert!(
+        (plain.y - (50.0 - flipped.y)).abs() < 0.01,
+        "{plain:?} {flipped:?}"
+    );
+}
+
+#[test]
+fn outside_shape_labels_extend_bounds_and_select_the_shape() {
+    use crate::label_style::{LabelStyle, LabelVAlign};
+    let mut s = Sheet::new("Labels", "Root");
+    let id = shape(
+        &mut s,
+        ShapeKind::Rectangle,
+        rect(500.0, 500.0, 100.0, 60.0),
+        Band::Above,
+    );
+    let object = s.canvas.objects.iter_mut().find(|o| o.id == id).unwrap();
+    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+        *label = "Below".into();
+    }
+    let below = Vec2::new(550.0, 590.0);
+    let (_, sc) = scene(&s);
+    assert_eq!(sc.hit_test(below), None);
+    let object = s.canvas.objects.iter_mut().find(|o| o.id == id).unwrap();
+    object.label_style = Some(std::sync::Arc::new(LabelStyle {
+        vertical_position: LabelVAlign::Bottom,
+        ..LabelStyle::default()
+    }));
+    let (_, sc) = scene(&s);
+    let item = sc
+        .items
+        .iter()
+        .find(|item| item.id == SceneId::Object(id))
+        .unwrap();
+    assert!(item.outside_label.is_some());
+    assert!(item.bounds.max().y > 580.0, "{:?}", item.bounds);
+    assert_eq!(sc.hit_test(below), Some(SceneHit::Object(id)));
 }

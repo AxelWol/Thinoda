@@ -88,6 +88,13 @@ pub enum BoardTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShapeDrop(pub ShapeKind);
 
+/// A primary board-object label or one positioned extra connector label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardLabelTarget {
+    pub object: CanvasObjectId,
+    pub extra_label: Option<usize>,
+}
+
 /// Drag-and-drop payload of a stencil: converted board content dragged from
 /// a host's stencil library. Releasing it over unobscured board space pastes
 /// it centred on the pointer as one undoable edit labelled `label`.
@@ -161,6 +168,26 @@ pub struct BoardLabels {
     pub label_edit_hint: String,
     pub label_edit_armed_hint: String,
     pub label_placeholder: String,
+    pub label_formatting: String,
+    pub label_bold: String,
+    pub label_italic: String,
+    pub label_underline: String,
+    pub label_strikethrough: String,
+    pub label_subscript: String,
+    pub label_superscript: String,
+    pub label_bulleted_list: String,
+    pub label_numbered_list: String,
+    pub label_font_size: String,
+    pub label_font_family: String,
+    pub label_text_color: String,
+    pub label_default: String,
+    pub label_search: String,
+    pub label_monospace: String,
+    pub label_value: String,
+    pub label_apply: String,
+    pub label_custom_color: String,
+    pub label_invalid_color: String,
+    pub label_invalid_size: String,
 }
 
 impl Default for BoardLabels {
@@ -215,6 +242,26 @@ impl Default for BoardLabels {
             label_edit_hint: "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel".into(),
             label_edit_armed_hint: "Clicking or tapping empty canvas also adds the armed shape.".into(),
             label_placeholder: "Type a label".into(),
+            label_formatting: "Label formatting (F6)".into(),
+            label_bold: "Bold".into(),
+            label_italic: "Italic".into(),
+            label_underline: "Underline".into(),
+            label_strikethrough: "Strikethrough".into(),
+            label_subscript: "Subscript".into(),
+            label_superscript: "Superscript".into(),
+            label_bulleted_list: "Bulleted list".into(),
+            label_numbered_list: "Numbered list".into(),
+            label_font_size: "Font Size".into(),
+            label_font_family: "Font Family".into(),
+            label_text_color: "Text Color".into(),
+            label_default: "Default".into(),
+            label_search: "Search".into(),
+            label_monospace: "Monospace".into(),
+            label_value: "Value".into(),
+            label_apply: "Apply".into(),
+            label_custom_color: "Custom color".into(),
+            label_invalid_color: "Invalid color".into(),
+            label_invalid_size: "Invalid font size".into(),
         }
     }
 }
@@ -387,6 +434,8 @@ pub struct MapView {
     /// Settings for subsequently started ink gestures.
     pub ink_settings: InkSettings,
     pub board_labels: BoardLabels,
+    /// Host-provided installed families for rich board-label editing.
+    pub label_font_families: Option<Arc<[String]>>,
     pub selected_object: Option<ObjectSelection>,
     pub context_marker: Option<(TopicId, usize)>,
     /// Sheet position of the latest canvas secondary click, used by context actions.
@@ -452,6 +501,7 @@ impl Default for MapView {
             board_tool: BoardTool::Select,
             ink_settings: InkSettings::default(),
             board_labels: BoardLabels::default(),
+            label_font_families: None,
             selected_object: None,
             context_marker: None,
             context_point: None,
@@ -862,8 +912,9 @@ impl MapView {
         self.selection.retain(|id| {
             !sheet.is_anchor(*id) && sheet.topic(*id).is_some() && sheet.is_visible(*id)
         });
-        self.board_selection
-            .retain(|id| sheet.canvas.object(*id).is_some());
+        self.board_selection.retain(|id| {
+            sheet.canvas.object(*id).is_some() && !sheet.canvas.is_on_hidden_layer(*id)
+        });
         if self
             .selected_object
             .is_some_and(|object| !object.exists(sheet))
@@ -1023,9 +1074,30 @@ impl MapView {
         board_input::begin_label(self, doc, id)
     }
 
+    /// Begin editing one positioned connector label.
+    pub fn begin_board_extra_label(
+        &mut self,
+        doc: &Document,
+        id: CanvasObjectId,
+        index: usize,
+    ) -> bool {
+        board_input::begin_extra_label(self, doc, id, index)
+    }
+
     /// Object whose label is currently being edited, if any.
     pub fn editing_board_object(&self) -> Option<CanvasObjectId> {
         self.board_input.label.as_ref().map(|edit| edit.id)
+    }
+
+    /// Identifies precisely which label is being edited.
+    pub fn editing_board_label_target(&self) -> Option<BoardLabelTarget> {
+        self.board_input
+            .label
+            .as_ref()
+            .map(|edit| BoardLabelTarget {
+                object: edit.id,
+                extra_label: edit.extra_label,
+            })
     }
 
     /// Commit the object-label draft; validation failures keep the draft intact.
@@ -2518,6 +2590,7 @@ impl MapCanvas {
             selected_object: view.selected_object,
             omit_zones: false,
             show_grid: true,
+            min_label_size: None,
         };
         let paint_scene = build_scene(sheet, &layout);
         paint_map_scene(
@@ -2528,7 +2601,7 @@ impl MapCanvas {
             &opts,
             &paint_scene,
             PaintSceneExtras {
-                editing_board_object: view.editing_board_object(),
+                editing_board_label: view.editing_board_label_target(),
                 stencil_handle_preview: board_input::stencil_handle_preview(view),
                 ..Default::default()
             },

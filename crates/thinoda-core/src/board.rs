@@ -8,6 +8,7 @@
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::{PresentationSource, Sheet, Topic, TopicId, ZoneId, id_type, valid_position};
 use crate::scene_hierarchy::{SceneHierarchy, SceneStructure};
+pub use crate::shape_style::{FillPattern, ShapeDash, ShapeGradient};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -40,6 +41,12 @@ pub const MIN_STROKE_WIDTH: f32 = 0.1;
 pub const MAX_STROKE_WIDTH: f32 = 200.0;
 /// draw.io marker size in board units, before adding the stroke width.
 pub const DEFAULT_CONNECTOR_MARKER_SIZE: f32 = 6.0;
+
+/// Length of the legacy (marker-less) arrowhead in sheet units; it grows with the line so
+/// thick connectors keep a visible tip in every renderer.
+pub fn legacy_arrow_size(width: f32) -> f32 {
+    6.0 + width.max(0.0) * 2.0
+}
 pub const MAX_CONNECTOR_MARKER_SIZE: f32 = 999.0;
 pub const MIN_GRID_SIZE: f32 = 4.0;
 pub const MAX_GRID_SIZE: f32 = 512.0;
@@ -125,6 +132,9 @@ pub struct CanvasLayer {
     pub card_states: Vec<CanvasCardState>,
     #[serde(skip_serializing_if = "SceneStructure::is_empty")]
     pub scene: SceneStructure,
+    /// Named layers painted above the implicit base layer, bottom first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<crate::board_layers::BoardLayer>,
 }
 
 impl CanvasLayer {
@@ -133,6 +143,7 @@ impl CanvasLayer {
             && self.groups.is_empty()
             && self.card_states.is_empty()
             && self.scene.is_empty()
+            && self.layers.is_empty()
     }
 
     pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -178,7 +189,7 @@ impl CanvasLayer {
             .collect()
     }
 
-    /// An object is locked directly, through its group, or through scene ancestry.
+    /// An object is locked directly, through its group or layer, or through scene ancestry.
     pub fn is_locked(&self, id: CanvasObjectId) -> bool {
         let mut cursor = Some(id);
         for _ in 0..=crate::scene_hierarchy::MAX_SCENE_DEPTH {
@@ -189,6 +200,7 @@ impl CanvasLayer {
                 return false;
             };
             if object.locked
+                || self.is_layer_locked(object.layer)
                 || object
                     .group
                     .and_then(|group| self.group(group))
@@ -307,6 +319,52 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.requires_marker_library_format()))
+        })
+    }
+
+    /// Whether this layer needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.line_jumps.is_some())
+        })
+    }
+
+    /// Whether this layer needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.route.is_drawio_edge_style() && !c.route.is_segment_or_isometric())
+        })
+    }
+
+    /// Whether this layer needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.edge_shape.is_some())
+        })
+    }
+
+    /// Whether this layer needs connector-label-aware persistence.
+    pub fn has_connector_labels(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.has_positioned_labels())
+        })
+    }
+
+    /// Whether this layer needs draw.io segment-route-aware persistence.
+    pub fn has_drawio_segment_routes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.route.is_segment_or_isometric())
+        })
+    }
+
     /// Whether this layer needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.objects.iter().any(|object| object.rounding.is_some())
@@ -357,6 +415,54 @@ impl CanvasLayer {
     pub fn has_stencils(&self) -> bool {
         self.objects.iter().any(|object| object.stencil.is_some())
     }
+
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.objects.iter().any(|object| object.drawio.is_some())
+    }
+
+    /// Whether this layer needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.objects.iter().any(|object| object.data.is_some())
+    }
+
+    /// Whether this layer needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.style.has_shape_style_effects())
+    }
+
+    /// Whether this layer needs label-style-aware persistence.
+    pub fn has_label_styles(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.label_style.is_some())
+    }
+
+    /// Whether an object has inline label formatting.
+    pub fn has_rich_labels(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.label_rich_text.is_some())
+    }
+
+    /// Whether a connector has inline formatting on its primary label.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.is_connector() && object.label_rich_text.is_some())
+    }
+
+    /// Whether an additional connector label has inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.objects.iter().any(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => connector
+                .extra_labels
+                .iter()
+                .any(|label| label.rich_text.is_some()),
+            _ => false,
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -397,6 +503,22 @@ pub struct ObjectStyle {
     pub text_color: Option<Color>,
     pub stroke_width: f32,
     pub opacity: f32,
+    /// Shape-only effects; see [`crate::shape_style`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dash: Option<ShapeDash>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<ShapeGradient>,
+    #[serde(skip_serializing_if = "FillPattern::is_solid")]
+    pub fill_pattern: FillPattern,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub shadow: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub glass: bool,
+    /// Mirrors the geometry (not the label text) about the frame centre.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip_h: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip_v: bool,
 }
 
 impl Default for ObjectStyle {
@@ -407,11 +529,34 @@ impl Default for ObjectStyle {
             text_color: None,
             stroke_width: 2.0,
             opacity: 1.0,
+            dash: None,
+            gradient: None,
+            fill_pattern: FillPattern::Solid,
+            shadow: false,
+            glass: false,
+            flip_h: false,
+            flip_v: false,
         }
     }
 }
 
 impl ObjectStyle {
+    /// Whether any shape-only effect is set.
+    pub fn has_shape_style_effects(&self) -> bool {
+        self.dash.is_some()
+            || self.gradient.is_some()
+            || !self.fill_pattern.is_solid()
+            || self.shadow
+            || self.glass
+            || self.flip_h
+            || self.flip_v
+    }
+
+    /// Whether the geometry is mirrored.
+    pub fn is_flipped(&self) -> bool {
+        self.flip_h || self.flip_v
+    }
+
     /// Width used for a shape's automatic outline when neither color is set.
     pub fn effective_shape_stroke_width(&self) -> f32 {
         if self.stroke.is_none() && self.fill.is_none() {
@@ -515,6 +660,28 @@ impl Default for RectangleSides {
     }
 }
 
+impl RectangleSides {
+    /// The sides as painted after mirroring the frame.
+    pub fn flipped(self, flip_h: bool, flip_v: bool) -> Self {
+        let (left, right) = if flip_h {
+            (self.right, self.left)
+        } else {
+            (self.left, self.right)
+        };
+        let (top, bottom) = if flip_v {
+            (self.bottom, self.top)
+        } else {
+            (self.top, self.bottom)
+        };
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+}
+
 /// One connected sequence of visible rectangle sides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RectangleSidePath {
@@ -584,6 +751,21 @@ pub struct CanvasObject {
     /// Data-defined drawing of a shape; `kind`'s shape is the legacy fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stencil: Option<crate::stencil_object::StencilRef>,
+    /// Imported draw.io data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioCellPassthrough>>,
+    /// Link, tags, custom properties and the placeholder flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<std::sync::Arc<crate::object_data::ObjectData>>,
+    /// Named layer of the object; `None` is the base layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<crate::board_layers::BoardLayerId>,
+    /// Shape label text style; `None` is the default label style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_style: Option<std::sync::Arc<crate::label_style::LabelStyle>>,
+    /// Inline formatting in the shape or primary connector label, indexed by Unicode scalars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_rich_text: Option<std::sync::Arc<crate::rich_text::InlineText>>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -607,6 +789,11 @@ impl CanvasObject {
             rectangle_sides: None,
             double_ellipse_margin: None,
             stencil: None,
+            drawio: None,
+            data: None,
+            layer: None,
+            label_style: None,
+            label_rich_text: None,
         }
     }
 
@@ -649,6 +836,65 @@ impl CanvasObject {
             CanvasObjectKind::Connector(c) => &c.label,
             CanvasObjectKind::Ink(_) => "",
         }
+    }
+
+    /// A list marker is visible even when its paragraph contains no characters.
+    pub fn has_label_list(&self) -> bool {
+        self.label_rich_text
+            .as_deref()
+            .is_some_and(|rich| !rich.paragraphs.is_empty())
+    }
+
+    /// Changes the label without discarding formatting outside the edited span.
+    pub fn set_label(&mut self, text: &str) -> Result<(), String> {
+        valid_text(text, "canvas label")?;
+        if matches!(self.kind, CanvasObjectKind::Ink(_)) {
+            return Err("ink strokes have no label".into());
+        }
+        let updated = self
+            .label_rich_text
+            .as_deref()
+            .map(|rich| rich.reconcile_label(self.label(), text))
+            .transpose()?;
+        match &mut self.kind {
+            CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
+            CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
+            CanvasObjectKind::Ink(_) => unreachable!("checked above"),
+        }
+        self.label_rich_text = updated
+            .filter(|rich| !rich.is_empty())
+            .map(std::sync::Arc::new);
+        Ok(())
+    }
+
+    /// Atomically changes a label and its explicitly supplied inline formatting.
+    pub fn set_label_with_rich_text(
+        &mut self,
+        text: &str,
+        rich: Option<crate::rich_text::InlineText>,
+    ) -> Result<(), String> {
+        valid_text(text, "canvas label")?;
+        if let Some(rich) = &rich {
+            rich.validate(text)?;
+        }
+        match &mut self.kind {
+            CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
+            CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
+            CanvasObjectKind::Ink(_) => return Err("ink strokes have no label".into()),
+        }
+        self.label_rich_text = rich
+            .filter(|rich| !rich.is_empty())
+            .map(std::sync::Arc::new);
+        Ok(())
+    }
+
+    /// The label followed by any further connector labels.
+    pub fn label_texts(&self) -> impl Iterator<Item = &str> {
+        let extra = match &self.kind {
+            CanvasObjectKind::Connector(c) => c.extra_labels.as_slice(),
+            _ => &[],
+        };
+        std::iter::once(self.label()).chain(extra.iter().map(|label| label.text.as_str()))
     }
 
     /// Axis-aligned bounds of the rotated frame (connectors: their stored frame).
@@ -1152,6 +1398,27 @@ pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
     if let Some(render) = crate::stencil_object::render(object) {
         return Some(crate::stencil_object::geometry(object, &render));
     }
+    if object.style.is_flipped() {
+        let geometry = shape_geometry_with_style(
+            *shape,
+            object.rect,
+            0.0,
+            object.rounding,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        );
+        let place = |point: Vec2| {
+            crate::shape_style::place(&object.style, point, object.rect, object.rotation)
+        };
+        return Some(ShapeGeometry {
+            outline: geometry.outline.into_iter().map(place).collect(),
+            details: geometry
+                .details
+                .into_iter()
+                .map(|detail| detail.into_iter().map(place).collect())
+                .collect(),
+        });
+    }
     Some(shape_geometry_with_style(
         *shape,
         object.rect,
@@ -1162,6 +1429,27 @@ pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
     ))
 }
 
+/// Unrotated `rect` mirrored by the object's flips about its frame centre.
+pub fn flipped_frame_rect(object: &CanvasObject, rect: Rect) -> Rect {
+    if !object.style.is_flipped() {
+        return rect;
+    }
+    let a = crate::shape_style::mirror(
+        rect.min,
+        object.rect,
+        object.style.flip_h,
+        object.style.flip_v,
+    );
+    let b = crate::shape_style::mirror(
+        rect.max(),
+        object.rect,
+        object.style.flip_h,
+        object.style.flip_v,
+    );
+    let min = Vec2::new(a.x.min(b.x), a.y.min(b.y));
+    Rect::from_min_size(min, rect.size)
+}
+
 /// Unrotated label area of a shape object, from its stencil when that resolves.
 pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
     let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
@@ -1170,11 +1458,14 @@ pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
     if let Some(render) = crate::stencil_object::render(object) {
         return Some(crate::stencil_object::label_rect(object, &render));
     }
-    Some(shape_label_rect_with_style(
-        *shape,
-        object.rect,
-        object.style.effective_shape_stroke_width(),
-        object.double_ellipse_margin,
+    Some(flipped_frame_rect(
+        object,
+        shape_label_rect_with_style(
+            *shape,
+            object.rect,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        ),
     ))
 }
 
@@ -1270,8 +1561,81 @@ impl ConnectorPort {
 pub enum ConnectorRoute {
     #[default]
     Straight,
+    /// draw.io's orthogonal edge style.
     Elbow,
     Curve,
+    /// draw.io's `elbowEdgeStyle`, preferring a side-to-side route.
+    ElbowHorizontal,
+    /// draw.io's `elbowEdgeStyle` with `elbow=vertical`.
+    ElbowVertical,
+    /// draw.io's `sideToSideEdgeStyle`.
+    SideToSide,
+    /// draw.io's `topToBottomEdgeStyle`.
+    TopToBottom,
+    /// draw.io's `entityRelationEdgeStyle`.
+    EntityRelation,
+    /// draw.io's `segmentEdgeStyle`, whose waypoints place alternating
+    /// horizontal and vertical segments.
+    Segment,
+    /// draw.io's `isometricEdgeStyle`, leaving horizontally along the
+    /// isometric axes.
+    IsometricHorizontal,
+    /// draw.io's `isometricEdgeStyle` with `elbow=vertical`.
+    IsometricVertical,
+}
+
+impl ConnectorRoute {
+    /// Every route in menu order.
+    pub const ALL: [Self; 11] = [
+        Self::Straight,
+        Self::Elbow,
+        Self::Curve,
+        Self::ElbowHorizontal,
+        Self::ElbowVertical,
+        Self::SideToSide,
+        Self::TopToBottom,
+        Self::EntityRelation,
+        Self::Segment,
+        Self::IsometricHorizontal,
+        Self::IsometricVertical,
+    ];
+
+    /// Whether this is one of draw.io's routed edge styles, computed by a
+    /// port of its router rather than Thinoda's own routes.
+    pub fn is_drawio_edge_style(self) -> bool {
+        matches!(
+            self,
+            Self::ElbowHorizontal
+                | Self::ElbowVertical
+                | Self::SideToSide
+                | Self::TopToBottom
+                | Self::EntityRelation
+        ) || self.is_segment_or_isometric()
+    }
+
+    /// Whether this is draw.io's segment or isometric edge style, which need
+    /// segment-route-aware persistence.
+    pub fn is_segment_or_isometric(self) -> bool {
+        matches!(
+            self,
+            Self::Segment | Self::IsometricHorizontal | Self::IsometricVertical
+        )
+    }
+
+    /// Whether the route uses only the first waypoint as a routing hint, as
+    /// draw.io's elbow and isometric styles do; entity-relation routes ignore
+    /// waypoints and segment routes use all of them.
+    pub fn uses_waypoint_hint(self) -> bool {
+        matches!(
+            self,
+            Self::ElbowHorizontal
+                | Self::ElbowVertical
+                | Self::SideToSide
+                | Self::TopToBottom
+                | Self::IsometricHorizontal
+                | Self::IsometricVertical
+        )
+    }
 }
 
 /// Non-default connector marker shapes. A missing marker uses the legacy
@@ -1291,12 +1655,75 @@ pub enum ConnectorMarkerKind {
     HalfCircle,
     BaseDash,
     Dash,
+    ErOne,
+    ErMandOne,
+    ErMany,
+    ErOneToMany,
+    ErZeroToOne,
+    ErZeroToMany,
+    ManyOptional,
+    Box,
+    Cross,
+    Circle,
+    CirclePlus,
+    Async,
+    OpenAsync,
+    DoubleBlock,
+    SysmlX,
+    SysmlLost,
+    SysmlFound,
+    SysmlPackCont,
 }
 
 impl ConnectorMarkerKind {
     /// Open and block markers were introduced before the extended marker set.
     pub fn requires_extended_format(self) -> bool {
         !matches!(self, Self::Open | Self::Block)
+    }
+
+    /// ER, UML, and SysML markers from draw.io's marker library (native v38).
+    pub fn requires_marker_library_format(self) -> bool {
+        matches!(
+            self,
+            Self::ErOne
+                | Self::ErMandOne
+                | Self::ErMany
+                | Self::ErOneToMany
+                | Self::ErZeroToOne
+                | Self::ErZeroToMany
+                | Self::ManyOptional
+                | Self::Box
+                | Self::Cross
+                | Self::Circle
+                | Self::CirclePlus
+                | Self::Async
+                | Self::OpenAsync
+                | Self::DoubleBlock
+                | Self::SysmlX
+                | Self::SysmlLost
+                | Self::SysmlFound
+                | Self::SysmlPackCont
+        )
+    }
+
+    /// Whether the marker's start/end fill flag changes its rendering.
+    pub fn is_fillable(self) -> bool {
+        matches!(
+            self,
+            Self::Classic
+                | Self::ClassicThin
+                | Self::Block
+                | Self::BlockThin
+                | Self::Diamond
+                | Self::DiamondThin
+                | Self::Oval
+                | Self::ManyOptional
+                | Self::Box
+                | Self::Circle
+                | Self::CirclePlus
+                | Self::Async
+                | Self::DoubleBlock
+        )
     }
 
     pub fn is_diamond(self) -> bool {
@@ -1312,6 +1739,379 @@ impl ConnectorMarkerKind {
 #[serde(deny_unknown_fields)]
 pub struct ConnectorMarker {
     pub kind: ConnectorMarkerKind,
+}
+
+/// How a connector crosses earlier connectors (draw.io `jumpStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineJumpStyle {
+    Arc,
+    Gap,
+    Sharp,
+    Line,
+}
+
+impl LineJumpStyle {
+    pub const ALL: [Self; 4] = [Self::Arc, Self::Gap, Self::Sharp, Self::Line];
+}
+
+/// draw.io's default `jumpSize`.
+pub const DEFAULT_LINE_JUMP_SIZE: f32 = 6.0;
+pub const MAX_LINE_JUMP_SIZE: f32 = 999.0;
+
+fn default_line_jump_size() -> f32 {
+    DEFAULT_LINE_JUMP_SIZE
+}
+
+fn is_default_line_jump_size(size: &f32) -> bool {
+    *size == DEFAULT_LINE_JUMP_SIZE
+}
+
+/// Jumps drawn where this connector crosses connectors painted before it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineJumps {
+    pub style: LineJumpStyle,
+    #[serde(
+        default = "default_line_jump_size",
+        skip_serializing_if = "is_default_line_jump_size"
+    )]
+    pub size: f32,
+}
+
+impl LineJumps {
+    pub fn new(style: LineJumpStyle) -> Self {
+        Self {
+            style,
+            size: DEFAULT_LINE_JUMP_SIZE,
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        valid_line_jump_size(self.size)
+    }
+}
+
+/// Whether a draw.io `jumpSize` can be represented safely.
+pub fn valid_line_jump_size(size: f32) -> bool {
+    size.is_finite() && (0.0..=MAX_LINE_JUMP_SIZE).contains(&size)
+}
+
+/// draw.io connector body shapes (`shape=` on an edge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeShapeKind {
+    /// Line painted again in the fill colour.
+    Wire,
+    /// Casing line around an inner line in the fill colour.
+    Pipe,
+    /// Line painted again 2 units thinner in the fill colour.
+    FilledEdge,
+    /// Two parallel open rails without markers.
+    Link,
+    /// Closed band with arrow heads, filled and outlined.
+    FlexArrow,
+    /// Band tapering from its start to its end width.
+    TaperedArrow,
+}
+
+impl EdgeShapeKind {
+    pub const ALL: [Self; 6] = [
+        Self::FlexArrow,
+        Self::TaperedArrow,
+        Self::Link,
+        Self::Pipe,
+        Self::FilledEdge,
+        Self::Wire,
+    ];
+
+    /// draw.io's `shape` style value.
+    pub fn drawio_name(self) -> &'static str {
+        match self {
+            Self::Wire => "wire",
+            Self::Pipe => "pipe",
+            Self::FilledEdge => "filledEdge",
+            Self::Link => "link",
+            Self::FlexArrow => "flexArrow",
+            Self::TaperedArrow => "taperedArrow",
+        }
+    }
+
+    pub fn from_drawio(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.drawio_name() == name)
+    }
+
+    /// Whether the shape has a body `width`.
+    pub fn has_width(self) -> bool {
+        matches!(self, Self::Pipe | Self::Link | Self::FlexArrow)
+    }
+
+    /// Whether the shape has `startWidth` and `endWidth`.
+    pub fn has_end_widths(self) -> bool {
+        matches!(self, Self::FlexArrow | Self::TaperedArrow)
+    }
+
+    /// Whether the shape paints a fill colour; link only strokes.
+    pub fn has_fill(self) -> bool {
+        self != Self::Link
+    }
+
+    /// Whether draw.io draws line jumps for this shape.
+    pub fn supports_line_jumps(self) -> bool {
+        matches!(self, Self::Wire | Self::FilledEdge)
+    }
+
+    /// draw.io's default `width`.
+    pub fn default_width(self) -> f32 {
+        match self {
+            Self::FlexArrow => 10.0,
+            Self::Pipe | Self::Link => 4.0,
+            _ => 0.0,
+        }
+    }
+
+    /// draw.io's default `startWidth` or `endWidth`.
+    pub fn default_end_width(self, start: bool) -> f32 {
+        match (self, start) {
+            (Self::FlexArrow, _) => 20.0,
+            (Self::TaperedArrow, true) => 12.0,
+            (Self::TaperedArrow, false) => 2.0,
+            _ => 0.0,
+        }
+    }
+}
+
+pub const MAX_EDGE_SHAPE_WIDTH: f32 = 999.0;
+
+/// A draw.io connector body shape with its optional parameters; `None`
+/// parameters use draw.io's defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeShape {
+    pub kind: EdgeShapeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_width: Option<f32>,
+    /// draw.io `fillColor`; unset paints no fill, like draw.io.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Color>,
+}
+
+impl EdgeShape {
+    pub fn new(kind: EdgeShapeKind) -> Self {
+        Self {
+            kind,
+            width: None,
+            start_width: None,
+            end_width: None,
+            fill: None,
+        }
+    }
+
+    /// Whether every parameter applies to the kind and is in range.
+    pub fn is_valid(self) -> bool {
+        let valid = |value: Option<f32>, allowed: bool| {
+            value.is_none_or(|value| allowed && valid_edge_shape_width(value))
+        };
+        valid(self.width, self.kind.has_width())
+            && valid(self.start_width, self.kind.has_end_widths())
+            && valid(self.end_width, self.kind.has_end_widths())
+            && (self.fill.is_none() || self.kind.has_fill())
+    }
+
+    pub fn resolved_width(self) -> f32 {
+        self.width.unwrap_or(self.kind.default_width())
+    }
+
+    pub fn resolved_end_width(self, start: bool) -> f32 {
+        if start {
+            self.start_width
+        } else {
+            self.end_width
+        }
+        .unwrap_or(self.kind.default_end_width(start))
+    }
+
+    /// The same shape keeping only the parameters `kind` accepts.
+    pub fn with_kind(self, kind: EdgeShapeKind) -> Self {
+        Self {
+            kind,
+            width: self.width.filter(|_| kind.has_width()),
+            start_width: self.start_width.filter(|_| kind.has_end_widths()),
+            end_width: self.end_width.filter(|_| kind.has_end_widths()),
+            fill: self.fill.filter(|_| kind.has_fill()),
+        }
+    }
+}
+
+/// Whether a draw.io edge-shape width can be represented safely.
+pub fn valid_edge_shape_width(width: f32) -> bool {
+    width.is_finite() && (0.0..=MAX_EDGE_SHAPE_WIDTH).contains(&width)
+}
+
+/// Most labels a connector keeps beside its main label.
+pub const MAX_CONNECTOR_LABELS: usize = 64;
+/// Largest label distance from its path, keeping derived geometry finite.
+pub const MAX_CONNECTOR_LABEL_OFFSET: f32 = 100_000.0;
+
+/// draw.io relative edge-label geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct ConnectorLabelPlacement {
+    /// -1 at the start of the routed path, 0 halfway and 1 at its end.
+    #[serde(default)]
+    pub along: f32,
+    /// Distance from the path; positive values sit left of the travel direction.
+    #[serde(default)]
+    pub orthogonal: f32,
+    /// Absolute offset added after `along` and `orthogonal`.
+    #[serde(default)]
+    pub offset: Vec2,
+}
+
+impl ConnectorLabelPlacement {
+    pub fn is_valid(self) -> bool {
+        let distance = |value: f32| value.is_finite() && value.abs() <= MAX_CONNECTOR_LABEL_OFFSET;
+        self.along.is_finite()
+            && (-1.0..=1.0).contains(&self.along)
+            && distance(self.orthogonal)
+            && distance(self.offset.x)
+            && distance(self.offset.y)
+    }
+}
+
+/// An additional positioned connector label, like a draw.io edge-label child.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ConnectorLabel {
+    pub text: String,
+    #[serde(default)]
+    pub placement: ConnectorLabelPlacement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rich_text: Option<Arc<crate::InlineText>>,
+}
+
+impl ConnectorLabel {
+    /// An empty list paragraph still has a visible marker.
+    pub fn has_list(&self) -> bool {
+        self.rich_text
+            .as_deref()
+            .is_some_and(|rich| !rich.paragraphs.is_empty())
+    }
+
+    /// Replace the text while retaining and reconciling its inline formatting.
+    pub fn set_text(&mut self, text: String) -> Result<(), String> {
+        let rich = self
+            .rich_text
+            .as_ref()
+            .map(|rich| rich.reconcile_label(&self.text, &text))
+            .transpose()?;
+        self.set_text_with_rich_text(text, rich)
+    }
+
+    /// Atomically changes the text and its explicitly supplied inline formatting.
+    pub fn set_text_with_rich_text(
+        &mut self,
+        text: String,
+        rich: Option<crate::InlineText>,
+    ) -> Result<(), String> {
+        if text.chars().count() > MAX_BOARD_TEXT_CHARS {
+            return Err("invalid connector label text".into());
+        }
+        if let Some(rich) = &rich {
+            rich.validate(&text)?;
+        }
+        if text.is_empty() && rich.as_ref().is_none_or(|rich| rich.paragraphs.is_empty()) {
+            return Err("invalid connector label text".into());
+        }
+        self.text = text;
+        self.rich_text = rich.filter(|rich| !rich.is_empty()).map(Arc::new);
+        Ok(())
+    }
+}
+
+fn valid_connector_labels(
+    placement: Option<ConnectorLabelPlacement>,
+    labels: &[ConnectorLabel],
+) -> bool {
+    placement.is_none_or(ConnectorLabelPlacement::is_valid)
+        && labels.len() <= MAX_CONNECTOR_LABELS
+        && labels.iter().all(|label| {
+            (!label.text.is_empty() || label.has_list())
+                && label.text.chars().count() <= MAX_BOARD_TEXT_CHARS
+                && label.placement.is_valid()
+                && label
+                    .rich_text
+                    .as_ref()
+                    .is_none_or(|rich| !rich.is_empty() && rich.validate(&label.text).is_ok())
+        })
+}
+
+/// Size the exports give a connector label, as a centred frame around `anchor`.
+pub fn approx_connector_label_bounds(anchor: Vec2, text: &str) -> Rect {
+    const SIZE: f32 = 12.0;
+    let lines = text.lines().count().max(1);
+    let longest = text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1);
+    Rect::from_center_size(
+        anchor,
+        Vec2::new(
+            longest as f32 * SIZE * 0.6 + 8.0,
+            lines as f32 * SIZE * 1.25 + 4.0,
+        ),
+    )
+}
+
+/// Port of draw.io's `mxGraphView.getPoint` for relative edge-label geometry.
+pub fn connector_label_point(points: &[Vec2], placement: ConnectorLabelPlacement) -> Option<Vec2> {
+    let first = *points.first()?;
+    let offset = placement.offset;
+    if points.len() < 2 {
+        return Some(first + offset);
+    }
+    let mut lengths = Vec::with_capacity(points.len());
+    let mut total = 0.0f32;
+    lengths.push(0.0);
+    for pair in points.windows(2) {
+        total += (pair[1] - pair[0]).length();
+        lengths.push(total);
+    }
+    // draw.io rounds the distance and the point lengths in model units.
+    let dist = ((placement.along / 2.0 + 0.5) * total).round();
+    let mut index = 1;
+    let mut hi = points.len() - 1;
+    while index < hi {
+        let mid = (index + hi) / 2;
+        if dist >= lengths[mid].round() {
+            index = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let p0 = points[index - 1];
+    let pe = points[index];
+    let segment = lengths[index] - lengths[index - 1];
+    let delta = pe - p0;
+    let (factor, nx, ny) = if segment == 0.0 {
+        (0.0, 0.0, 0.0)
+    } else {
+        (
+            (dist - lengths[index - 1]) / segment,
+            delta.y / segment,
+            delta.x / segment,
+        )
+    };
+    let gy = placement.orthogonal;
+    Some(Vec2::new(
+        p0.x + delta.x * factor + nx * gy + offset.x,
+        p0.y + delta.y * factor - ny * gy + offset.y,
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1348,8 +2148,20 @@ pub struct CanvasConnector {
     pub start_marker_unfilled: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub end_marker_unfilled: bool,
+    /// Curved routes never jump, matching draw.io.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_jumps: Option<LineJumps>,
+    /// draw.io body shape; Sankey flows ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_shape: Option<EdgeShape>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
+    /// Where the main label sits; `None` keeps it halfway along the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_placement: Option<ConnectorLabelPlacement>,
+    /// Further positioned labels, like draw.io edge-label children.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_labels: Vec<ConnectorLabel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
     #[serde(default = "default_connector_width")]
@@ -1387,7 +2199,15 @@ struct StoredCanvasConnector {
     #[serde(default)]
     end_marker_unfilled: bool,
     #[serde(default)]
+    line_jumps: Option<LineJumps>,
+    #[serde(default)]
+    edge_shape: Option<EdgeShape>,
+    #[serde(default)]
     label: String,
+    #[serde(default)]
+    label_placement: Option<ConnectorLabelPlacement>,
+    #[serde(default)]
+    extra_labels: Vec<ConnectorLabel>,
     #[serde(default)]
     color: Option<Color>,
     #[serde(default = "default_connector_width")]
@@ -1417,6 +2237,15 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         {
             return Err(serde::de::Error::custom("invalid connector marker fill"));
         }
+        if stored.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
+            return Err(serde::de::Error::custom("invalid connector line jump size"));
+        }
+        if stored.edge_shape.is_some_and(|shape| !shape.is_valid()) {
+            return Err(serde::de::Error::custom("invalid connector edge shape"));
+        }
+        if !valid_connector_labels(stored.label_placement, &stored.extra_labels) {
+            return Err(serde::de::Error::custom("invalid connector labels"));
+        }
         if !valid_connector_port(stored.from, stored.from_port)
             || !valid_connector_port(stored.to, stored.to_port)
         {
@@ -1438,7 +2267,11 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             end_marker_size: stored.end_marker_size,
             start_marker_unfilled: stored.start_marker_unfilled,
             end_marker_unfilled: stored.end_marker_unfilled,
+            line_jumps: stored.line_jumps,
+            edge_shape: stored.edge_shape,
             label: stored.label,
+            label_placement: stored.label_placement,
+            extra_labels: stored.extra_labels,
             color: stored.color,
             width: stored.width,
         })
@@ -1475,10 +2308,44 @@ impl CanvasConnector {
             end_marker_size: None,
             start_marker_unfilled: false,
             end_marker_unfilled: false,
+            line_jumps: None,
+            edge_shape: None,
             label: String::new(),
+            label_placement: None,
+            extra_labels: Vec::new(),
             color: None,
             width: default_connector_width(),
         }
+    }
+
+    /// Whether labels need connector-label-aware persistence.
+    pub fn has_positioned_labels(&self) -> bool {
+        self.label_placement.is_some() || !self.extra_labels.is_empty()
+    }
+
+    /// Anchor of the primary label, including an empty formatted paragraph.
+    pub fn primary_label_anchor(&self, points: &[Vec2]) -> Option<Vec2> {
+        match self.label_placement {
+            Some(placement) => connector_label_point(points, placement),
+            None => polyline_midpoint(points),
+        }
+    }
+
+    /// Non-empty labels with their anchors on the routed `points`.
+    pub fn label_anchors<'a>(&'a self, points: &[Vec2]) -> Vec<(&'a str, Vec2)> {
+        let mut anchors = Vec::with_capacity(1 + self.extra_labels.len());
+        if !self.label.is_empty() {
+            anchors.extend(
+                self.primary_label_anchor(points)
+                    .map(|anchor| (self.label.as_str(), anchor)),
+            );
+        }
+        for label in &self.extra_labels {
+            if let Some(anchor) = connector_label_point(points, label.placement) {
+                anchors.push((label.text.as_str(), anchor));
+            }
+        }
+        anchors
     }
 
     pub fn set_arrow_start(&mut self, enabled: bool) {
@@ -1735,12 +2602,69 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
         return Err(format!("canvas object {id} has an invalid rotation"));
     }
     valid_text(&object.alt_text, "alt text")?;
+    if let Some(drawio) = &object.drawio {
+        if drawio.is_empty() {
+            return Err(format!("canvas object {id} has empty draw.io data"));
+        }
+        drawio
+            .validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
+    if let Some(data) = &object.data {
+        if data.is_empty() {
+            return Err(format!("canvas object {id} has empty object data"));
+        }
+        data.validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+        // Each attribute has one owner, so export never writes a name twice.
+        if let Some(drawio) = &object.drawio
+            && drawio.attributes.iter().any(|(name, _)| {
+                matches!(name.as_str(), "link" | "tags" | "placeholders")
+                    || data.property(name).is_some()
+            })
+        {
+            return Err(format!(
+                "canvas object {id} has object data that repeats draw.io attributes"
+            ));
+        }
+    }
     let style = &object.style;
     if !valid_width(style.stroke_width) {
         return Err(format!("canvas object {id} has an invalid stroke width"));
     }
     if !style.opacity.is_finite() || !(0.0..=1.0).contains(&style.opacity) {
         return Err(format!("canvas object {id} has an invalid opacity"));
+    }
+    if style.has_shape_style_effects() && !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+        return Err(format!(
+            "canvas object {id} has shape style effects but is not a shape"
+        ));
+    }
+    if let Some(dash) = style.dash {
+        crate::shape_style::DashPattern::new(dash.pattern.values())
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
+    if let Some(label_style) = &object.label_style {
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            return Err(format!(
+                "canvas object {id} has a label style but is not a shape"
+            ));
+        }
+        label_style
+            .validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
+    if let Some(rich) = &object.label_rich_text {
+        if matches!(object.kind, CanvasObjectKind::Ink(_)) {
+            return Err(format!(
+                "canvas object {id} has rich label text but no label"
+            ));
+        }
+        if rich.is_empty() {
+            return Err(format!("canvas object {id} has empty rich label text"));
+        }
+        rich.validate(object.label())
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     if let Some(rounding) = object.rounding
         && (!matches!(
@@ -1850,6 +2774,15 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             {
                 return Err(format!("connector {id} has an invalid marker fill"));
             }
+            if c.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
+                return Err(format!("connector {id} has an invalid line jump size"));
+            }
+            if c.edge_shape.is_some_and(|shape| !shape.is_valid()) {
+                return Err(format!("connector {id} has an invalid edge shape"));
+            }
+            if !valid_connector_labels(c.label_placement, &c.extra_labels) {
+                return Err(format!("connector {id} has invalid labels"));
+            }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(
                     "connector {id} exceeds {MAX_CONNECTOR_WAYPOINTS} waypoints"
@@ -1918,6 +2851,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let canvas = &sheet.canvas;
     if !canvas.scene.is_empty() {
         SceneHierarchy::from_canvas(canvas)?;
+        crate::scene_table::validate_geometry(canvas)?;
     }
     if sheet.has_scene_collapse() && sheet.has_sankey() {
         return Err("collapse does not support Sankey sheets".into());
@@ -1941,6 +2875,13 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
     let mut total_waypoints = 0usize;
+    let mut drawio_bytes = sheet.drawio.as_ref().map_or(0, |page| page.byte_len());
+    if let Some(page) = &sheet.drawio {
+        if page.is_empty() {
+            return Err("sheet has empty draw.io data".into());
+        }
+        page.validate()?;
+    }
     for o in &canvas.objects {
         if ids
             .insert(o.id, matches!(o.kind, CanvasObjectKind::Shape { .. }))
@@ -1949,6 +2890,12 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             return Err(format!("duplicate canvas object id {}", o.id));
         }
         validate_object(o)?;
+        if let Some(drawio) = &o.drawio {
+            drawio_bytes = drawio_bytes.saturating_add(drawio.byte_len());
+            if drawio_bytes > crate::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES {
+                return Err("draw.io passthrough of the sheet is too large".into());
+            }
+        }
         if let CanvasObjectKind::Ink(ink) = &o.kind {
             total_points = total_points.saturating_add(ink.points.len());
             if total_points > MAX_TOTAL_INK_POINTS {
@@ -2028,6 +2975,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             }
         }
     }
+    crate::board_layers::validate_layers(canvas)?;
     crate::scene::validate_connector_cycles(sheet)?;
     Ok(())
 }
@@ -2107,16 +3055,29 @@ fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
 
 /// Masks free text of the canvas layer (see [`crate::Workbook::masked_copy`]).
 pub(crate) fn mask_canvas(sheet: &mut Sheet) {
+    for (index, layer) in sheet.canvas.layers.iter_mut().enumerate() {
+        layer.name = format!("Layer {}", index + 1);
+        layer.source_id = None;
+    }
     for (index, object) in sheet.canvas.objects.iter_mut().enumerate() {
         object.alt_text.clear();
         // Package programs and metadata can contain private text; use the legacy fallback.
         object.stencil = None;
+        object.drawio = None;
+        object.data = None;
+        object.label_rich_text = None;
         match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);
             }
-            CanvasObjectKind::Connector(c) if !c.label.is_empty() => {
-                c.label = format!("Connector {}", index + 1);
+            CanvasObjectKind::Connector(c) => {
+                if !c.label.is_empty() {
+                    c.label = format!("Connector {}", index + 1);
+                }
+                for (n, label) in c.extra_labels.iter_mut().enumerate() {
+                    label.text = format!("Connector {} label {}", index + 1, n + 2);
+                    label.rich_text = None;
+                }
             }
             _ => {}
         }
@@ -2532,6 +3493,7 @@ impl Sheet {
             if selected.contains(&BoardMember::Object(object.id))
                 && self.canvas.scene.is_empty()
                 && (object.locked
+                    || self.canvas.is_layer_locked(object.layer)
                     || object
                         .group
                         .is_some_and(|group| locked_groups.contains(&group)))
@@ -2659,6 +3621,11 @@ impl Sheet {
         if !object.rotation.is_finite() {
             return Err("rotation must be finite".into());
         }
+        if let Some(layer) = object.layer
+            && self.canvas.board_layer(layer).is_none()
+        {
+            return Err(format!("board layer {layer} not found"));
+        }
         object.id = self.alloc_canvas_object_id();
         object.rotation = normalize_rotation(object.rotation);
         object.group = None;
@@ -2694,6 +3661,7 @@ impl Sheet {
         let id = object.id;
         if self.canvas.scene.is_empty() {
             self.canvas.objects.push(object);
+            self.canvas.normalize_layer_order();
         } else {
             let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
             let parent = match &object.kind {
@@ -2749,7 +3717,7 @@ impl Sheet {
         Ok(())
     }
 
-    fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
+    pub(crate) fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
         if !self.canvas.scene.is_empty() && !ids.is_empty() {
             SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(ids)?;
             let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
@@ -2774,6 +3742,27 @@ impl Sheet {
     /// the removed shape's centre, or the connector's path midpoint; emptied
     /// groups are dissolved.
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> Result<(), String> {
+        if !self.canvas.scene.tables.is_empty() && !ids.is_empty() {
+            let removed: HashSet<_> = SceneHierarchy::from_canvas(&self.canvas)?
+                .descendant_closure(ids)?
+                .into_iter()
+                .collect();
+            for (table, grid) in &self.canvas.scene.tables {
+                if !removed.contains(table)
+                    && grid.cells.iter().any(|cell| removed.contains(&cell.id))
+                {
+                    return Err("delete the table row or column instead of a single cell".into());
+                }
+            }
+        }
+        self.remove_canvas_objects_unchecked(ids)
+    }
+
+    /// Removal without table-cell protection, for table commands that replace the grid.
+    pub(crate) fn remove_canvas_objects_unchecked(
+        &mut self,
+        ids: &[CanvasObjectId],
+    ) -> Result<(), String> {
         if ids.is_empty() {
             return Err("nothing selected".into());
         }
@@ -2901,6 +3890,10 @@ impl Sheet {
         self.canvas
             .scene
             .layout_policies
+            .retain(|id, _| !removed.contains(id));
+        self.canvas
+            .scene
+            .tables
             .retain(|id, _| !removed.contains(id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
@@ -3195,6 +4188,15 @@ impl Sheet {
     /// Sets the unrotated frame; ink points are scaled with it.
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.tables.contains_key(&id) {
+            if !valid_rect(rect) {
+                return Err("object frame out of range".into());
+            }
+            return self.resize_canvas_table(id, rect);
+        }
+        if crate::scene_table::table_of_cell(&self.canvas, id).is_some() {
+            return Err("resize the table row or column instead".into());
+        }
         if self.canvas.scene.collapsed.contains_key(&id) {
             return Err("expand the container before resizing".into());
         }
@@ -3463,11 +4465,18 @@ impl Sheet {
                 };
             }
             ZOrder::Forward | ZOrder::Backward => {
-                for band in [Band::Below, Band::Above] {
+                let ranks = self.canvas.layer_ranks();
+                let keys: Vec<_> = (0..=self.canvas.layers.len())
+                    .flat_map(|rank| [(Band::Below, rank), (Band::Above, rank)])
+                    .collect();
+                let objects = &mut self.canvas.objects;
+                for (band, rank) in keys {
                     let slots: Vec<usize> = objects
                         .iter()
                         .enumerate()
-                        .filter(|(_, o)| o.band == band)
+                        .filter(|(_, o)| {
+                            o.band == band && crate::board_layers::rank_of(&ranks, o.layer) == rank
+                        })
                         .map(|(i, _)| i)
                         .collect();
                     let n = slots.len();
@@ -3494,6 +4503,7 @@ impl Sheet {
                 }
             }
         }
+        self.canvas.normalize_layer_order();
         Ok(())
     }
 
@@ -3518,6 +4528,7 @@ impl Sheet {
             Band::Below => rest.into_iter().chain(picked).collect(),
             Band::Above => picked.into_iter().chain(rest).collect(),
         };
+        self.canvas.normalize_layer_order();
         Ok(())
     }
 
@@ -3537,6 +4548,19 @@ impl Sheet {
             return Err("select at least two board members to group".into());
         }
         let expanded = self.expand_board_selection(members)?;
+        let layers: HashSet<_> = expanded
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => self.canvas.object(*id).map(|object| object.layer),
+                BoardMember::Card(_) => None,
+            })
+            .collect();
+        let has_card = expanded
+            .iter()
+            .any(|member| matches!(member, BoardMember::Card(_)));
+        if layers.len() > 1 || (has_card && layers.iter().any(Option::is_some)) {
+            return Err("objects on different layers cannot be grouped".into());
+        }
         self.require_board_members_unlocked(&expanded)?;
 
         let mut remaining: HashMap<CanvasGroupId, usize> = HashMap::new();

@@ -1039,10 +1039,17 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
         } else {
             let other = doc
                 .doc
-                .add_canvas_object(CanvasObject::shape(
-                    ShapeKind::Ellipse,
-                    BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
-                ))
+                .add_canvas_object(if case == "mixed" {
+                    CanvasObject::connector(thinoda_core::CanvasConnector::new(
+                        thinoda_core::Endpoint::Point(Vec2::new(300.0, 0.0)),
+                        thinoda_core::Endpoint::Point(Vec2::new(400.0, 0.0)),
+                    ))
+                } else {
+                    CanvasObject::shape(
+                        ShapeKind::Ellipse,
+                        BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+                    )
+                })
                 .unwrap();
             if case == "mixed" {
                 doc.view.board_selection.push(other);
@@ -1079,6 +1086,80 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
             assert!(control.accesskit_node().is_disabled(), "{case}: {label}");
         }
     }
+}
+
+#[test]
+fn shape_options_edit_every_selected_shape_with_one_undo() {
+    let (mut app, id) = app_with_shape();
+    let doc = app.doc_mut().unwrap();
+    let mut ellipse = CanvasObject::shape(
+        ShapeKind::Ellipse,
+        BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+    );
+    ellipse.style.fill = Some(Color::rgb(1, 2, 3));
+    let other = doc.doc.add_canvas_object(ellipse).unwrap();
+    doc.view.board_selection.push(other);
+    let original = object(&app, id).style.fill;
+    let context = app.shape_context().unwrap();
+    assert!(context.enabled);
+    assert!(context.properties.mixed_shape);
+    assert!(app.single_board_object().is_none());
+    let red = Some(Color::rgb(200, 10, 10));
+    let target = app
+        .apply_shape_change(&context.target, ShapeChange::Fill(red))
+        .unwrap();
+    let target = app
+        .apply_shape_change(&target, ShapeChange::Shape(ShapeKind::Rectangle))
+        .unwrap();
+    for id in [id, other] {
+        assert_eq!(object(&app, id).style.fill, red);
+        assert_eq!(shape_kind(&app, id), ShapeKind::Rectangle);
+    }
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(shape_kind(&app, other), ShapeKind::Ellipse);
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(object(&app, id).style.fill, original);
+    assert_eq!(object(&app, other).style.fill, Some(Color::rgb(1, 2, 3)));
+    assert!(
+        app.apply_shape_change(&target, ShapeChange::Fill(red))
+            .is_err()
+    );
+
+    let h = harness(app);
+    h.get_by_label("Shape options (2)");
+    for label in ["Change shape", "Fill color", "Outline color", "Text Color"] {
+        let control = h.get_by_role_and_label(Role::Button, label);
+        assert!(!control.accesskit_node().is_disabled(), "{label}");
+    }
+    let edit = h.get_by_role_and_label(Role::Button, "Edit label");
+    assert!(edit.accesskit_node().is_disabled());
+}
+
+#[test]
+fn a_locked_shape_in_a_multi_selection_disables_the_shape_options() {
+    let (mut app, id) = app_with_shape();
+    let doc = app.doc_mut().unwrap();
+    let other = doc
+        .doc
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+        ))
+        .unwrap();
+    doc.doc.set_canvas_objects_locked(&[other], true).unwrap();
+    doc.view.board_selection.push(other);
+    let context = app.shape_context().unwrap();
+    assert!(!context.enabled);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    assert!(
+        app.apply_shape_change(&context.target, ShapeChange::Fill(Some(Color::WHITE)))
+            .is_err()
+    );
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert_eq!(
+        object(&app, id).style.fill,
+        before.sheets[0].canvas.object(id).unwrap().style.fill
+    );
 }
 
 #[test]
@@ -1258,6 +1339,67 @@ fn shape_context_visual_previews() {
             h.render()
                 .expect("shape custom text color render")
                 .save(directory.join(format!("shape-custom-{theme}-{width}.png")))
+                .unwrap();
+        }
+    }
+}
+
+#[cfg(feature = "gpu-tests")]
+#[test]
+fn rich_shape_label_visual_previews() {
+    let Some(directory) = std::env::var_os("THINODA_SHAPE_VISUAL_DIR") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    for dark in [false, true] {
+        for (size, width) in [
+            (vec2(1200.0, 700.0), "wide"),
+            (vec2(320.0, 240.0), "compact"),
+        ] {
+            let (mut app, id) = app_with_shape();
+            app.settings.theme = if dark {
+                thinoda_platform::settings::ThemeMode::Dark
+            } else {
+                thinoda_platform::settings::ThemeMode::Light
+            };
+            let text = "Wide WWWW narrow iiii\nsecond line";
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range(text, 5..9, |style| style.bold = Some(true))
+                .unwrap();
+            rich.update_range(text, 17..21, |style| style.italic = Some(true))
+                .unwrap();
+            rich.paragraphs.push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Bulleted,
+            });
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .update_canvas_object("Rich label", id, |object| {
+                    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                        *label = text.into();
+                    }
+                    object.label_rich_text = Some(std::sync::Arc::new(rich));
+                })
+                .unwrap();
+            let mut h = Harness::builder()
+                .wgpu()
+                .with_size(size)
+                .with_step_dt(1.0 / 60.0)
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(6);
+            let theme = if dark { "dark" } else { "light" };
+            h.render()
+                .expect("rich shape render")
+                .save(directory.join(format!("rich-shape-{theme}-{width}.png")))
+                .unwrap();
+            let doc = h.state_mut().doc_mut().unwrap();
+            assert!(doc.view.begin_board_label(&doc.doc, id));
+            h.run_steps(6);
+            h.render()
+                .expect("rich label editor render")
+                .save(directory.join(format!("rich-editor-{theme}-{width}.png")))
                 .unwrap();
         }
     }

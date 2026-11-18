@@ -12,21 +12,25 @@
 //! command line tools and servers.
 
 pub mod board;
+pub mod board_layers;
 mod board_semantics;
 pub mod clipboard;
 pub mod custom_theme;
 pub mod document;
+pub mod drawio_passthrough;
 pub mod edit;
 pub mod equations;
 pub mod fim;
 pub mod geometry;
 pub mod images;
+pub mod label_style;
 pub mod layout;
 pub mod markers;
 pub mod model;
 pub mod navigation;
 pub mod notes;
 pub mod numbering;
+pub mod object_data;
 pub mod outline;
 pub mod presentation;
 pub mod quick_styles;
@@ -36,9 +40,11 @@ pub mod sankey;
 pub mod scene;
 pub mod scene_hierarchy;
 pub mod scene_layout;
+pub mod scene_table;
 pub mod schedule;
 pub mod search;
 pub mod semantic;
+pub mod shape_style;
 pub mod stencil;
 pub mod stencil_object;
 pub mod templates;
@@ -47,11 +53,13 @@ pub mod todo;
 
 pub use board::{
     Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
-    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-    ConnectorPort, ConnectorRoute, DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool,
+    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorLabel, ConnectorLabelPlacement,
+    ConnectorMarker, ConnectorMarkerKind, ConnectorPort, ConnectorRoute, DrawioRectangleStencil,
+    EdgeShape, EdgeShapeKind, Endpoint, GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps,
     ObjectStyle, RectangleSides, RootProjection, ShapeKind, ShapeRounding, ShapeRoundingMode,
     SheetRootMode, ZOrder,
 };
+pub use board_layers::{BoardLayer, BoardLayerId};
 pub use document::Document;
 pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
@@ -67,7 +75,7 @@ pub use model::{
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};
 pub use rich_text::{
-    InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
+    InlineBaseline, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
     MAX_INLINE_FONT_FAMILY_BYTES, MAX_INLINE_FONT_SIZE, MAX_INLINE_TEXT_CHARS,
     MAX_INLINE_TEXT_PARAGRAPHS, MAX_INLINE_TEXT_RUNS, MIN_INLINE_FONT_SIZE,
 };

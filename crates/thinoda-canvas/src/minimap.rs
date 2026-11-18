@@ -945,6 +945,7 @@ mod tests {
                 rotation: 0.0,
             },
             stencil_render: None,
+            outside_label: None,
         }
     }
 

@@ -6,8 +6,11 @@ use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
     board::{
-        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
-        MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
+        BoardMember, CanvasConnector, ConnectorLabel, ConnectorLabelPlacement,
+        DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, EdgeShape, EdgeShapeKind,
+        LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
+        MAX_CONNECTOR_LABEL_OFFSET, MAX_CONNECTOR_LABELS, MAX_CONNECTOR_MARKER_SIZE,
+        MAX_EDGE_SHAPE_WIDTH, MAX_LINE_JUMP_SIZE, MIN_CARD_SIZE,
     },
     scene_layout::{
         ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
@@ -99,8 +102,19 @@ struct ConnectorOwner {
     instance: u64,
     sheet: usize,
     root: TopicId,
+    /// Primary selected object; its values seed the contextual controls.
     object: CanvasObjectId,
+    /// Further selected objects of the same kind that every change also edits.
+    others: Vec<CanvasObjectId>,
     tool: BoardTool,
+}
+
+impl ConnectorOwner {
+    fn objects(&self) -> Vec<CanvasObjectId> {
+        std::iter::once(self.object)
+            .chain(self.others.iter().copied())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -449,6 +463,8 @@ fn semantic_text_field(
 struct ConnectorProperties {
     semantic: bool,
     route: ConnectorRoute,
+    /// The selected connectors use different routes, so every route choice applies.
+    mixed_route: bool,
     arrow_start: bool,
     arrow_end: bool,
     color: Option<Color>,
@@ -472,6 +488,8 @@ struct ConnectorPopups {
 #[derive(Clone, Copy)]
 struct ShapeProperties {
     shape: ShapeKind,
+    /// The selected shapes have different kinds, so every shape choice applies.
+    mixed_shape: bool,
     fill: Option<Color>,
     stroke: Option<Color>,
     /// Outline drawn when no explicit stroke is set and the shape has no fill.
@@ -534,8 +552,8 @@ impl ShapeChange {
         }
     }
 
-    fn apply(self, object: &mut CanvasObject, auto_stroke: Color) {
-        match self {
+    fn apply(&self, object: &mut CanvasObject, auto_stroke: Color) {
+        match *self {
             Self::Shape(kind) => {
                 if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
                     if *shape != kind || object.stencil.is_some() {
@@ -652,8 +670,8 @@ impl ConnectorChange {
         }
     }
 
-    fn apply(self, connector: &mut thinoda_core::CanvasConnector) {
-        match self {
+    fn apply(&self, connector: &mut thinoda_core::CanvasConnector) {
+        match *self {
             Self::Route(route) => connector.route = route,
             Self::ArrowStart(enabled) => connector.set_arrow_start(enabled),
             Self::ArrowEnd(enabled) => connector.set_arrow_end(enabled),
@@ -672,9 +690,12 @@ fn ink_popup_slot(viewport: egui::ViewportId) -> egui::Id {
     egui::Id::unique(("board_ink_popups", viewport))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum BoardStyleClipboard {
-    Shape(ObjectStyle),
+    Shape(
+        ObjectStyle,
+        Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
+    ),
     Connector {
         style: ObjectStyle,
         color: Option<Color>,
@@ -688,6 +709,8 @@ pub(crate) enum BoardStyleClipboard {
         end_marker_size: Option<f32>,
         start_marker_unfilled: bool,
         end_marker_unfilled: bool,
+        line_jumps: Option<LineJumps>,
+        edge_shape: Option<EdgeShape>,
     },
     Ink {
         style: ObjectStyle,
@@ -700,7 +723,7 @@ pub(crate) enum BoardStyleClipboard {
 impl BoardStyleClipboard {
     pub(crate) fn from_object(object: &CanvasObject) -> Self {
         match &object.kind {
-            CanvasObjectKind::Shape { .. } => Self::Shape(object.style),
+            CanvasObjectKind::Shape { .. } => Self::Shape(object.style, object.label_style.clone()),
             CanvasObjectKind::Connector(connector) => Self::Connector {
                 style: object.style,
                 color: connector.color,
@@ -714,6 +737,8 @@ impl BoardStyleClipboard {
                 end_marker_size: connector.end_marker_size,
                 start_marker_unfilled: connector.start_marker_unfilled,
                 end_marker_unfilled: connector.end_marker_unfilled,
+                line_jumps: connector.line_jumps,
+                edge_shape: connector.edge_shape,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -724,18 +749,21 @@ impl BoardStyleClipboard {
         }
     }
 
-    pub(crate) fn matches(self, object: &CanvasObject) -> bool {
+    pub(crate) fn matches(&self, object: &CanvasObject) -> bool {
         matches!(
             (self, &object.kind),
-            (Self::Shape(_), CanvasObjectKind::Shape { .. })
+            (Self::Shape(..), CanvasObjectKind::Shape { .. })
                 | (Self::Connector { .. }, CanvasObjectKind::Connector(_))
                 | (Self::Ink { .. }, CanvasObjectKind::Ink(_))
         )
     }
 
-    pub(crate) fn apply(self, object: &mut CanvasObject) {
-        match (self, &mut object.kind) {
-            (Self::Shape(style), CanvasObjectKind::Shape { .. }) => object.style = style,
+    pub(crate) fn apply(&self, object: &mut CanvasObject) {
+        match (self.clone(), &mut object.kind) {
+            (Self::Shape(style, label_style), CanvasObjectKind::Shape { .. }) => {
+                object.style = style;
+                object.label_style = label_style;
+            }
             (
                 Self::Connector {
                     style,
@@ -750,6 +778,8 @@ impl BoardStyleClipboard {
                     end_marker_size,
                     start_marker_unfilled,
                     end_marker_unfilled,
+                    line_jumps,
+                    edge_shape,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -765,6 +795,8 @@ impl BoardStyleClipboard {
                 connector.end_marker_size = end_marker_size;
                 connector.start_marker_unfilled = start_marker_unfilled;
                 connector.end_marker_unfilled = end_marker_unfilled;
+                connector.line_jumps = line_jumps;
+                connector.edge_shape = edge_shape;
             }
             (
                 Self::Ink {
@@ -892,6 +924,26 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.label_edit_armed_hint =
         t("Clicking or tapping empty canvas also adds the armed shape.").into();
     labels.label_placeholder = t("Type a label").into();
+    labels.label_formatting = t("Label formatting (F6)").into();
+    labels.label_bold = t("Bold").into();
+    labels.label_italic = t("Italic").into();
+    labels.label_underline = t("Underline").into();
+    labels.label_strikethrough = t("Strikethrough").into();
+    labels.label_subscript = t("Subscript").into();
+    labels.label_superscript = t("Superscript").into();
+    labels.label_bulleted_list = t("Bulleted list").into();
+    labels.label_numbered_list = t("Numbered list").into();
+    labels.label_font_size = t("Font Size").into();
+    labels.label_font_family = t("Font Family").into();
+    labels.label_text_color = t("Text Color").into();
+    labels.label_default = t("Default").into();
+    labels.label_search = t("Search").into();
+    labels.label_monospace = t("Monospace").into();
+    labels.label_value = t("Value").into();
+    labels.label_apply = t("Apply").into();
+    labels.label_custom_color = t("Custom color").into();
+    labels.label_invalid_color = t("Invalid color").into();
+    labels.label_invalid_size = t("Invalid font size").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
     )
@@ -905,12 +957,18 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
 impl ThinodaApp {
     /// The one selected board object a contextual toolbar may edit, and whether editing is allowed.
     fn single_board_object(&self) -> Option<(ConnectorTarget, bool)> {
+        self.selected_board_objects()
+            .filter(|(target, _)| target.owner.others.is_empty())
+    }
+
+    /// The selected board objects of one kind that the attribute ribbon edits together.
+    fn selected_board_objects(&self) -> Option<(ConnectorTarget, bool)> {
         let doc = self.doc()?;
         let view = &doc.view;
         if !matches!(
             view.board_tool,
             BoardTool::Select | BoardTool::Connector | BoardTool::Shape(_)
-        ) || view.board_selection.len() != 1
+        ) || view.board_selection.is_empty()
             || !view.selection.is_empty()
             || view.selected_object.is_some()
             || view.relationship_from.is_some()
@@ -922,8 +980,20 @@ impl ThinodaApp {
         let sheet = doc.doc.sheet();
         let id = view.board_selection[0];
         let object = sheet.canvas.object(id)?;
-        let enabled = !object.locked
-            && object.group.is_none()
+        let kind = std::mem::discriminant(&object.kind);
+        let mut others = Vec::new();
+        let mut editable = !object.locked && object.group.is_none();
+        for &other in &view.board_selection[1..] {
+            let candidate = sheet.canvas.object(other)?;
+            if std::mem::discriminant(&candidate.kind) != kind {
+                return None;
+            }
+            if other != id && !others.contains(&other) {
+                editable &= !candidate.locked && candidate.group.is_none();
+                others.push(other);
+            }
+        }
+        let enabled = editable
             && !view.has_active_canvas_gesture()
             && !doc.has_inspector_changes()
             && doc.fim_edit.is_none()
@@ -945,6 +1015,7 @@ impl ThinodaApp {
                     sheet: doc.doc.active_index(),
                     root: sheet.root,
                     object: id,
+                    others,
                     tool: view.board_tool,
                 },
                 revision: doc.doc.state_id(),
@@ -954,13 +1025,23 @@ impl ThinodaApp {
     }
 
     fn connector_context(&self) -> Option<ConnectorContext> {
-        let (target, enabled) = self.single_board_object()?;
+        let (target, enabled) = self.selected_board_objects()?;
         let doc = self.doc()?;
         let view = &doc.view;
-        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let canvas = &doc.doc.sheet().canvas;
+        let object = canvas.object(target.owner.object)?;
         let CanvasObjectKind::Connector(connector) = &object.kind else {
             return None;
         };
+        let connectors = target
+            .owner
+            .objects()
+            .into_iter()
+            .filter_map(|id| match &canvas.object(id)?.kind {
+                CanvasObjectKind::Connector(connector) => Some(connector),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let default_color = thinoda_canvas::automatic_board_stroke(view.accent, view.dark);
         let effective_color = connector
             .color
@@ -970,14 +1051,16 @@ impl ThinodaApp {
             target,
             enabled,
             properties: ConnectorProperties {
-                semantic: connector.sankey.is_some(),
+                semantic: connectors.iter().any(|c| c.sankey.is_some()),
                 route: connector.route,
-                arrow_start: connector.arrow_start,
-                arrow_end: connector.arrow_end,
+                mixed_route: connectors.iter().any(|c| c.route != connector.route),
+                // Arrow toggles read as on only when every selected connector shows that arrow.
+                arrow_start: connectors.iter().all(|c| c.arrow_start),
+                arrow_end: connectors.iter().all(|c| c.arrow_end),
                 color: connector.color,
                 effective_color,
                 width: connector.width,
-                has_waypoints: !connector.waypoints.is_empty(),
+                has_waypoints: connectors.iter().any(|c| !c.waypoints.is_empty()),
             },
         })
     }
@@ -993,13 +1076,19 @@ impl ThinodaApp {
     }
 
     fn shape_context(&self) -> Option<ShapeContext> {
-        let (target, enabled) = self.single_board_object()?;
+        let (target, enabled) = self.selected_board_objects()?;
         let doc = self.doc()?;
         let view = &doc.view;
-        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let canvas = &doc.doc.sheet().canvas;
+        let object = canvas.object(target.owner.object)?;
         let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
             return None;
         };
+        let mixed_shape = target.owner.others.iter().any(|&id| {
+            canvas.object(id).is_some_and(|other| {
+                !matches!(&other.kind, CanvasObjectKind::Shape { shape: kind, .. } if kind == shape)
+            })
+        });
         let mut auto_style = object.style;
         auto_style.text_color = None;
         let auto_text_color = crate::ui::to_color(
@@ -1010,6 +1099,7 @@ impl ThinodaApp {
             enabled,
             properties: ShapeProperties {
                 shape: *shape,
+                mixed_shape,
                 fill: object.style.fill,
                 stroke: object.style.stroke,
                 auto_stroke: crate::ui::to_color(thinoda_canvas::automatic_board_stroke(
@@ -1040,7 +1130,7 @@ impl ThinodaApp {
             .doc_mut()
             .ok_or_else(|| t("Not possible here").to_owned())?;
         doc.doc
-            .update_canvas_object(label, target.owner.object, |object| {
+            .update_canvas_objects(label, &target.owner.objects(), |object| {
                 change.apply(object, auto_stroke);
             })
             .map_err(|error| error.to_string())?;
@@ -1084,7 +1174,7 @@ impl ThinodaApp {
             .doc_mut()
             .ok_or_else(|| t("Not possible here").to_owned())?;
         doc.doc
-            .update_canvas_object(label, target.owner.object, |object| {
+            .update_canvas_objects(label, &target.owner.objects(), |object| {
                 let CanvasObjectKind::Connector(connector) = &mut object.kind else {
                     unreachable!("connector ownership was checked before the edit")
                 };
@@ -1120,12 +1210,14 @@ impl ThinodaApp {
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
+        let show_layers = doc.show_layers;
         let collapsed_id = egui::Id::unique(("board_toolbar_collapsed", &doc.key));
         let mut collapsed = ctx
             .data(|data| data.get_temp::<bool>(collapsed_id))
             .unwrap_or(true);
         let mut command = None;
         let mut insert_shape = None;
+        let mut insert_table = None;
         let content_width = (canvas.width() - 36.0).max(0.0);
         let toolbar_width = if collapsed {
             content_width.min(34.0)
@@ -1227,6 +1319,21 @@ impl ThinodaApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             },
                         );
+                        board_tool_popup(
+                            ui,
+                            CommandIcon::from(icons::ZONES).with_tone(ribbon::IconTone::Create),
+                            "Insert table",
+                            collapsed,
+                            false,
+                            row_height,
+                            |ui| {
+                                if let Some(size) = crate::board_table_ui::insert_table_controls(ui)
+                                {
+                                    insert_table = Some(size);
+                                    ui.close_kind(egui::UiKind::Menu);
+                                }
+                            },
+                        );
                         for (value, label) in [
                             (BoardTool::Connector, "Connector tool"),
                             (BoardTool::Frame, "Frame tool"),
@@ -1274,6 +1381,18 @@ impl ThinodaApp {
                         {
                             command = Some(Cmd::BoardMinimap);
                         }
+                        if board_tool_button(
+                            ui,
+                            icons::STACK.into(),
+                            "Layers",
+                            show_layers,
+                            collapsed,
+                            row_height,
+                        )
+                        .1
+                        {
+                            command = Some(Cmd::BoardLayers);
+                        }
                         crate::ui::reveal_changed_focus(ui);
                     });
                 });
@@ -1284,6 +1403,9 @@ impl ThinodaApp {
         }
         if let Some(shape) = insert_shape {
             self.insert_board_shape(ctx, shape);
+        }
+        if let Some((rows, columns)) = insert_table {
+            self.insert_board_table(ctx, rows, columns);
         }
         Some(toolbar.response.rect)
     }
@@ -1301,6 +1423,7 @@ impl ThinodaApp {
         };
         let target = context.target().clone();
         let enabled = context.enabled();
+        let selected = 1 + target.owner.others.len();
         let (area_id, scroll_id, heading) = match &context {
             BoardObjectContext::Connector(_) => (
                 "thinoda_connector_options",
@@ -1357,7 +1480,12 @@ impl ThinodaApp {
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.horizontal_centered(|ui| {
-                                        ui.label(egui::RichText::new(t(heading)).small());
+                                        let heading = if selected > 1 {
+                                            format!("{} ({selected})", t(heading))
+                                        } else {
+                                            t(heading).to_owned()
+                                        };
+                                        ui.label(egui::RichText::new(heading).small());
                                         ui.add_enabled_ui(enabled, |ui| match &context {
                                             BoardObjectContext::Connector(connector) => {
                                                 (connector_change, popups) =
@@ -1375,7 +1503,7 @@ impl ThinodaApp {
                                             ui,
                                             true,
                                             34.0,
-                                            enabled,
+                                            enabled && selected == 1,
                                             format_panel_open,
                                         );
                                     });
@@ -1968,7 +2096,10 @@ impl ThinodaApp {
         let (target, enabled) = self.single_board_object()?;
         let sheet = self.doc()?.doc.sheet();
         let id = target.owner.object;
-        if !sheet.canvas.scene.containers.contains(&id) {
+        // Tables and their cells are arranged by the table section instead.
+        if !sheet.canvas.scene.containers.contains(&id)
+            || thinoda_core::scene_table::selected_table(&sheet.canvas, id).is_some()
+        {
             return None;
         }
         Some(ContainerContext {
@@ -3405,15 +3536,22 @@ impl ThinodaApp {
     }
 
     pub(crate) fn board_object_properties(&mut self, ui: &mut Ui) -> bool {
+        let table = self.board_table_properties(ui);
         if self.board_container_properties(ui) {
             return true;
         }
-        let Some(doc) = self.doc() else { return false };
+        let Some(doc) = self.doc() else { return table };
         if doc.view.board_selection.is_empty() {
-            return false;
+            return table;
         }
         if doc.view.board_selection.len() != 1 || !doc.view.selection.is_empty() {
-            widgets::caption(ui, t("Select one board object to edit its properties."));
+            let shapes = self.board_shape_style_properties(ui);
+            if shapes {
+                self.board_label_style_properties(ui);
+            }
+            if !shapes && !table {
+                widgets::caption(ui, t("Select one board object to edit its properties."));
+            }
             return true;
         }
         let id = doc.view.board_selection[0];
@@ -3437,6 +3575,20 @@ impl ThinodaApp {
         let gesture_active = doc.view.has_active_canvas_gesture();
         let mut edited = original.clone();
         let mut clear_waypoints = false;
+        let mut open_link = None;
+        let mut label_error = None;
+        let mut edit_extra_label = None;
+        let mut removed_extra_label = None;
+        let page_titles: Vec<(String, String)> = doc
+            .doc
+            .workbook()
+            .sheets
+            .iter()
+            .filter_map(|sheet| {
+                let page = sheet.drawio.as_ref()?.diagram_id.clone()?;
+                Some((page, sheet.title.clone()))
+            })
+            .collect();
         ui.label(
             egui::RichText::new(t(match &original.kind {
                 CanvasObjectKind::Shape { shape, .. } => shape_name(*shape),
@@ -3620,11 +3772,7 @@ impl ThinodaApp {
                         egui::ComboBox::from_id_salt(("board_connector_route", id))
                             .selected_text(t(route_name(connector.route)))
                             .show_ui(ui, |ui| {
-                                for route in [
-                                    ConnectorRoute::Straight,
-                                    ConnectorRoute::Elbow,
-                                    ConnectorRoute::Curve,
-                                ] {
+                                for route in ConnectorRoute::ALL {
                                     ui.selectable_value(
                                         &mut connector.route,
                                         route,
@@ -3634,6 +3782,15 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    if connector.route == ConnectorRoute::EntityRelation
+                        && !connector.waypoints.is_empty()
+                    {
+                        widgets::caption(ui, t("Entity relation routes ignore waypoints; they are kept for other routes."));
+                    } else if connector.route.uses_waypoint_hint() && connector.waypoints.len() > 1 {
+                        widgets::caption(ui, t("This route uses only the first waypoint as its routing hint; later waypoints are kept but ignored."));
+                    }
+                    line_jump_fields(ui, id, connector.route, &mut connector.line_jumps);
+                    edge_shape_fields(ui, id, connector.line_jumps.is_some(), &mut connector.edge_shape);
                     clear_waypoints = ui
                         .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
                             ui.add_enabled(
@@ -3698,6 +3855,8 @@ impl ThinodaApp {
                     });
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     if connector.sankey.is_none() {width_field(ui, &mut connector.width);}
+                    (label_error, edit_extra_label, removed_extra_label) =
+                        connector_label_fields(ui, id, connector);
                 }
                 CanvasObjectKind::Ink(ink) => {
                     color_field(ui, "Stroke", &mut ink.color);
@@ -3791,13 +3950,82 @@ impl ThinodaApp {
                     }
                 }
             }
+            if !matches!(edited.kind, CanvasObjectKind::Ink(_)) {
+                open_link = object_data_fields(ui, id, &mut edited, &page_titles);
+            }
         });
+        if let Some(link) = open_link {
+            self.open_link(&link);
+        }
+        if let Some(error) = label_error {
+            self.toasts.error(error);
+        }
+        let labels_changed = matches!(
+            (&original.kind, &edited.kind),
+            (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after))
+                if before.extra_labels != after.extra_labels
+        );
+        let mut properties_applied = true;
         if edited != original || clear_waypoints {
             let result = (|| {
                 let doc = self
                     .doc_mut()
                     .ok_or_else(|| t("Not possible here").to_owned())?;
+                let mut merge_extra_label = None;
+                if labels_changed
+                    && doc.view.has_board_label_changes()
+                    && let Some(target) = doc.view.editing_board_label_target()
+                    && target.object == id
+                    && let Some(index) = target.extra_label
+                    && removed_extra_label != Some(index)
+                {
+                    let new_index = index
+                        - usize::from(removed_extra_label.is_some_and(|removed| removed < index));
+                    let (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after)) =
+                        (&original.kind, &edited.kind)
+                    else {
+                        return Err(t("Not possible here").to_owned());
+                    };
+                    let before = before
+                        .extra_labels
+                        .get(index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    let after = after
+                        .extra_labels
+                        .get(new_index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    if before.text != after.text || before.rich_text != after.rich_text {
+                        return Err(t(
+                            "Finish editing the connector label before changing its text.",
+                        )
+                        .to_owned());
+                    }
+                    merge_extra_label = Some((index, new_index));
+                }
                 doc.commit_canvas_drafts()?;
+                if let Some((old_index, new_index)) = merge_extra_label {
+                    let committed = doc
+                        .doc
+                        .sheet()
+                        .canvas
+                        .object(id)
+                        .and_then(|object| match &object.kind {
+                            CanvasObjectKind::Connector(connector) => {
+                                connector.extra_labels.get(old_index)
+                            }
+                            _ => None,
+                        })
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    let CanvasObjectKind::Connector(connector) = &mut edited.kind else {
+                        return Err(t("Not possible here").to_owned());
+                    };
+                    let label = connector
+                        .extra_labels
+                        .get_mut(new_index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    label.text.clone_from(&committed.text);
+                    label.rich_text.clone_from(&committed.rich_text);
+                }
                 doc.doc
                     .update_canvas_object("Board properties", id, |current| {
                         current.alt_text = edited.alt_text;
@@ -3806,6 +4034,7 @@ impl ThinodaApp {
                         current.rectangle_sides = edited.rectangle_sides;
                         current.double_ellipse_margin = edited.double_ellipse_margin;
                         current.stencil = edited.stencil;
+                        current.data = edited.data;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -3824,6 +4053,12 @@ impl ThinodaApp {
                                 current.end_marker_size = value.end_marker_size;
                                 current.start_marker_unfilled = value.start_marker_unfilled;
                                 current.end_marker_unfilled = value.end_marker_unfilled;
+                                current.line_jumps = value.line_jumps;
+                                current.edge_shape = value.edge_shape;
+                                current.label_placement = value.label_placement;
+                                if labels_changed {
+                                    current.extra_labels = value.extra_labels;
+                                }
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -3840,8 +4075,28 @@ impl ThinodaApp {
                     .map_err(|error| error.to_string())
             })();
             if let Err(error) = result {
+                properties_applied = false;
                 self.toasts.error(error);
             }
+        }
+        if properties_applied && let Some(index) = edit_extra_label {
+            let result = (|| {
+                let doc = self
+                    .doc_mut()
+                    .ok_or_else(|| t("Not possible here").to_owned())?;
+                doc.commit_canvas_drafts()?;
+                if doc.view.begin_board_extra_label(&doc.doc, id, index) {
+                    Ok(())
+                } else {
+                    Err(t("Not possible here").to_owned())
+                }
+            })();
+            if let Err(error) = result {
+                self.toasts.error(error);
+            }
+        }
+        if self.board_shape_style_properties(ui) {
+            self.board_label_style_properties(ui);
         }
         self.board_structure_properties(ui);
         true
@@ -4012,13 +4267,9 @@ fn connector_context_controls(
                 .max_height(max_height)
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        for route in [
-                            ConnectorRoute::Straight,
-                            ConnectorRoute::Elbow,
-                            ConnectorRoute::Curve,
-                        ] {
+                        for route in ConnectorRoute::ALL {
                             if connector_route_tile(ui, route, properties.route)
-                                && route != properties.route
+                                && (properties.mixed_route || route != properties.route)
                             {
                                 change = Some(ConnectorChange::Route(route));
                             }
@@ -4112,7 +4363,7 @@ fn shape_context_controls(
         row_height,
         |ui| {
             if let Some(shape) = shape_library(ui, canvas, Some(properties.shape), t)
-                && shape != properties.shape
+                && (properties.mixed_shape || shape != properties.shape)
             {
                 change = Some(ShapeChange::Shape(shape));
             }
@@ -4418,6 +4669,12 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
         let rect = response.rect.shrink(8.0);
         let start = egui::pos2(rect.left(), rect.bottom());
         let end = egui::pos2(rect.right(), rect.top());
+        let center = rect.center();
+        // draw.io edge styles show their two terminals, and the movable
+        // routing hint where the style honours one.
+        let terminal = |center: egui::Pos2| egui::Rect::from_center_size(center, vec2(8.0, 6.0));
+        let mut terminals: Vec<egui::Rect> = Vec::new();
+        let mut hint = None;
         let points = match route {
             ConnectorRoute::Straight => vec![start, end],
             ConnectorRoute::Elbow => vec![
@@ -4434,6 +4691,77 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
                     egui::pos2(x, egui::lerp(start.y..=end.y, smooth))
                 })
                 .collect(),
+            ConnectorRoute::ElbowHorizontal | ConnectorRoute::SideToSide => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.top() + 3.0));
+                terminals.extend([a, b]);
+                if route == ConnectorRoute::ElbowHorizontal {
+                    hint = Some(center);
+                }
+                vec![
+                    a.right_center(),
+                    egui::pos2(center.x, a.center().y),
+                    egui::pos2(center.x, b.center().y),
+                    b.left_center(),
+                ]
+            }
+            ConnectorRoute::ElbowVertical | ConnectorRoute::TopToBottom => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.top() + 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.bottom() - 3.0));
+                terminals.extend([a, b]);
+                if route == ConnectorRoute::ElbowVertical {
+                    hint = Some(center);
+                }
+                vec![
+                    a.center_bottom(),
+                    egui::pos2(a.center().x, center.y),
+                    egui::pos2(b.center().x, center.y),
+                    b.center_top(),
+                ]
+            }
+            ConnectorRoute::EntityRelation => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.top() + 3.0));
+                let b = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                terminals.extend([a, b]);
+                let x = rect.right() - 6.0;
+                vec![
+                    a.right_center(),
+                    egui::pos2(x, a.center().y),
+                    egui::pos2(x, b.center().y),
+                    b.right_center(),
+                ]
+            }
+            ConnectorRoute::Segment => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.top() + 3.0));
+                terminals.extend([a, b]);
+                let (x1, x2) = (center.x - 5.0, center.x + 5.0);
+                hint = Some(egui::pos2(x1, center.y));
+                vec![
+                    a.right_center(),
+                    egui::pos2(x1, a.center().y),
+                    egui::pos2(x1, center.y),
+                    egui::pos2(x2, center.y),
+                    egui::pos2(x2, b.center().y),
+                    b.left_center(),
+                ]
+            }
+            ConnectorRoute::IsometricHorizontal | ConnectorRoute::IsometricVertical => {
+                // Spans along the 30° isometric axes, the first one longer.
+                let slope = 30f32.to_radians().tan();
+                let span = rect.width() - 6.0;
+                let rise = |dx: f32| dx * slope;
+                let (first_dx, start_x) = if route == ConnectorRoute::IsometricHorizontal {
+                    (span, rect.left())
+                } else {
+                    (-span, rect.right())
+                };
+                let start = egui::pos2(start_x, rect.bottom());
+                let bend = start + vec2(first_dx, -rise(span));
+                let end = bend + vec2(-first_dx.signum() * 6.0, -rise(6.0));
+                hint = Some(bend);
+                vec![start, bend, end]
+            }
         };
         let palette = thinoda_ui::Palette::of_ui(ui);
         let color = if !ui.is_enabled() {
@@ -4443,8 +4771,19 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
         } else {
             palette.text
         };
+        for terminal in terminals {
+            ui.painter().rect_stroke(
+                terminal,
+                1.0,
+                egui::Stroke::new(1.0, color),
+                egui::StrokeKind::Inside,
+            );
+        }
         ui.painter()
             .add(egui::Shape::line(points, egui::Stroke::new(2.0, color)));
+        if let Some(hint) = hint {
+            ui.painter().circle_filled(hint, 2.5, color);
+        }
     }
     let keyboard = ui.is_enabled()
         && response.has_focus()
@@ -4829,6 +5168,14 @@ fn route_name(route: ConnectorRoute) -> &'static str {
         ConnectorRoute::Straight => "Straight",
         ConnectorRoute::Elbow => "Elbow",
         ConnectorRoute::Curve => "Curve",
+        ConnectorRoute::ElbowHorizontal => "Horizontal elbow",
+        ConnectorRoute::ElbowVertical => "Vertical elbow",
+        ConnectorRoute::SideToSide => "Side to side",
+        ConnectorRoute::TopToBottom => "Top to bottom",
+        ConnectorRoute::EntityRelation => "Entity relation",
+        ConnectorRoute::Segment => "Segmented",
+        ConnectorRoute::IsometricHorizontal => "Horizontal isometric",
+        ConnectorRoute::IsometricVertical => "Vertical isometric",
     }
 }
 
@@ -4855,6 +5202,24 @@ fn marker_field(
         Some(ConnectorMarkerKind::HalfCircle) => "Half circle",
         Some(ConnectorMarkerKind::BaseDash) => "Bar",
         Some(ConnectorMarkerKind::Dash) => "Diagonal bar",
+        Some(ConnectorMarkerKind::ErOne) => "ER one",
+        Some(ConnectorMarkerKind::ErMandOne) => "ER mandatory one",
+        Some(ConnectorMarkerKind::ErMany) => "ER many",
+        Some(ConnectorMarkerKind::ErOneToMany) => "ER one to many",
+        Some(ConnectorMarkerKind::ErZeroToOne) => "ER zero to one",
+        Some(ConnectorMarkerKind::ErZeroToMany) => "ER zero to many",
+        Some(ConnectorMarkerKind::ManyOptional) => "ER many optional",
+        Some(ConnectorMarkerKind::Box) => "Box",
+        Some(ConnectorMarkerKind::Cross) => "Cross",
+        Some(ConnectorMarkerKind::Circle) => "Circle",
+        Some(ConnectorMarkerKind::CirclePlus) => "Circle plus",
+        Some(ConnectorMarkerKind::Async) => "Async arrow",
+        Some(ConnectorMarkerKind::OpenAsync) => "Open async arrow",
+        Some(ConnectorMarkerKind::DoubleBlock) => "Double block arrow",
+        Some(ConnectorMarkerKind::SysmlX) => "SysML X",
+        Some(ConnectorMarkerKind::SysmlLost) => "SysML lost",
+        Some(ConnectorMarkerKind::SysmlFound) => "SysML found",
+        Some(ConnectorMarkerKind::SysmlPackCont) => "SysML package containment",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -4899,6 +5264,60 @@ fn marker_field(
                         Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::Dash,
                         }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErMandOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErOneToMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErZeroToOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErZeroToMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ManyOptional,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Box,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Cross,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Circle,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::CirclePlus,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Async,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::OpenAsync,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::DoubleBlock,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlX,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlLost,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlFound,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlPackCont,
+                        }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
                     }
@@ -4909,6 +5328,368 @@ fn marker_field(
     if marker.is_none() {
         *size = None;
         *unfilled = false;
+    }
+}
+
+fn edge_shape_name(kind: Option<EdgeShapeKind>) -> &'static str {
+    match kind {
+        None => "Plain line",
+        Some(EdgeShapeKind::FlexArrow) => "Flexible arrow",
+        Some(EdgeShapeKind::TaperedArrow) => "Tapered arrow",
+        Some(EdgeShapeKind::Link) => "Double line",
+        Some(EdgeShapeKind::Pipe) => "Pipe",
+        Some(EdgeShapeKind::FilledEdge) => "Filled line",
+        Some(EdgeShapeKind::Wire) => "Wire",
+    }
+}
+
+fn edge_shape_width_field(ui: &mut Ui, label: &'static str, value: &mut Option<f32>, default: f32) {
+    let mut width = value.unwrap_or(default);
+    let changed = widgets::property_field(ui, t(label), |ui| {
+        ui.add(
+            egui::DragValue::new(&mut width)
+                .range(0.0..=MAX_EDGE_SHAPE_WIDTH)
+                .speed(0.5),
+        )
+    })
+    .changed();
+    if changed {
+        *value = (width != default).then_some(width);
+    }
+}
+
+fn edge_shape_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    line_jumps: bool,
+    shape: &mut Option<EdgeShape>,
+) {
+    let mut kind = shape.map(|shape| shape.kind);
+    widgets::property_field(ui, t("Line shape"), |ui| {
+        egui::ComboBox::from_id_salt(("board_connector_edge_shape", id))
+            .selected_text(t(edge_shape_name(kind)))
+            .show_ui(ui, |ui| {
+                for option in std::iter::once(None).chain(EdgeShapeKind::ALL.map(Some)) {
+                    ui.selectable_value(&mut kind, option, t(edge_shape_name(option)));
+                }
+            })
+            .response
+    });
+    *shape = kind.map(|kind| shape.map_or(EdgeShape::new(kind), |shape| shape.with_kind(kind)));
+    let Some(shape) = shape else { return };
+    if shape.kind.has_width() {
+        edge_shape_width_field(
+            ui,
+            "Line shape width",
+            &mut shape.width,
+            shape.kind.default_width(),
+        );
+    }
+    if shape.kind.has_end_widths() {
+        edge_shape_width_field(
+            ui,
+            "Start width",
+            &mut shape.start_width,
+            shape.kind.default_end_width(true),
+        );
+        edge_shape_width_field(
+            ui,
+            "End width",
+            &mut shape.end_width,
+            shape.kind.default_end_width(false),
+        );
+    }
+    if shape.kind.has_fill() {
+        optional_color(ui, "Line shape fill", &mut shape.fill, Color::WHITE);
+    }
+    if line_jumps && !shape.kind.supports_line_jumps() {
+        widgets::caption(
+            ui,
+            t("This line shape keeps line jumps but does not draw them."),
+        );
+    }
+}
+
+/// The object's draw.io data: link, tags, custom properties and placeholders.
+/// Returns a link the user asked to open or a page link to follow;
+/// `pages` pairs draw.io page ids with sheet titles.
+fn object_data_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    object: &mut CanvasObject,
+    pages: &[(String, String)],
+) -> Option<String> {
+    use thinoda_core::object_data::{ObjectData, page_link_target, valid_property_name};
+    let mut open = None;
+    let original = object.data.as_deref().cloned().unwrap_or_default();
+    let mut data = original.clone();
+    let mut error = None;
+    egui::CollapsingHeader::new(t("Data"))
+        .id_salt(("board_object_data", id))
+        .default_open(!data.is_empty())
+        .show(ui, |ui| {
+            let mut link = data.link.clone().unwrap_or_default();
+            widgets::property_field(ui, t("Link"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut link).hint_text("https://"))
+            });
+            data.link = (!link.trim().is_empty()).then_some(link);
+            if let Some(link) = &data.link {
+                if let Some(page) = page_link_target(link) {
+                    let title = pages
+                        .iter()
+                        .find(|(id, _)| id == page)
+                        .map(|(_, title)| title.as_str());
+                    widgets::caption(ui, format!("{}: {}", t("Page link"), title.unwrap_or(page)));
+                    if ui
+                        .add_enabled(title.is_some(), egui::Button::new(t("Go to page")))
+                        .clicked()
+                    {
+                        open = Some(link.clone());
+                    }
+                } else if ui
+                    .add_enabled(
+                        thinoda_platform::system::is_openable_url(link),
+                        egui::Button::new(t("Open Link")),
+                    )
+                    .clicked()
+                {
+                    open = Some(link.clone());
+                }
+            }
+            let tags_id = egui::Id::unique(("board_object_tags", id));
+            let mut tags = ui
+                .data_mut(|memory| memory.get_temp::<String>(tags_id))
+                .unwrap_or_else(|| data.tags_text());
+            let response = widgets::property_field(ui, t("Tags"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut tags))
+            });
+            if response.changed() {
+                data.tags = ObjectData::parse_tags(&tags);
+            }
+            let focused = response.has_focus();
+            ui.data_mut(|memory| {
+                if focused {
+                    memory.insert_temp(tags_id, tags);
+                } else {
+                    memory.remove::<String>(tags_id);
+                }
+            });
+            ui.checkbox(&mut data.placeholders, t("Replace placeholders"))
+                .on_hover_text(t("Replace %name% in the text with property values"));
+            let mut remove = None;
+            for (index, (name, value)) in data.properties.iter_mut().enumerate() {
+                widgets::property_field(ui, name, |ui| {
+                    if ui
+                        .small_button(t("Remove"))
+                        .on_hover_text(t("Remove property"))
+                        .clicked()
+                    {
+                        remove = Some(index);
+                    }
+                    ui.add(egui::TextEdit::singleline(value).desired_width(140.0))
+                });
+            }
+            if let Some(index) = remove {
+                data.properties.remove(index);
+            }
+            let name_id = egui::Id::unique(("board_object_new_property", id));
+            let mut name = ui
+                .data_mut(|memory| memory.get_temp::<String>(name_id))
+                .unwrap_or_default();
+            let taken = |name: &str| {
+                data.property(name).is_some()
+                    || object
+                        .drawio
+                        .as_ref()
+                        .is_some_and(|drawio| drawio.attributes.iter().any(|(key, _)| key == name))
+            };
+            let addable = valid_property_name(name.trim()) && !taken(name.trim());
+            let mut add = false;
+            widgets::property_field(ui, t("New property"), |ui| {
+                add = ui
+                    .add_enabled(addable, egui::Button::new(t("Add property")))
+                    .clicked();
+                ui.add(egui::TextEdit::singleline(&mut name).desired_width(110.0))
+            });
+            if add {
+                data.properties
+                    .push((name.trim().to_owned(), String::new()));
+                name.clear();
+            }
+            ui.data_mut(|memory| memory.insert_temp(name_id, name));
+            if let Err(message) = data.validate() {
+                error = Some(message);
+            }
+        });
+    if let Some(message) = error {
+        widgets::caption(ui, message);
+    } else if data != original {
+        object.data = (!data.is_empty()).then(|| std::sync::Arc::new(data));
+    }
+    open
+}
+
+/// Positioned connector labels (draw.io edge-label children).
+fn connector_label_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    connector: &mut CanvasConnector,
+) -> (Option<String>, Option<usize>, Option<usize>) {
+    ui.separator();
+    ui.strong(t("Connector labels"));
+    if connector.sankey.is_none() {
+        let mut positioned = connector.label_placement.is_some();
+        if ui
+            .checkbox(&mut positioned, t("Position main label"))
+            .changed()
+        {
+            connector.label_placement = positioned.then(ConnectorLabelPlacement::default);
+        }
+        if let Some(placement) = &mut connector.label_placement {
+            ui.push_id(("main-connector-label", id), |ui| {
+                label_placement_fields(ui, placement)
+            });
+        }
+    }
+    let mut remove = None;
+    let mut error = None;
+    let mut edit = None;
+    for (index, label) in connector.extra_labels.iter_mut().enumerate() {
+        ui.push_id(("connector-label", id, index), |ui| {
+            ui.separator();
+            let mut text = label.text.clone();
+            widgets::property_field(ui, t("Label text"), |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .desired_rows(1)
+                        .char_limit(MAX_BOARD_TEXT_CHARS),
+                )
+                .on_hover_text(t("Use Remove label to delete a label."))
+            });
+            if (!text.is_empty() || label.has_list())
+                && text != label.text
+                && let Err(message) = label.set_text(text)
+            {
+                error = Some(message);
+            }
+            label_placement_fields(ui, &mut label.placement);
+            if ui
+                .button(format!("{} {}", t("Edit label formatting"), index + 1))
+                .clicked()
+            {
+                edit = Some(index);
+            }
+            if ui.button(t("Remove label")).clicked() {
+                remove = Some(index);
+            }
+        });
+    }
+    if let Some(index) = remove {
+        connector.extra_labels.remove(index);
+        edit = edit.and_then(|selected| {
+            if selected == index {
+                None
+            } else {
+                Some(if selected > index {
+                    selected - 1
+                } else {
+                    selected
+                })
+            }
+        });
+    }
+    if ui
+        .add_enabled(
+            connector.extra_labels.len() < MAX_CONNECTOR_LABELS,
+            egui::Button::new(t("Add label")),
+        )
+        .clicked()
+    {
+        connector.extra_labels.push(ConnectorLabel {
+            text: t("Label").to_owned(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -16.0,
+                ..ConnectorLabelPlacement::default()
+            },
+            rich_text: None,
+        });
+    }
+    (error, edit, remove)
+}
+
+fn label_placement_fields(ui: &mut Ui, placement: &mut ConnectorLabelPlacement) {
+    let limit = MAX_CONNECTOR_LABEL_OFFSET;
+    widgets::property_field(ui, t("Label position"), |ui| {
+        ui.add(egui::Slider::new(&mut placement.along, -1.0..=1.0).fixed_decimals(2))
+    });
+    for (label, value) in [
+        ("Label distance", &mut placement.orthogonal),
+        ("Label offset X", &mut placement.offset.x),
+        ("Label offset Y", &mut placement.offset.y),
+    ] {
+        widgets::property_field(ui, t(label), |ui| {
+            ui.add(
+                egui::DragValue::new(value)
+                    .range(-limit..=limit)
+                    .speed(0.5)
+                    .max_decimals(1),
+            )
+        });
+    }
+}
+
+fn line_jump_style_name(style: Option<LineJumpStyle>) -> &'static str {
+    match style {
+        None => "No line jumps",
+        Some(LineJumpStyle::Arc) => "Arc jumps",
+        Some(LineJumpStyle::Gap) => "Gap jumps",
+        Some(LineJumpStyle::Sharp) => "Sharp jumps",
+        Some(LineJumpStyle::Line) => "Tick jumps",
+    }
+}
+
+fn line_jump_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    route: ConnectorRoute,
+    jumps: &mut Option<LineJumps>,
+) {
+    let mut style = jumps.map(|jumps| jumps.style);
+    widgets::property_field(ui, t("Line jumps"), |ui| {
+        egui::ComboBox::from_id_salt(("board_connector_line_jumps", id))
+            .selected_text(t(line_jump_style_name(style)))
+            .show_ui(ui, |ui| {
+                for option in std::iter::once(None).chain(LineJumpStyle::ALL.map(Some)) {
+                    ui.selectable_value(&mut style, option, t(line_jump_style_name(option)));
+                }
+            })
+            .response
+    })
+    .on_hover_text(t(
+        "Draw a jump where this connector crosses connectors painted before it.",
+    ));
+    let size = jumps.map_or(DEFAULT_LINE_JUMP_SIZE, |jumps| jumps.size);
+    *jumps = style.map(|style| LineJumps { style, size });
+    if let Some(jumps) = jumps {
+        let changed = widgets::property_field(ui, t("Line jump size"), |ui| {
+            ui.add(
+                egui::DragValue::new(&mut jumps.size)
+                    .range(0.0..=MAX_LINE_JUMP_SIZE)
+                    .speed(0.5)
+                    .fixed_decimals(0),
+            )
+        })
+        .changed();
+        if changed {
+            // draw.io stores whole-pixel jump sizes.
+            jumps.size = jumps.size.round();
+        }
+        if route == ConnectorRoute::Curve {
+            widgets::caption(
+                ui,
+                t("Curved connectors keep line jumps but do not draw them."),
+            );
+        }
     }
 }
 
@@ -4942,16 +5723,7 @@ fn marker_fill_field(
     marker: Option<ConnectorMarker>,
     unfilled: &mut bool,
 ) {
-    let open = marker.is_some_and(|marker| {
-        matches!(
-            marker.kind,
-            ConnectorMarkerKind::Open
-                | ConnectorMarkerKind::OpenThin
-                | ConnectorMarkerKind::HalfCircle
-                | ConnectorMarkerKind::BaseDash
-                | ConnectorMarkerKind::Dash
-        )
-    });
+    let open = marker.is_some_and(|marker| !marker.kind.is_fillable());
     let can_fill = enabled && marker.is_some() && !open;
     let mut filled = !*unfilled;
     let response = ui.add_enabled(can_fill, egui::Checkbox::new(&mut filled, t(label)));
@@ -7316,14 +8088,14 @@ mod tests {
             .with_size(vec2(800.0, 800.0))
             .build_ui_state(expanded_toolbar, ThinodaApp::headless());
         harness.run_steps(4);
-        let last = harness.get_by_label("Board minimap").rect();
+        let last = harness.get_by_label("Layers").rect();
         assert!(
             harness.ctx.content_rect().contains_rect(last),
             "last tool should fit without scrolling: {last:?}"
         );
-        harness.get_by_label("Board minimap").click();
+        harness.get_by_label("Layers").click();
         harness.run_steps(2);
-        assert!(harness.state().doc().unwrap().view.show_minimap);
+        assert!(harness.state().doc().unwrap().show_layers);
     }
 
     #[test]
@@ -8382,17 +9154,17 @@ mod tests {
                         modifiers: egui::Modifiers::NONE,
                     });
                     harness.run_steps(4);
-                    let minimap = harness.get_by_label("Board minimap").rect();
+                    let minimap = harness.get_by_label("Layers").rect();
                     assert!(
                         harness.ctx.content_rect().contains_rect(minimap),
                         "last action unreachable: dark={dark} scale={scale} collapsed={collapsed}, \
                          button={minimap:?}, canvas={:?}",
                         harness.ctx.content_rect()
                     );
-                    harness.get_by_label("Board minimap").click();
+                    harness.get_by_label("Layers").click();
                     harness.run_steps(2);
                     assert!(
-                        harness.state().doc().unwrap().view.show_minimap,
+                        harness.state().doc().unwrap().show_layers,
                         "last action not clickable: dark={dark} scale={scale} collapsed={collapsed}, \
                          button={minimap:?}, scroll start={scroll_point:?}, toggle={:?}",
                         harness.get_by_label(toggle).rect()
@@ -8563,7 +9335,7 @@ mod tests {
 
     fn container_properties_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
         let mut harness = Harness::builder()
-            .with_size(vec2(450.0, 1000.0))
+            .with_size(vec2(450.0, 1600.0))
             .build_ui_state(
                 |ui, app: &mut ThinodaApp| {
                     app.board_object_properties(ui);
@@ -9885,6 +10657,118 @@ mod tests {
     }
 
     #[test]
+    fn object_data_inspector_edits_link_tags_and_properties() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .edit_sheet("Shape", |sheet| {
+                sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1400.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Data").click();
+        harness.run_steps(3);
+        for (label, text) in [
+            ("Link", "https://example.com"),
+            ("Tags", "alpha beta alpha"),
+        ] {
+            harness
+                .get_by_role_and_label(egui::Role::TextInput, label)
+                .click();
+            harness.run_steps(2);
+            harness
+                .get_by_role_and_label(egui::Role::TextInput, label)
+                .type_text(text);
+            harness.run_steps(2);
+        }
+        assert!(
+            !harness
+                .get_by_label("Open Link")
+                .accesskit_node()
+                .is_disabled(),
+            "an https link can be opened"
+        );
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .type_text("owner");
+        harness.run_steps(2);
+        harness.get_by_label("Add property").click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "owner")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "owner")
+            .type_text("ops");
+        harness.run_steps(2);
+        let data = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .data
+            .clone()
+            .expect("object data");
+        assert_eq!(data.link.as_deref(), Some("https://example.com"));
+        assert_eq!(data.tags, ["alpha", "beta"]);
+        assert_eq!(data.property("owner"), Some("ops"));
+        // A reserved or duplicate name cannot be added.
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .type_text("owner");
+        harness.run_steps(2);
+        assert!(
+            harness
+                .get_by_label("Add property")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Remove").click();
+        harness.run_steps(3);
+        let data = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .data
+            .clone()
+            .expect("object data");
+        assert!(data.properties.is_empty());
+    }
+
+    #[test]
     fn custom_shape_fill_can_be_enabled_and_undone() {
         let mut app = ThinodaApp::headless();
         let doc = app.doc_mut().unwrap();
@@ -10732,6 +11616,12 @@ mod tests {
             ("Half circle", Some(ConnectorMarkerKind::HalfCircle)),
             ("Bar", Some(ConnectorMarkerKind::BaseDash)),
             ("Diagonal bar", Some(ConnectorMarkerKind::Dash)),
+            ("ER one to many", Some(ConnectorMarkerKind::ErOneToMany)),
+            ("Async arrow", Some(ConnectorMarkerKind::Async)),
+            (
+                "SysML package containment",
+                Some(ConnectorMarkerKind::SysmlPackCont),
+            ),
             ("Legacy triangle", None),
         ] {
             harness.get_by_label("End arrow style").click();
@@ -10769,11 +11659,243 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::SysmlPackCont
+        );
     }
 
     #[test]
-    fn connector_marker_menu_scrolls_to_last_bar_with_the_mouse() {
+    fn connector_inspector_adds_positions_and_removes_labels() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let connector = |harness: &Harness<'_, ThinodaApp>| {
+            let CanvasObjectKind::Connector(current) = &harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            current.clone()
+        };
+        harness.get_by_label("Position main label").click();
+        harness.run_steps(3);
+        assert_eq!(
+            connector(&harness).label_placement,
+            Some(ConnectorLabelPlacement::default())
+        );
+        harness.get_by_label("Add label").click();
+        harness.run_steps(3);
+        let current = connector(&harness);
+        assert_eq!(current.extra_labels.len(), 1);
+        assert_eq!(current.extra_labels[0].text, "Label");
+        assert!(current.extra_labels[0].placement.is_valid());
+        harness.get_by_label("Edit label formatting 1").click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .editing_board_label_target(),
+            Some(thinoda_canvas::BoardLabelTarget {
+                object: id,
+                extra_label: Some(0)
+            })
+        );
+        harness.state_mut().doc_mut().unwrap().view.cancel_edit();
+        harness.get_by_label("Remove label").click();
+        harness.run_steps(3);
+        assert!(connector(&harness).extra_labels.is_empty());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(connector(&harness).extra_labels.len(), 1);
+    }
+
+    #[test]
+    fn connector_inspector_preserves_pending_extra_label_edits() {
+        struct State {
+            app: ThinodaApp,
+            inspector: bool,
+        }
+
+        for action in [
+            "Position main label",
+            "Add label",
+            "Remove label",
+            "Edit active label",
+            "Remove active label",
+        ] {
+            let mut app = ThinodaApp::headless();
+            let doc = app.doc_mut().unwrap();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, -180.0)),
+                Endpoint::Point(Vec2::new(100.0, -180.0)),
+            );
+            connector.extra_labels = vec![
+                ConnectorLabel {
+                    text: "First".into(),
+                    ..Default::default()
+                },
+                ConnectorLabel {
+                    text: "Second".into(),
+                    ..Default::default()
+                },
+            ];
+            let id = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            doc.view.select_board_object(id);
+            assert!(doc.view.begin_board_extra_label(&doc.doc, id, 1));
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 1600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if state.inspector {
+                            state.app.board_object_properties(ui);
+                        } else {
+                            let doc = state.app.doc_mut().unwrap();
+                            thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+                        }
+                    },
+                    State {
+                        app,
+                        inspector: false,
+                    },
+                );
+            harness.run_steps(3);
+            harness
+                .get_by_label("Board object label")
+                .type_text("Edited");
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+            harness.run_steps(2);
+            assert!(
+                harness
+                    .state()
+                    .app
+                    .doc()
+                    .unwrap()
+                    .view
+                    .has_board_label_changes()
+            );
+            harness.state_mut().inspector = true;
+            harness.run_steps(2);
+            match action {
+                "Edit active label" => harness
+                    .get_all_by_label("Label text")
+                    .nth(1)
+                    .unwrap()
+                    .type_text("Inspector edit"),
+                "Remove active label" => harness
+                    .get_all_by_label("Remove label")
+                    .nth(1)
+                    .unwrap()
+                    .click(),
+                _ => harness.get_all_by_label(action).next().unwrap().click(),
+            }
+            harness.run_steps(3);
+
+            if action == "Edit active label" {
+                let doc = harness.state().app.doc().unwrap();
+                assert!(doc.view.has_board_label_changes());
+                let CanvasObjectKind::Connector(connector) =
+                    &doc.doc.sheet().canvas.object(id).unwrap().kind
+                else {
+                    panic!("expected connector");
+                };
+                assert_eq!(connector.extra_labels[1].text, "Second");
+                continue;
+            }
+            if action == "Remove active label" {
+                assert!(harness.state_mut().app.doc_mut().unwrap().doc.undo());
+            }
+            let doc = harness.state().app.doc().unwrap();
+            let CanvasObjectKind::Connector(connector) =
+                &doc.doc.sheet().canvas.object(id).unwrap().kind
+            else {
+                panic!("expected connector");
+            };
+            let index = usize::from(action != "Remove label");
+            assert_eq!(connector.extra_labels[index].text, "Edited", "{action}");
+            assert_eq!(
+                connector.extra_labels[index]
+                    .rich_text
+                    .as_ref()
+                    .unwrap()
+                    .runs[0]
+                    .style
+                    .bold,
+                Some(true),
+                "{action}"
+            );
+        }
+    }
+
+    #[test]
+    fn sankey_inspector_can_add_and_edit_positioned_labels() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let book = thinoda_core::templates::instantiate("sankey-budget");
+        let id = book.active().canvas.objects[0].id;
+        doc.doc = thinoda_core::Document::new(book);
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Add label").click();
+        harness.run_steps(3);
+        harness.get_by_label("Edit label formatting 1").click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .editing_board_label_target(),
+            Some(thinoda_canvas::BoardLabelTarget {
+                object: id,
+                extra_label: Some(0)
+            })
+        );
+    }
+
+    #[test]
+    fn connector_marker_menu_scrolls_to_last_marker_with_the_mouse() {
         let mut app = ThinodaApp::headless();
         let doc = app.doc_mut().unwrap();
         let connector = CanvasConnector::new(
@@ -10796,23 +11918,23 @@ mod tests {
         harness.run_steps(3);
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);
-        let before = harness.get_by_label("Diagonal bar").rect();
+        let before = harness.get_by_label("SysML package containment").rect();
         harness.hover_at(harness.get_by_label("Legacy triangle").rect().center());
         harness.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
-            delta: vec2(0.0, -1200.0),
+            delta: vec2(0.0, -4000.0),
             phase: egui::TouchPhase::Move,
             source: egui::MouseWheelSource::Unknown,
             modifiers: egui::Modifiers::NONE,
         });
         harness.run_steps(15);
-        let after = harness.get_by_label("Diagonal bar").rect();
+        let after = harness.get_by_label("SysML package containment").rect();
         assert!(
             after.top() < before.top(),
             "before={before:?}, after={after:?}"
         );
         assert!(harness.ctx.content_rect().contains(after.center()));
-        harness.get_by_label("Diagonal bar").click();
+        harness.get_by_label("SysML package containment").click();
         harness.run_steps(3);
         let CanvasObjectKind::Connector(current) = &harness
             .state()
@@ -10827,7 +11949,195 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::SysmlPackCont
+        );
+    }
+
+    #[test]
+    fn connector_line_jump_inspector_is_accessible_undoable_and_copyable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+        let other = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let jumps = |app: &ThinodaApp, id| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.line_jumps
+        };
+        assert!(harness.query_by_label("Line jump size").is_none());
+        harness.get_by_label("Line jumps").click();
+        harness.run_steps(3);
+        harness.get_by_label("Sharp jumps").click();
+        harness.run_steps(3);
+        assert_eq!(
+            jumps(harness.state(), id),
+            Some(LineJumps::new(LineJumpStyle::Sharp))
+        );
+        harness.get_by_label("Line jump size").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Line jump size").type_text("12.6");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let expected = Some(LineJumps {
+            style: LineJumpStyle::Sharp,
+            size: 13.0,
+        });
+        assert_eq!(jumps(harness.state(), id), expected);
+        let style = {
+            let doc = harness.state().doc().unwrap();
+            BoardStyleClipboard::from_object(doc.doc.sheet().canvas.object(id).unwrap())
+        };
+        let mut pasted = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(other)
+            .unwrap()
+            .clone();
+        style.apply(&mut pasted);
+        let CanvasObjectKind::Connector(pasted) = pasted.kind else {
+            panic!("expected connector");
+        };
+        assert_eq!(pasted.line_jumps, expected);
+        harness.get_by_label("Line jumps").click();
+        harness.run_steps(3);
+        harness.get_by_label("No line jumps").click();
+        harness.run_steps(3);
+        assert_eq!(jumps(harness.state(), id), None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(jumps(harness.state(), id), expected);
+    }
+
+    #[test]
+    fn connector_edge_shape_inspector_switches_parameters_and_is_copyable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+        let other = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 900.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let shape = |app: &ThinodaApp, id| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.edge_shape
+        };
+        assert!(harness.query_by_label("Start width").is_none());
+        harness.get_by_label("Line shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Flexible arrow").click();
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id),
+            Some(EdgeShape::new(EdgeShapeKind::FlexArrow))
+        );
+        harness.get_by_label("Start width").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Start width").type_text("30");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(shape(harness.state(), id).unwrap().start_width, Some(30.0));
+        // Switching to a kind without end widths drops them.
+        harness.get_by_label("Line shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Pipe").click();
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id),
+            Some(EdgeShape::new(EdgeShapeKind::Pipe))
+        );
+        assert!(harness.query_by_label("Start width").is_none());
+        assert!(harness.query_by_label("Line shape width").is_some());
+        let style = {
+            let doc = harness.state().doc().unwrap();
+            BoardStyleClipboard::from_object(doc.doc.sheet().canvas.object(id).unwrap())
+        };
+        let mut pasted = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(other)
+            .unwrap()
+            .clone();
+        style.apply(&mut pasted);
+        let CanvasObjectKind::Connector(pasted) = pasted.kind else {
+            panic!("expected connector");
+        };
+        assert_eq!(pasted.edge_shape, Some(EdgeShape::new(EdgeShapeKind::Pipe)));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id).unwrap().kind,
+            EdgeShapeKind::FlexArrow
+        );
     }
 
     #[test]
@@ -10994,6 +12304,8 @@ mod tests {
         for (label, kind) in [
             ("Bar", ConnectorMarkerKind::BaseDash),
             ("Diagonal bar", ConnectorMarkerKind::Dash),
+            ("Cross", ConnectorMarkerKind::Cross),
+            ("ER many", ConnectorMarkerKind::ErMany),
         ] {
             harness.get_by_label("End arrow style").click();
             harness.run_steps(3);

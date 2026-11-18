@@ -43,12 +43,54 @@ const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
 const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
 const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
 const SEMANTIC_SHEET_PREFIX: &str = "THINODA-SHEET-26\n";
+const MARKER_LIBRARY_SHEET_PREFIX: &str = "THINODA-SHEET-27\n";
+const LINE_JUMPS_SHEET_PREFIX: &str = "THINODA-SHEET-28\n";
+const EDGE_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-29\n";
+const SEGMENT_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-30\n";
+const EDGE_SHAPES_SHEET_PREFIX: &str = "THINODA-SHEET-31\n";
+const CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-32\n";
+const OBJECT_DATA_SHEET_PREFIX: &str = "THINODA-SHEET-33\n";
+const LAYERS_SHEET_PREFIX: &str = "THINODA-SHEET-34\n";
+const TABLES_SHEET_PREFIX: &str = "THINODA-SHEET-35\n";
+const SHAPE_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-36\n";
+const LABEL_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-37\n";
+const RICH_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-38\n";
+const RICH_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-39\n";
+const RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-40\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_semantic_model() {
+    let prefix = if sheet.has_rich_extra_connector_labels() {
+        RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_rich_connector_labels() {
+        RICH_CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_rich_labels() {
+        RICH_LABELS_SHEET_PREFIX
+    } else if sheet.has_label_styles() {
+        LABEL_STYLES_SHEET_PREFIX
+    } else if sheet.has_shape_styles() {
+        SHAPE_STYLES_SHEET_PREFIX
+    } else if sheet.has_tables() {
+        TABLES_SHEET_PREFIX
+    } else if sheet.has_layers() {
+        LAYERS_SHEET_PREFIX
+    } else if sheet.has_object_data() {
+        OBJECT_DATA_SHEET_PREFIX
+    } else if sheet.has_connector_labels() {
+        CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_connector_edge_shapes() {
+        EDGE_SHAPES_SHEET_PREFIX
+    } else if sheet.has_drawio_segment_routes() {
+        SEGMENT_ROUTES_SHEET_PREFIX
+    } else if sheet.has_drawio_edge_routes() {
+        EDGE_ROUTES_SHEET_PREFIX
+    } else if sheet.has_connector_line_jumps() {
+        LINE_JUMPS_SHEET_PREFIX
+    } else if sheet.has_library_connector_markers() {
+        MARKER_LIBRARY_SHEET_PREFIX
+    } else if sheet.has_semantic_model() {
         SEMANTIC_SHEET_PREFIX
     } else if sheet.has_scene_layout_policies() {
         SCENE_LAYOUT_SHEET_PREFIX
@@ -119,9 +161,79 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
-        .map(|json| (25, json))
+        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-40\r\n"))
+        .map(|json| (40, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_CONNECTOR_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-39\r\n"))
+                .map(|json| (39, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(RICH_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-38\r\n"))
+                .map(|json| (38, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
+                .map(|json| (25, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
+                .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LABEL_STYLES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-37\r\n"))
+                .map(|json| (37, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SHAPE_STYLES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-36\r\n"))
+                .map(|json| (36, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(TABLES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-35\r\n"))
+                .map(|json| (35, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LAYERS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-34\r\n"))
+                .map(|json| (34, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(OBJECT_DATA_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-33\r\n"))
+                .map(|json| (33, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(CONNECTOR_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-32\r\n"))
+                .map(|json| (32, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EDGE_SHAPES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-31\r\n"))
+                .map(|json| (31, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SEGMENT_ROUTES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-30\r\n"))
+                .map(|json| (30, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EDGE_ROUTES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-29\r\n"))
+                .map(|json| (29, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(MARKER_LIBRARY_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-27\r\n"))
+                .map(|json| (27, json))
+        })
         .or_else(|| {
             text.strip_prefix(SEMANTIC_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-26\r\n"))
@@ -249,6 +361,48 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 40 && sheet.has_rich_extra_connector_labels() {
+        return Err("rich extra connector labels require sheet clipboard version 40".into());
+    }
+    if version < 39 && sheet.has_rich_connector_labels() {
+        return Err("rich connector labels require sheet clipboard version 39".into());
+    }
+    if version < 38 && sheet.has_rich_labels() {
+        return Err("rich labels require sheet clipboard version 38".into());
+    }
+    if version < 37 && sheet.has_label_styles() {
+        return Err("label styles require sheet clipboard version 37".into());
+    }
+    if version < 36 && sheet.has_shape_styles() {
+        return Err("shape styles require sheet clipboard version 36".into());
+    }
+    if version < 35 && sheet.has_tables() {
+        return Err("tables require sheet clipboard version 35".into());
+    }
+    if version < 34 && sheet.has_layers() {
+        return Err("layers require sheet clipboard version 34".into());
+    }
+    if version < 33 && sheet.has_object_data() {
+        return Err("object data requires sheet clipboard version 33".into());
+    }
+    if version < 32 && sheet.has_connector_labels() {
+        return Err("connector labels require sheet clipboard version 32".into());
+    }
+    if version < 31 && sheet.has_connector_edge_shapes() {
+        return Err("connector edge shapes require sheet clipboard version 31".into());
+    }
+    if version < 30 && sheet.has_drawio_segment_routes() {
+        return Err("draw.io segment routes require sheet clipboard version 30".into());
+    }
+    if version < 29 && sheet.has_drawio_edge_routes() {
+        return Err("draw.io edge routes require sheet clipboard version 29".into());
+    }
+    if version < 28 && sheet.has_connector_line_jumps() {
+        return Err("connector line jumps require sheet clipboard version 28".into());
+    }
+    if version < 27 && sheet.has_library_connector_markers() {
+        return Err("draw.io library connector markers require sheet clipboard version 27".into());
+    }
     if version < 26 && sheet.has_semantic_model() {
         return Err("socio-technical data requires sheet clipboard version 26".into());
     }
@@ -1445,5 +1599,394 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn rich_label_sheet_clipboard_requires_version_thirty_eight() {
+        use crate::board::{CanvasObject, CanvasObjectKind};
+        let mut sheet = Sheet::new("Rich labels", "Root");
+        let mut object = CanvasObject::shape(
+            crate::board::ShapeKind::Rectangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 30.0)),
+        );
+        let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+            unreachable!()
+        };
+        *label = "A🙂B".into();
+        let mut rich = crate::InlineText::default();
+        rich.update_range(label, 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(RICH_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(RICH_LABELS_SHEET_PREFIX, LABEL_STYLES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("rich labels require sheet clipboard version 38")
+        );
+    }
+
+    #[test]
+    fn rich_connector_label_sheet_clipboard_requires_version_thirty_nine() {
+        use crate::board::{CanvasConnector, CanvasObject};
+        let mut sheet = Sheet::new("Rich connector", "Root");
+        let connector = CanvasConnector::new(
+            crate::Endpoint::Point(crate::Vec2::ZERO),
+            crate::Endpoint::Point(crate::Vec2::new(100.0, 0.0)),
+        );
+        let mut object = CanvasObject::connector(connector);
+        object.set_label("A🙂B").unwrap();
+        let mut rich = crate::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(RICH_CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(
+            RICH_CONNECTOR_LABELS_SHEET_PREFIX,
+            RICH_LABELS_SHEET_PREFIX,
+            1,
+        );
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("rich connector labels require sheet clipboard version 39")
+        );
+    }
+
+    #[test]
+    fn rich_extra_connector_label_sheet_clipboard_requires_version_forty() {
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorLabel};
+        let mut sheet = Sheet::new("Rich extra connector", "Root");
+        let mut connector = CanvasConnector::new(
+            crate::Endpoint::Point(crate::Vec2::ZERO),
+            crate::Endpoint::Point(crate::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = crate::InlineText::default();
+        rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "A🙂B".into(),
+            rich_text: Some(std::sync::Arc::new(rich)),
+            ..Default::default()
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(
+            RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX,
+            RICH_CONNECTOR_LABELS_SHEET_PREFIX,
+            1,
+        );
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("rich extra connector labels require sheet clipboard version 40")
+        );
+    }
+
+    #[test]
+    fn label_style_sheet_clipboard_requires_version_thirty_seven() {
+        use crate::board::CanvasObject;
+        let mut sheet = Sheet::new("Label styles", "Root");
+        let mut object = CanvasObject::shape(
+            crate::board::ShapeKind::Rectangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 30.0)),
+        );
+        object.style.shadow = true;
+        object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+            bold: true,
+            ..Default::default()
+        }));
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(LABEL_STYLES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(LABEL_STYLES_SHEET_PREFIX, SHAPE_STYLES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("label styles require sheet clipboard version 37")
+        );
+    }
+
+    #[test]
+    fn shape_style_sheet_clipboard_requires_version_thirty_six() {
+        use crate::board::CanvasObject;
+        let mut sheet = Sheet::new("Shape styles", "Root");
+        let mut object = CanvasObject::shape(
+            crate::board::ShapeKind::Triangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 30.0)),
+        );
+        object.style.flip_h = true;
+        object.style.shadow = true;
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(SHAPE_STYLES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(SHAPE_STYLES_SHEET_PREFIX, TABLES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("shape styles require sheet clipboard version 36")
+        );
+    }
+
+    #[test]
+    fn table_sheet_clipboard_requires_version_thirty_five() {
+        let mut sheet = Sheet::new("Tables", "Root");
+        sheet
+            .insert_canvas_table(crate::Vec2::ZERO, 2, 2, None)
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(TABLES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(TABLES_SHEET_PREFIX, LAYERS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("tables require sheet clipboard version 35")
+        );
+    }
+
+    #[test]
+    fn layered_sheet_clipboard_requires_version_thirty_four() {
+        use crate::board::CanvasObject;
+        let mut sheet = Sheet::new("Layers", "Root");
+        let shape = sheet
+            .add_canvas_object(CanvasObject::shape(
+                crate::ShapeKind::Rectangle,
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 20.0)),
+            ))
+            .unwrap();
+        let layer = sheet.add_board_layer("Notes").unwrap();
+        sheet
+            .move_canvas_objects_to_layer(&[shape], Some(layer))
+            .unwrap();
+        sheet.set_board_layer_visible(layer, false).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(LAYERS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(LAYERS_SHEET_PREFIX, OBJECT_DATA_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("layers require sheet clipboard version 34")
+        );
+    }
+
+    #[test]
+    fn object_data_sheet_clipboard_requires_version_thirty_three() {
+        use crate::board::CanvasObject;
+        use crate::object_data::ObjectData;
+        let mut sheet = Sheet::new("Data", "Root");
+        let mut shape = CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 20.0)),
+        );
+        shape.data = Some(std::sync::Arc::new(ObjectData {
+            tags: vec!["web".into()],
+            ..Default::default()
+        }));
+        sheet.add_canvas_object(shape).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(OBJECT_DATA_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(OBJECT_DATA_SHEET_PREFIX, CONNECTOR_LABELS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("object data requires sheet clipboard version 33")
+        );
+    }
+
+    #[test]
+    fn connector_label_sheet_clipboard_requires_version_thirty_two() {
+        use crate::Vec2;
+        use crate::board::{
+            CanvasConnector, CanvasObject, ConnectorLabel, ConnectorLabelPlacement, Endpoint,
+        };
+        let mut sheet = Sheet::new("Labels", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.extra_labels.push(ConnectorLabel {
+            text: "1..n".into(),
+            placement: ConnectorLabelPlacement {
+                along: -0.8,
+                orthogonal: 10.0,
+                offset: Vec2::ZERO,
+            },
+            rich_text: None,
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(CONNECTOR_LABELS_SHEET_PREFIX, EDGE_SHAPES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("connector labels require sheet clipboard version 32")
+        );
+    }
+
+    #[test]
+    fn edge_shape_sheet_clipboard_requires_version_thirty_one() {
+        use crate::Vec2;
+        use crate::board::{CanvasConnector, CanvasObject, EdgeShape, EdgeShapeKind, Endpoint};
+        let mut sheet = Sheet::new("Shapes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::FlexArrow));
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(EDGE_SHAPES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(EDGE_SHAPES_SHEET_PREFIX, SEGMENT_ROUTES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("edge shapes require sheet clipboard version 31")
+        );
+    }
+
+    #[test]
+    fn segment_route_sheet_clipboard_requires_version_thirty() {
+        use crate::Vec2;
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorRoute, Endpoint};
+        let mut sheet = Sheet::new("Routes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.route = ConnectorRoute::IsometricVertical;
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(SEGMENT_ROUTES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(SEGMENT_ROUTES_SHEET_PREFIX, EDGE_ROUTES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("segment routes require sheet clipboard version 30")
+        );
+    }
+
+    #[test]
+    fn edge_route_sheet_clipboard_requires_version_twenty_nine() {
+        use crate::Vec2;
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorRoute, Endpoint};
+        let mut sheet = Sheet::new("Routes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.route = ConnectorRoute::EntityRelation;
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(EDGE_ROUTES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(EDGE_ROUTES_SHEET_PREFIX, LINE_JUMPS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("edge routes require sheet clipboard version 29")
+        );
+    }
+
+    #[test]
+    fn line_jump_sheet_clipboard_requires_version_twenty_eight() {
+        use crate::Vec2;
+        use crate::board::{CanvasConnector, CanvasObject, Endpoint, LineJumpStyle, LineJumps};
+        let mut sheet = Sheet::new("Jumps", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Sharp));
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(LINE_JUMPS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(LINE_JUMPS_SHEET_PREFIX, MARKER_LIBRARY_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("line jumps require sheet clipboard version 28")
+        );
+    }
+
+    #[test]
+    fn library_marker_sheet_clipboard_requires_version_twenty_seven() {
+        use crate::Vec2;
+        use crate::board::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+        let mut sheet = Sheet::new("Markers", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::SysmlPackCont,
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(MARKER_LIBRARY_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(MARKER_LIBRARY_SHEET_PREFIX, SEMANTIC_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("library connector markers require sheet clipboard version 27")
+        );
     }
 }

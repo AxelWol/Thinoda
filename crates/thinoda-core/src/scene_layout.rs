@@ -419,7 +419,7 @@ fn f32_at_least(value: f64) -> f32 {
     }
 }
 
-fn body_rect(parent: Rect, header: HeaderPolicy) -> Result<Rect, SceneLayoutError> {
+pub(crate) fn body_rect(parent: Rect, header: HeaderPolicy) -> Result<Rect, SceneLayoutError> {
     let extent = header.extent;
     let mut body = parent;
     match header.side {

@@ -600,6 +600,7 @@ fn svg_layout_with_fonts(
         ));
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::BelowMap) {
+        let object = &*object;
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(
             item,
@@ -954,6 +955,7 @@ fn svg_layout_with_fonts(
         }
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::AboveMap) {
+        let object = &*object;
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(
             item,
@@ -1222,8 +1224,24 @@ fn board_object_svg(
     visual: VisualExportContext,
 ) -> String {
     let mut out = format!("<g class=\"canvas-object\" id=\"object-{}\">", object.id.0);
+    let mut gradients = 0;
     for prim in board::object_prims(item, object, background, dark, visual) {
         match prim {
+            board::Prim::Gradient { points, paint } => {
+                let Some(first) = points.first() else {
+                    continue;
+                };
+                let id = format!("shape-paint-{}-{gradients}", object.id.0);
+                gradients += 1;
+                out.push_str(&shape_paint_svg(&id, &paint));
+                let mut d = format!("M {}", xy(*first));
+                for point in &points[1..] {
+                    d.push_str(&format!(" L {}", xy(*point)));
+                }
+                out.push_str(&format!(
+                    "<path d=\"{d} Z\" fill=\"url(#{id})\" stroke=\"none\"/>"
+                ));
+            }
             board::Prim::Path {
                 points,
                 closed,
@@ -1368,10 +1386,204 @@ fn board_object_svg(
                     out.push_str("</g>");
                 }
             }
+            board::Prim::StyledLabel {
+                layout,
+                style,
+                color,
+                opacity,
+            } => out.push_str(&styled_label_svg(&layout, &style, color, opacity)),
         }
     }
     out.push_str("</g>");
     out
+}
+
+/// SVG for a styled shape label; the requested family comes first so viewers
+/// with that font installed use it.
+fn styled_label_svg(
+    layout: &thinoda_core::label_style::LabelLayout,
+    style: &thinoda_core::label_style::LabelStyle,
+    color: Color,
+    opacity: f32,
+) -> String {
+    use thinoda_core::model::TextAlign;
+    let mut out = String::new();
+    if layout.lines.is_empty() {
+        return out;
+    }
+    let rotated = layout.rotation != 0.0;
+    if rotated {
+        out.push_str(&format!(
+            "<g transform=\"rotate({:.2} {:.2} {:.2})\">",
+            layout.rotation, layout.pivot.x, layout.pivot.y
+        ));
+    }
+    if style.background.is_some() || style.border.is_some() {
+        let fade = |c: Color| {
+            Color::rgba(
+                c.r,
+                c.g,
+                c.b,
+                (f32::from(c.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+            )
+        };
+        let rect = layout.box_rect();
+        let stroke = style.border.map_or_else(
+            || "stroke=\"none\"".to_owned(),
+            |border| format!("stroke=\"{}\" stroke-width=\"1\"", col(fade(border))),
+        );
+        out.push_str(&format!(
+            "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\" {stroke}/>",
+            rect.min.x,
+            rect.min.y,
+            rect.size.x,
+            rect.size.y,
+            style
+                .background
+                .map_or_else(|| "none".to_owned(), |fill| col(fade(fill))),
+        ));
+    }
+    let family = match style.font_family.as_deref() {
+        Some(name) => format!(
+            "'{}', Segoe UI, Helvetica, Arial, sans-serif",
+            esc(&name.replace(['\'', '"'], ""))
+        ),
+        None => "Segoe UI, Helvetica, Arial, sans-serif".to_owned(),
+    };
+    let mut attributes = String::new();
+    if style.bold {
+        attributes.push_str(" font-weight=\"bold\"");
+    }
+    if style.italic {
+        attributes.push_str(" font-style=\"italic\"");
+    }
+    let decoration: Vec<&str> = [
+        style.underline.then_some("underline"),
+        style.strikethrough.then_some("line-through"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !decoration.is_empty() {
+        attributes.push_str(&format!(" text-decoration=\"{}\"", decoration.join(" ")));
+    }
+    for line in &layout.lines {
+        let (anchor, x) = match line.align {
+            TextAlign::Left => ("start", line.rect.min.x),
+            TextAlign::Center => ("middle", line.rect.center().x),
+            TextAlign::Right => ("end", line.rect.max().x),
+        };
+        if !line.runs.is_empty() {
+            out.push_str(&format!(
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" xml:space=\"preserve\">",
+                x,
+                line.rect.center().y,
+            ));
+            let mut previous_shift = 0.0;
+            for run in &line.runs {
+                let family = run
+                    .style
+                    .font_family
+                    .as_deref()
+                    .or(style.font_family.as_deref())
+                    .map_or_else(
+                        || "Segoe UI, Helvetica, Arial, sans-serif".to_owned(),
+                        |name| {
+                            format!(
+                                "'{}', Segoe UI, Helvetica, Arial, sans-serif",
+                                esc(&name.replace(['\'', '"'], ""))
+                            )
+                        },
+                    );
+                let bold = run.style.bold.unwrap_or(style.bold);
+                let italic = run.style.italic.unwrap_or(style.italic);
+                let decoration: Vec<_> = [
+                    run.style
+                        .underline
+                        .unwrap_or(style.underline)
+                        .then_some("underline"),
+                    run.style
+                        .strikethrough
+                        .unwrap_or(style.strikethrough)
+                        .then_some("line-through"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let decoration = if decoration.is_empty() {
+                    String::new()
+                } else {
+                    format!(" text-decoration=\"{}\"", decoration.join(" "))
+                };
+                let run_color = run.style.color.map_or(color, |value| {
+                    Color::rgba(
+                        value.r,
+                        value.g,
+                        value.b,
+                        (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                    )
+                });
+                let shift = thinoda_core::label_style::run_baseline_shift(layout.size, &run.style);
+                out.push_str(&format!(
+                    "<tspan dy=\"{:.2}\" font-family=\"{family}\" font-size=\"{:.2}\" font-weight=\"{}\" font-style=\"{}\"{decoration} fill=\"{}\">{}</tspan>",
+                    shift - previous_shift,
+                    thinoda_core::label_style::run_font_size(layout.size, &run.style),
+                    if bold { "bold" } else { "normal" },
+                    if italic { "italic" } else { "normal" },
+                    col(run_color),
+                    esc(&run.text),
+                ));
+                previous_shift = shift;
+            }
+            out.push_str("</text>");
+            continue;
+        }
+        out.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" font-family=\"{family}\" font-size=\"{:.2}\"{attributes} fill=\"{}\" xml:space=\"preserve\">{}</text>",
+            x,
+            line.rect.center().y,
+            layout.size,
+            col(color),
+            esc(&line.text)
+        ));
+    }
+    if rotated {
+        out.push_str("</g>");
+    }
+    out
+}
+
+/// A `userSpaceOnUse` SVG gradient definition for a shape paint.
+fn shape_paint_svg(id: &str, paint: &thinoda_core::shape_style::ShapePaint) -> String {
+    use thinoda_core::shape_style::ShapePaint;
+    let stop = |offset: u8, color: Color| {
+        format!(
+            "<stop offset=\"{offset}\" stop-color=\"#{:02x}{:02x}{:02x}\" stop-opacity=\"{:.4}\"/>",
+            color.r,
+            color.g,
+            color.b,
+            f32::from(color.a) / 255.0
+        )
+    };
+    let stops = format!("{}{}", stop(0, paint.start()), stop(1, paint.end()));
+    match *paint {
+        ShapePaint::Linear { from, to, .. } => format!(
+            "<defs><linearGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\">{stops}</linearGradient></defs>",
+            from.x, from.y, to.x, to.y
+        ),
+        ShapePaint::Radial {
+            center,
+            radii,
+            rotation,
+            ..
+        } => format!(
+            "<defs><radialGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"translate({:.2} {:.2}) rotate({rotation:.2}) scale({:.2} {:.2})\">{stops}</radialGradient></defs>",
+            center.x,
+            center.y,
+            radii.x.max(0.01),
+            radii.y.max(0.01)
+        ),
+    }
 }
 
 fn colored_marker_svg(id: &str, r: thinoda_core::Rect, color: Color) -> String {

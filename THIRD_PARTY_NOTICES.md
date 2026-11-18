@@ -252,6 +252,15 @@ Title to copyright in this work will at all times remain with copyright
 holders.
 ```
 
+## Bundled draw.io stencils
+
+The `thinoda-io` crate bundles stencil shapes converted from the draw.io stencil
+libraries (<https://github.com/jgraph/drawio>, version 32.6.10), Copyright (c)
+JGraph Ltd and contributors, Apache License 2.0. The shapes were converted to
+Thinoda's stencil format. Their notice, the upstream restriction on use with
+Atlassian products, and the full license text are in
+`crates/thinoda-io/stencils/drawio/NOTICE` and `LICENSE-APACHE`.
+
 ## Notable licenses
 
 - **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-color`, `cssparser-macros`,

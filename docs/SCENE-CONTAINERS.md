@@ -7,7 +7,7 @@ partial, SC2 has partial layout-policy support, and SC3 has a bounded nested
 import/export slice; original-fixture and full loss-policy acceptance remain
 open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
-[socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
+[socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO-ARCHITECTURE.md section
 3.2.1, rather than introducing a second container implementation.
 
 User requirement: "draw.io also has support for nested swimlanes. please
@@ -178,8 +178,10 @@ policy operators. Format-specific names map at the adapter boundary.
 
 V1 shared authoring covers free containers and nested stack swimlanes, including
 mixed header/stack axes. Container-table structure and absolute geometry can
-be preserved before full table authoring. SC4 delivers the table layout slice;
-until then table resize/reflow support remains explicitly incomplete.
+be preserved before full table authoring. SC4 delivers the table layout slice
+(implemented in draw.io D8: `scene.tables` stores row/column tracks, cell slots,
+spans and stripes for a container whose cells are free scene containers; the
+shared layout pass derives cell frames and never grows a cell from its content).
 General custom `childLayout` algorithms are not implemented or executed simply
 because a JSON library or draw.io file requests them.
 
@@ -326,7 +328,7 @@ must close before common container work starts.
 | SC1 - Safe generic hierarchy | SC0; relevant Phase 3 model slice delivered here | Persist/reopen parent/order/container/collapse data; bounded transforms, copy/delete/reparent, history and version gates. All generic mutation paths invoke the binding hook: test with no-op unbound behavior and a stub bound validator. Test depth/cycle/old-envelope rejection, no double moves including collapsed hidden descendants, locked descendants and keyboard containment navigation |
 | SC2 - Nested swimlane behavior | SC1; relevant Phase 4/5 rendering/interpreter capabilities | Shared JSON header/body definitions, free/stack layout and resize/drop/collapse routing; connector dashes and definition resolution. One resize including induced sibling changes is one undo step. Canvas/hit-test/SVG/PDF parity and native/web authoring; nested depth-by-child-count workload meets SC0's measured latency and bounded-operation budgets without semantic code |
 | SC3 - draw.io structural fidelity | SC2; bounded Phase 2/6/7 adapter capabilities | Import/edit/export/reimport original nested fixtures and classified corpus cases. Preserve parents, relative geometry within SC0 tolerances, IDs/order, header axes, policies, collapsed bounds and terminals. Require normalized scene idempotence over repeated round trips; verify in draw.io and report unsupported policies exactly. This is the scene-only milestone gate |
-| SC4 - Container tables | SC3 | Shared table/row/cell layout and insertion/deletion/resize without flattening. Exercise `cross.xml`, nested container cells, row/column categories and no-auto-grow behavior in the same engine |
+| SC4 - Container tables | SC3 | Shared table/row/cell layout and insertion/deletion/resize without flattening. Exercise `cross.xml`, nested container cells, row/column categories and no-auto-grow behavior in the same engine. **Status:** delivered with draw.io D8 (tables): 2-D grid with merges and stripes, undoable row/column insert/delete/resize, merge/unmerge, draw.io `tableLayout` import/export (`cross.xml` and four other corpus files import native tables). On-canvas track dividers remain open |
 
 **Integration order:** SC0 and STC0 establish one contract. SC1-SC3 deliver the
 reusable foundation. STC2 then adds semantics on top; STC3 adds semantic editing,

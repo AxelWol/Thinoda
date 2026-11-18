@@ -201,6 +201,45 @@ fn connector_options_keep_their_popup_on_a_tiny_canvas() {
 }
 
 #[test]
+fn connector_route_menu_offers_every_drawio_edge_style() {
+    let routes = [
+        ("Horizontal elbow", ConnectorRoute::ElbowHorizontal),
+        ("Vertical elbow", ConnectorRoute::ElbowVertical),
+        ("Side to side", ConnectorRoute::SideToSide),
+        ("Top to bottom", ConnectorRoute::TopToBottom),
+        ("Entity relation", ConnectorRoute::EntityRelation),
+        ("Segmented", ConnectorRoute::Segment),
+        ("Horizontal isometric", ConnectorRoute::IsometricHorizontal),
+        ("Vertical isometric", ConnectorRoute::IsometricVertical),
+    ];
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    for (label, route) in routes {
+        if h.query_by_role_and_label(Role::Button, label).is_none() {
+            click(&mut h, Role::Button, "Connector route");
+        }
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(4);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        click(&mut h, Role::Button, label);
+        assert_eq!(connector(h.state(), id).route, route, "{label}");
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before, "{label}");
+        assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+        assert_eq!(connector(h.state(), id).route, route, "{label}");
+    }
+    for (name, _) in routes {
+        for language in i18n::Lang::ALL {
+            let translation = i18n::t_in(language, name);
+            assert!(!translation.is_empty(), "{language:?} {name}");
+            if language != i18n::Lang::En {
+                assert_ne!(translation, name, "{language:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn connector_options_label_is_translated_in_every_supported_language() {
     for language in i18n::Lang::ALL {
         let translation = i18n::t_in(language, "Connector options");
@@ -930,6 +969,53 @@ fn stale_revisions_documents_sheets_viewports_and_selections_are_rejected() {
             assert!(!connector(&app, id).arrow_start, "{case}");
         }
     }
+}
+
+#[test]
+fn connector_options_toggle_arrows_on_every_selected_connector() {
+    let (mut app, id) = app_with_connector();
+    let doc = app.doc_mut().unwrap();
+    let mut second = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-120.0, 120.0)),
+        Endpoint::Point(Vec2::new(120.0, 160.0)),
+    );
+    second.arrow_end = false;
+    second.route = ConnectorRoute::Curve;
+    let other = doc
+        .doc
+        .add_canvas_object(CanvasObject::connector(second))
+        .unwrap();
+    doc.view.board_selection.push(other);
+    let context = app.connector_context().unwrap();
+    assert!(context.enabled);
+    assert!(
+        !context.properties.arrow_end,
+        "only some connectors show an end arrow"
+    );
+    assert!(context.properties.mixed_route);
+
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    h.get_by_label("Connector options (2)");
+    click(&mut h, Role::Button, "Arrow at end");
+    assert!(connector(h.state(), id).arrow_end);
+    assert!(connector(h.state(), other).arrow_end);
+    click(&mut h, Role::Button, "Arrow at end");
+    assert!(!connector(h.state(), id).arrow_end);
+    assert!(!connector(h.state(), other).arrow_end);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_end && connector(h.state(), other).arrow_end);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_end);
+    assert!(!connector(h.state(), other).arrow_end);
+
+    let target = h.state().connector_context().unwrap().target;
+    h.state_mut()
+        .apply_connector_change(&target, ConnectorChange::Width(5.0))
+        .unwrap();
+    assert_eq!(connector(h.state(), id).width, 5.0);
+    assert_eq!(connector(h.state(), other).width, 5.0);
 }
 
 #[test]

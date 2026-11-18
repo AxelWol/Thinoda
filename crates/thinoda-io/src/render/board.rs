@@ -2,14 +2,18 @@
 //! editable PowerPoint renderers. Objects are reduced to absolute, already rotated
 //! primitives so both back ends draw identical geometry from the shared core scene.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
         rectangle_side_paths, rotate_around,
     },
-    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
+    label_style::{self, LabelLayout, LabelStyle},
+    scene::{
+        EdgeBody, Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths,
+    },
+    shape_style::{self, FillPaint, ShapePaint},
 };
 
 use crate::VisualExportContext;
@@ -33,6 +37,11 @@ pub(crate) enum Prim {
         paths: Vec<RectangleSidePath>,
         stroke: Color,
         width: f32,
+    },
+    /// Closed polygon filled with a gradient (shape fills and glass).
+    Gradient {
+        points: Vec<Vec2>,
+        paint: ShapePaint,
     },
     /// Circular connector marker in sheet coordinates.
     Circle {
@@ -61,6 +70,112 @@ pub(crate) enum Prim {
         /// Unfaded backdrop when text and backdrop share one opacity group.
         group_backdrop: Option<Color>,
     },
+    /// Shape label with a text style, laid out by `thinoda_core::label_style`.
+    StyledLabel {
+        layout: LabelLayout,
+        style: Arc<LabelStyle>,
+        /// Faded text colour.
+        color: Color,
+        /// Object opacity applied to the label background and border.
+        opacity: f32,
+    },
+}
+
+/// The styled label of a shape whose default text area is `base`.
+fn styled_label(object: &CanvasObject, base: Rect, label: &str, color: Color) -> Option<Prim> {
+    let style = object
+        .label_style
+        .clone()
+        .unwrap_or_else(|| Arc::new(LabelStyle::default()));
+    Some(Prim::StyledLabel {
+        layout: label_style::layout(object, base, label)?,
+        style,
+        color,
+        opacity: object.style.opacity,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn styled_connector_label(
+    object: &CanvasObject,
+    rich: &thinoda_core::InlineText,
+    anchor: Vec2,
+    label: &str,
+    wrap: bool,
+    color: Color,
+    backdrop: Color,
+    group_backdrop: Option<Color>,
+) -> [Prim; 2] {
+    let layout = label_style::layout_connector(anchor, label, rich, wrap);
+    let rect = Rect::from_center_size(
+        layout.block.center(),
+        layout.block.size + Vec2::new(8.0, 4.0),
+    );
+    [
+        Prim::Text {
+            rect,
+            pivot: anchor,
+            rotation: 0.0,
+            lines: Vec::new(),
+            size: layout.size,
+            color,
+            backdrop: Some(backdrop),
+            group_backdrop,
+        },
+        Prim::StyledLabel {
+            layout,
+            style: Arc::new(LabelStyle::default()),
+            color,
+            opacity: object.style.opacity,
+        },
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_connector_label(
+    out: &mut Vec<Prim>,
+    object: &CanvasObject,
+    rich: Option<&thinoda_core::InlineText>,
+    anchor: Vec2,
+    label: &str,
+    flow: bool,
+    color: Color,
+    backdrop: Color,
+    group_backdrop: Option<Color>,
+) {
+    if let Some(rich) = rich {
+        out.extend(styled_connector_label(
+            object,
+            rich,
+            anchor,
+            label,
+            flow,
+            color,
+            backdrop,
+            group_backdrop,
+        ));
+        return;
+    }
+    let lines = wrap(label, 200.0, 12.0);
+    let longest = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1);
+    let size = Vec2::new(
+        longest as f32 * 12.0 * 0.6 + 8.0,
+        lines.len() as f32 * 12.0 * 1.25 + 4.0,
+    );
+    out.push(Prim::Text {
+        rect: Rect::from_center_size(anchor, size),
+        pivot: anchor,
+        rotation: 0.0,
+        lines,
+        size: 12.0,
+        color,
+        backdrop: Some(backdrop),
+        group_backdrop,
+    });
 }
 
 fn faded(color: Color, opacity: f32) -> Color {
@@ -79,38 +194,7 @@ fn faded(color: Color, opacity: f32) -> Color {
 
 /// Greedy word wrap with an approximate glyph width; explicit newlines are kept.
 pub(crate) fn wrap(text: &str, width: f32, size: f32) -> Vec<String> {
-    let max_chars = ((width / (size * 0.55)).floor() as usize).max(1);
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for word in paragraph.split_whitespace() {
-            let mut word = word.to_owned();
-            while word.chars().count() > max_chars {
-                if !line.is_empty() {
-                    lines.push(std::mem::take(&mut line));
-                }
-                let split = word
-                    .char_indices()
-                    .nth(max_chars)
-                    .map_or(word.len(), |(index, _)| index);
-                lines.push(word[..split].to_owned());
-                word = word[split..].to_owned();
-            }
-            if line.is_empty() {
-                line = word;
-            } else if line.chars().count() + 1 + word.chars().count() <= max_chars {
-                line.push(' ');
-                line.push_str(&word);
-            } else {
-                lines.push(std::mem::replace(&mut line, word));
-            }
-        }
-        lines.push(line);
-    }
-    while lines.last().is_some_and(String::is_empty) && lines.len() > 1 {
-        lines.pop();
-    }
-    lines
+    label_style::wrap_lines(text, width, size)
 }
 
 /// Canvas objects of `scene` in `band`, in paint order, with their source object.
@@ -118,7 +202,7 @@ pub(crate) fn band_items<'a>(
     sheet: &'a Sheet,
     scene: &'a Scene,
     band: SceneBand,
-) -> impl Iterator<Item = (&'a SceneItem, &'a CanvasObject)> + 'a {
+) -> impl Iterator<Item = (&'a SceneItem, Cow<'a, CanvasObject>)> + 'a {
     let objects: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -133,7 +217,17 @@ pub(crate) fn band_items<'a>(
             let SceneId::Object(id) = item.id else {
                 return None;
             };
-            objects.get(&id).copied().map(|object| (item, object))
+            objects.get(&id).copied().map(|object| {
+                let object = thinoda_core::scene_table::with_table_stripes(
+                    &sheet.canvas,
+                    thinoda_core::object_data::with_resolved_placeholders(
+                        &sheet.canvas,
+                        object,
+                        Some(&sheet.title),
+                    ),
+                );
+                (item, object)
+            })
         })
 }
 
@@ -176,17 +270,86 @@ pub(crate) fn object_prims(
             .unwrap_or_else(|| Color::highest_contrast_on(under));
         let slots = thinoda_core::stencil_object::slots(object, automatic_stroke, font);
         let (paths, texts) = thinoda_core::stencil_object::primitives(object, render, &slots);
+        let style = &object.style;
+        let closed_subpaths = |path: &thinoda_core::stencil_object::StencilPrimitive| {
+            path.subpaths
+                .iter()
+                .filter(|(points, closed)| *closed && points.len() >= 3)
+                .map(|(points, _)| points.clone())
+                .collect::<Vec<_>>()
+        };
+        if style.shadow {
+            for path in &paths {
+                let fills = if path.fill.is_some() {
+                    closed_subpaths(path)
+                } else {
+                    Vec::new()
+                };
+                shadow_prims(
+                    &mut out,
+                    &fills,
+                    &path.subpaths,
+                    path.stroke.as_ref().map_or(0.0, |stroke| stroke.width),
+                    opacity,
+                );
+            }
+        }
+        let effect_fill = style.gradient.is_some() || !style.fill_pattern.is_solid();
         for path in paths {
+            let mut fill = path.fill;
+            if path.styled_fill
+                && effect_fill
+                && let Some(color) = fill.take()
+            {
+                let paint = shape_style::fill_paint(style, object.rect, object.rotation, color);
+                fill_prims(
+                    &mut out,
+                    &closed_subpaths(&path),
+                    &paint,
+                    object,
+                    style.effective_shape_stroke_width(),
+                );
+            }
+            let dash = path
+                .stroke
+                .as_ref()
+                .and_then(|s| s.dash.clone())
+                .filter(|dash| dash.len() >= 2);
             let stroke = path.stroke.map(|s| (s.color, s.width));
             for (points, closed) in path.subpaths {
+                if let (Some(dash), Some(stroke)) = (&dash, stroke) {
+                    if closed && fill.is_some() {
+                        out.push(Prim::Path {
+                            points: points.clone(),
+                            closed,
+                            fill,
+                            stroke: None,
+                            round: false,
+                        });
+                    }
+                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                    continue;
+                }
                 out.push(Prim::Path {
                     points,
                     closed,
-                    fill: if closed { path.fill } else { None },
+                    fill: if closed { fill } else { None },
                     stroke,
                     round: false,
                 });
             }
+        }
+        if style.glass {
+            let outline = thinoda_core::stencil_object::geometry(object, render).outline;
+            glass_prims(
+                &mut out,
+                object,
+                &outline,
+                style
+                    .stroke
+                    .is_some()
+                    .then(|| style.effective_shape_stroke_width()),
+            );
         }
         for text in texts {
             let lines: Vec<String> = text.text.split('\n').map(str::to_owned).collect();
@@ -221,19 +384,23 @@ pub(crate) fn object_prims(
             });
         }
         if let CanvasObjectKind::Shape { label, .. } = &object.kind
-            && !label.trim().is_empty()
+            && (!label.trim().is_empty() || object.has_label_list())
         {
             let rect = thinoda_core::stencil_object::label_rect(object, render);
-            out.push(Prim::Text {
-                rect,
-                pivot: object.rect.center(),
-                rotation: object.rotation,
-                lines: wrap(label, rect.size.x, LABEL_SIZE),
-                size: LABEL_SIZE,
-                color: faded(font, opacity),
-                backdrop: None,
-                group_backdrop: None,
-            });
+            out.push(
+                styled_label(object, rect, label, faded(font, opacity)).unwrap_or_else(|| {
+                    Prim::Text {
+                        rect,
+                        pivot: object.rect.center(),
+                        rotation: object.rotation,
+                        lines: wrap(label, rect.size.x, LABEL_SIZE),
+                        size: LABEL_SIZE,
+                        color: faded(font, opacity),
+                        backdrop: None,
+                        group_backdrop: None,
+                    }
+                }),
+            );
         }
         return out;
     }
@@ -255,7 +422,39 @@ pub(crate) fn object_prims(
             } else {
                 object.style.stroke_width.max(0.0)
             };
+            let style = &object.style;
             let stroke = stroke_color.map(|c| (c, width));
+            let dash = stroke.and_then(|(_, width)| shape_style::dash_lengths(style, width));
+            let fill_polygons = shape_style::builtin_fill_polygons(object, outline, details);
+            if style.shadow {
+                let fills = if fill.is_some_and(|fill| fill.a > 0) {
+                    fill_polygons.clone()
+                } else {
+                    Vec::new()
+                };
+                let strokes = if stroke.is_some() {
+                    shape_style::builtin_stroke_paths(object, outline, details)
+                } else {
+                    Vec::new()
+                };
+                shadow_prims(&mut out, &fills, &strokes, width, opacity);
+            }
+            let fill = match fill {
+                Some(color)
+                    if color.a > 0
+                        && (style.gradient.is_some() || !style.fill_pattern.is_solid()) =>
+                {
+                    let paint = shape_style::fill_paint(style, object.rect, object.rotation, color);
+                    fill_prims(&mut out, &fill_polygons, &paint, object, width);
+                    None
+                }
+                fill => fill,
+            };
+            let dashed_stroke = stroke;
+            let stroke = if dash.is_some() { None } else { stroke };
+            let sides = object
+                .rectangle_sides
+                .map(|sides| sides.flipped(style.flip_h, style.flip_v));
             if *shape == ShapeKind::FinalState {
                 for detail in details {
                     out.push(Prim::Path {
@@ -273,7 +472,7 @@ pub(crate) fn object_prims(
                     stroke,
                     round: false,
                 });
-            } else if let Some(sides) = object.rectangle_sides {
+            } else if let Some(sides) = sides {
                 out.push(Prim::Path {
                     points: outline.clone(),
                     closed: true,
@@ -308,6 +507,7 @@ pub(crate) fn object_prims(
                         fill: None,
                         stroke: if *shape == ShapeKind::DoubleEllipse
                             || visual.automatic_board_stroke.is_some()
+                            || dash.is_some()
                         {
                             stroke
                         } else {
@@ -317,25 +517,40 @@ pub(crate) fn object_prims(
                     });
                 }
             }
-            if !label.trim().is_empty() {
+            if let (Some(dash), Some(stroke)) = (&dash, dashed_stroke) {
+                for (points, closed) in shape_style::builtin_stroke_paths(object, outline, details)
+                {
+                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                }
+            }
+            glass_prims(
+                &mut out,
+                object,
+                outline,
+                dashed_stroke.map(|(_, width)| width),
+            );
+            if !label.trim().is_empty() || object.has_label_list() {
                 let rect = thinoda_core::board::object_label_rect(object).unwrap_or(object.rect);
                 let under = object.style.fill.map_or(background, |f| f.over(background));
-                out.push(Prim::Text {
-                    rect,
-                    pivot: object.rect.center(),
-                    rotation: object.rotation,
-                    lines: wrap(label, rect.size.x, LABEL_SIZE),
-                    size: LABEL_SIZE,
-                    color: faded(
-                        object
-                            .style
-                            .text_color
-                            .unwrap_or_else(|| Color::highest_contrast_on(under)),
-                        opacity,
-                    ),
-                    backdrop: None,
-                    group_backdrop: None,
-                });
+                let color = faded(
+                    object
+                        .style
+                        .text_color
+                        .unwrap_or_else(|| Color::highest_contrast_on(under)),
+                    opacity,
+                );
+                out.push(
+                    styled_label(object, rect, label, color).unwrap_or_else(|| Prim::Text {
+                        rect,
+                        pivot: object.rect.center(),
+                        rotation: object.rotation,
+                        lines: wrap(label, rect.size.x, LABEL_SIZE),
+                        size: LABEL_SIZE,
+                        color,
+                        backdrop: None,
+                        group_backdrop: None,
+                    }),
+                );
             }
         }
         (
@@ -386,34 +601,57 @@ pub(crate) fn object_prims(
                 stroke: None,
                 round: false,
             });
+            let text_color = faded(
+                object
+                    .style
+                    .text_color
+                    .unwrap_or_else(|| Color::highest_contrast_on(background)),
+                opacity,
+            );
             if let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline) {
                 let label = thinoda_core::sankey::flow_label(connector, *mass);
-                let lines = wrap(&label, 200.0, 12.0);
-                let size = Vec2::new(
-                    lines.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f32 * 12.0 * 0.6
-                        + 8.0,
-                    lines.len() as f32 * 12.0 * 1.25 + 4.0,
+                let rich = object.label_rich_text.as_deref();
+                push_connector_label(
+                    &mut out,
+                    object,
+                    rich,
+                    anchor,
+                    &label,
+                    true,
+                    text_color,
+                    if rich.is_some() {
+                        faded(background, opacity)
+                    } else {
+                        background
+                    },
+                    None,
                 );
-                let rect = thinoda_core::Rect {
-                    min: anchor - size * 0.5,
-                    size,
-                };
-                out.push(Prim::Text {
-                    rect,
-                    pivot: rect.center(),
-                    rotation: 0.0,
-                    lines,
-                    size: 12.0,
-                    color: faded(
-                        object
-                            .style
-                            .text_color
-                            .unwrap_or_else(|| Color::highest_contrast_on(background)),
-                        opacity,
-                    ),
-                    backdrop: Some(background),
-                    group_backdrop: None,
-                });
+            }
+            if !connector.extra_labels.is_empty() {
+                let centerline = thinoda_core::sankey::ribbon_centerline(outline);
+                for label in &connector.extra_labels {
+                    if (!label.text.trim().is_empty() || label.has_list())
+                        && let Some(anchor) =
+                            thinoda_core::board::connector_label_point(&centerline, label.placement)
+                    {
+                        let rich = label.rich_text.as_deref();
+                        push_connector_label(
+                            &mut out,
+                            object,
+                            rich,
+                            anchor,
+                            &label.text,
+                            false,
+                            text_color,
+                            if rich.is_some() {
+                                faded(background, opacity)
+                            } else {
+                                background
+                            },
+                            None,
+                        );
+                    }
+                }
             }
         }
         (
@@ -423,6 +661,8 @@ pub(crate) fn object_prims(
                 width,
                 markers,
                 color,
+                jumps,
+                body,
                 ..
             },
         ) => {
@@ -433,69 +673,141 @@ pub(crate) fn object_prims(
                     .unwrap_or(automatic_stroke),
                 opacity,
             );
-            let width = width.max(0.1);
+            let body = body.as_deref();
+            let width = body
+                .map_or(*width, |body| body.stroke_width(*width))
+                .max(0.1);
+            let replaced = body.is_some_and(EdgeBody::replaces_stroke);
             let unset = connector.sankey.is_some_and(|f| f.weight.is_none());
             let paths = if unset {
                 thinoda_core::sankey::dash_segments(points)
             } else {
-                vec![connector_stroke_path(points, markers)]
+                match body {
+                    Some(EdgeBody::Rails(rails)) => rails.clone(),
+                    Some(EdgeBody::Band { .. }) => Vec::new(),
+                    _ => connector_stroke_paths(points, markers, jumps.as_deref()),
+                }
+            };
+            if let Some(EdgeBody::Band { outline, fill }) = body {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill: fill.map(|fill| faded(fill, opacity)),
+                    stroke: Some((color, width)),
+                    round: false,
+                });
+            }
+            let inner = match body {
+                Some(EdgeBody::Lines {
+                    inner: Some((inner, fill)),
+                    ..
+                }) => Some((faded(*fill, opacity), inner.max(0.1))),
+                _ => None,
             };
             for path in paths {
-                out.push(Prim::Path {
-                    points: path,
-                    closed: false,
-                    fill: None,
-                    stroke: Some((color, width)),
-                    round: true,
-                });
+                if let Some(inner) = inner {
+                    out.push(Prim::Path {
+                        points: path.clone(),
+                        closed: false,
+                        fill: None,
+                        stroke: Some((color, width)),
+                        round: true,
+                    });
+                    out.push(Prim::Path {
+                        points: path,
+                        closed: false,
+                        fill: None,
+                        stroke: Some(inner),
+                        round: true,
+                    });
+                } else {
+                    out.push(Prim::Path {
+                        points: path,
+                        closed: false,
+                        fill: None,
+                        stroke: Some((color, width)),
+                        round: true,
+                    });
+                }
             }
             let n = points.len();
             if connector.arrow_end && n >= 2 {
                 if let Some(marker) = markers[1] {
-                    out.push(marker_primitive(marker, width, color));
-                } else if connector.end_marker.is_none() {
+                    out.extend(
+                        marker
+                            .parts()
+                            .map(|part| marker_primitive(part, width, color)),
+                    );
+                } else if connector.end_marker.is_none() && !replaced {
                     out.push(arrowhead(points[n - 2], points[n - 1], width, color));
                 }
             }
             if connector.arrow_start && n >= 2 {
                 if let Some(marker) = markers[0] {
-                    out.push(marker_primitive(marker, width, color));
-                } else if connector.start_marker.is_none() {
+                    out.extend(
+                        marker
+                            .parts()
+                            .map(|part| marker_primitive(part, width, color)),
+                    );
+                } else if connector.start_marker.is_none() && !replaced {
                     out.push(arrowhead(points[1], points[0], width, color));
                 }
             }
-            if !connector.label.trim().is_empty() || unset {
-                let mid = midpoint(points);
-                let label = if unset {
-                    thinoda_core::sankey::flow_label(connector, 0.0)
-                } else {
-                    connector.label.clone()
-                };
-                let lines = wrap(&label, 200.0, 12.0);
-                let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1);
-                let size = Vec2::new(
-                    longest as f32 * 12.0 * 0.6 + 8.0,
-                    lines.len() as f32 * 12.0 * 1.25 + 4.0,
+            let text_color = object
+                .style
+                .text_color
+                .map(|text| faded(text, opacity))
+                .unwrap_or(color);
+            let backdrop = if object.style.text_color.is_some() {
+                faded(background, f32::from(text_color.a) / 255.0)
+            } else {
+                background
+            };
+            let group_backdrop = object.style.text_color.map(|_| background);
+            if unset {
+                push_connector_label(
+                    &mut out,
+                    object,
+                    object.label_rich_text.as_deref(),
+                    midpoint(points),
+                    &thinoda_core::sankey::flow_label(connector, 0.0),
+                    true,
+                    text_color,
+                    backdrop,
+                    group_backdrop,
                 );
-                let text_color = object
-                    .style
-                    .text_color
-                    .map(|text| faded(text, opacity))
-                    .unwrap_or(color);
-                out.push(Prim::Text {
-                    rect: Rect::from_center_size(mid, size),
-                    pivot: mid,
-                    rotation: 0.0,
-                    lines,
-                    size: 12.0,
-                    color: text_color,
-                    backdrop: Some(if object.style.text_color.is_some() {
-                        faded(background, f32::from(text_color.a) / 255.0)
-                    } else {
-                        background
-                    }),
-                    group_backdrop: object.style.text_color.map(|_| background),
-                });
+            } else if (!connector.label.trim().is_empty() || object.has_label_list())
+                && let Some(anchor) = connector.primary_label_anchor(points)
+            {
+                push_connector_label(
+                    &mut out,
+                    object,
+                    object.label_rich_text.as_deref(),
+                    anchor,
+                    &connector.label,
+                    false,
+                    text_color,
+                    backdrop,
+                    group_backdrop,
+                );
+            }
+            for label in &connector.extra_labels {
+                if (!label.text.trim().is_empty() || label.has_list())
+                    && let Some(anchor) =
+                        thinoda_core::board::connector_label_point(points, label.placement)
+                {
+                    push_connector_label(
+                        &mut out,
+                        object,
+                        label.rich_text.as_deref(),
+                        anchor,
+                        &label.text,
+                        false,
+                        text_color,
+                        backdrop,
+                        group_backdrop,
+                    );
+                }
             }
         }
         _ => {}
@@ -503,8 +815,140 @@ pub(crate) fn object_prims(
     out
 }
 
+/// Offset, recoloured copies of filled polygons and stroked paths, beneath the shape.
+fn shadow_prims(
+    out: &mut Vec<Prim>,
+    fills: &[Vec<Vec2>],
+    strokes: &[(Vec<Vec2>, bool)],
+    width: f32,
+    opacity: f32,
+) {
+    let color = shape_style::shadow_color(opacity);
+    let shift = |points: &[Vec2]| -> Vec<Vec2> {
+        points
+            .iter()
+            .map(|p| *p + shape_style::SHADOW_OFFSET)
+            .collect()
+    };
+    for polygon in fills.iter().filter(|p| p.len() >= 3) {
+        out.push(Prim::Path {
+            points: shift(polygon),
+            closed: true,
+            fill: Some(color),
+            stroke: None,
+            round: false,
+        });
+    }
+    if width > 0.0 {
+        for (points, closed) in strokes.iter().filter(|(p, _)| p.len() >= 2) {
+            out.push(Prim::Path {
+                points: shift(points),
+                closed: *closed,
+                fill: None,
+                stroke: Some((color, width)),
+                round: false,
+            });
+        }
+    }
+}
+
+/// Gradient polygons or pattern marks for a non-solid styled fill.
+fn fill_prims(
+    out: &mut Vec<Prim>,
+    polygons: &[Vec<Vec2>],
+    paint: &FillPaint,
+    object: &CanvasObject,
+    stroke_width: f32,
+) {
+    match paint {
+        FillPaint::Solid(color) => {
+            for polygon in polygons {
+                out.push(Prim::Path {
+                    points: polygon.clone(),
+                    closed: true,
+                    fill: Some(*color),
+                    stroke: None,
+                    round: false,
+                });
+            }
+        }
+        FillPaint::Gradient(paint) => {
+            for polygon in polygons.iter().filter(|p| p.len() >= 3) {
+                out.push(Prim::Gradient {
+                    points: polygon.clone(),
+                    paint: *paint,
+                });
+            }
+        }
+        FillPaint::Pattern(color, pattern) => {
+            let marks = shape_style::pattern_marks(
+                polygons,
+                object.rect,
+                object.rotation,
+                *pattern,
+                stroke_width,
+            );
+            for line in marks.lines {
+                out.push(Prim::Path {
+                    points: line,
+                    closed: false,
+                    fill: None,
+                    stroke: Some((*color, marks.width)),
+                    round: false,
+                });
+            }
+            for center in marks.dots {
+                out.push(Prim::Circle {
+                    center,
+                    radius: marks.dot_radius,
+                    fill: Some(*color),
+                    stroke: Color::TRANSPARENT,
+                    width: 0.0,
+                });
+            }
+        }
+    }
+}
+
+/// The visible dashes of a stroked path.
+fn dashed_prims(
+    out: &mut Vec<Prim>,
+    points: &[Vec2],
+    closed: bool,
+    dash: &[f32],
+    stroke: (Color, f32),
+) {
+    for points in shape_style::dash_polyline(points, closed, dash) {
+        out.push(Prim::Path {
+            points,
+            closed: false,
+            fill: None,
+            stroke: Some(stroke),
+            round: false,
+        });
+    }
+}
+
+fn glass_prims(
+    out: &mut Vec<Prim>,
+    object: &CanvasObject,
+    outline: &[Vec2],
+    stroke_width: Option<f32>,
+) {
+    if let Some((points, paint)) = shape_style::glass(
+        &object.style,
+        object.rect,
+        object.rotation,
+        outline,
+        stroke_width,
+    ) && points.len() >= 3
+    {
+        out.push(Prim::Gradient { points, paint });
+    }
+}
+
 fn marker_primitive(
-    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    marker: thinoda_core::scene::ConnectorMarkerPart,
     width: f32,
     color: Color,
 ) -> Prim {
@@ -542,7 +986,7 @@ fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
         Vec2::new(1.0, 0.0)
     };
     let normal = Vec2::new(-dir.y, dir.x);
-    let size = 6.0 + width * 2.0;
+    let size = thinoda_core::board::legacy_arrow_size(width);
     let base = Vec2::new(tip.x - dir.x * size, tip.y - dir.y * size);
     Prim::Path {
         points: vec![
@@ -603,6 +1047,35 @@ mod tests {
         scene_layout::{ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide},
         stencil_object::StencilRef,
     };
+
+    #[test]
+    fn export_keeps_the_marker_of_an_empty_list_label() {
+        let mut sheet = Sheet::new("Board", "");
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        object.label_rich_text = Some(Arc::new(thinoda_core::InlineText {
+            paragraphs: vec![thinoda_core::InlineParagraph {
+                index: 0,
+                list: thinoda_core::ListKind::Bulleted,
+            }],
+            ..Default::default()
+        }));
+        let id = sheet.add_canvas_object(object).unwrap();
+        let scene = build_scene(&sheet, &thinoda_core::layout::Layout::default());
+        let primitives = object_prims(
+            scene.item(SceneId::Object(id)).unwrap(),
+            sheet.canvas.object(id).unwrap(),
+            Color::WHITE,
+            false,
+            VisualExportContext::default(),
+        );
+        assert!(primitives.iter().any(|primitive| matches!(
+            primitive,
+            Prim::StyledLabel { layout, .. } if layout.lines[0].text == "• "
+        )));
+    }
 
     #[test]
     fn export_primitives_use_the_stored_header_side_and_extent() {

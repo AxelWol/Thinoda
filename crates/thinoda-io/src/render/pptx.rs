@@ -208,6 +208,88 @@ impl Drawing {
             fill(Some(color)), esc(text)));
     }
 
+    fn rich_label_line(
+        &mut self,
+        layout: &thinoda_core::label_style::LabelLayout,
+        line: &thinoda_core::label_style::LabelLine,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+        opacity: f32,
+    ) {
+        use thinoda_core::rich_text::InlineBaseline;
+
+        let id = self.id();
+        let left = if line.align == layout.align {
+            layout.frame.min.x
+        } else {
+            line.rect.min.x
+        };
+        let rect = Rect::from_min_size(
+            Vec2::new(left, line.rect.min.y),
+            Vec2::new(
+                (layout.frame.max().x - left).max(line.rect.size.x),
+                line.rect.size.y,
+            ),
+        );
+        let align = match line.align {
+            TextAlign::Left => "l",
+            TextAlign::Center => "ctr",
+            TextAlign::Right => "r",
+        };
+        let mut runs = String::new();
+        for run in &line.runs {
+            let size = (thinoda_core::label_style::run_font_size(layout.size, &run.style)
+                * self.scale
+                / 127.0)
+                .round()
+                .clamp(100.0, 400_000.0) as u32;
+            let family = esc(run
+                .style
+                .font_family
+                .as_deref()
+                .or(style.font_family.as_deref())
+                .unwrap_or("Segoe UI")
+                .split(',')
+                .next()
+                .unwrap_or("Segoe UI")
+                .trim()
+                .trim_matches('"'));
+            let baseline = match run.style.baseline {
+                Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
+                Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
+                _ => "",
+            };
+            let color = run.style.color.map_or(color, |value| {
+                Color::rgba(
+                    value.r,
+                    value.g,
+                    value.b,
+                    (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                )
+            });
+            let preserve = if run.text.starts_with(char::is_whitespace)
+                || run.text.ends_with(char::is_whitespace)
+            {
+                r#" xml:space="preserve""#
+            } else {
+                ""
+            };
+            runs.push_str(&format!(
+                r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
+                u8::from(run.style.bold.unwrap_or(style.bold)),
+                u8::from(run.style.italic.unwrap_or(style.italic)),
+                if run.style.underline.unwrap_or(style.underline) { "sng" } else { "none" },
+                if run.style.strikethrough.unwrap_or(style.strikethrough) { "sngStrike" } else { "noStrike" },
+                fill(Some(color)),
+                esc(&run.text),
+            ));
+        }
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Label"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/>{runs}</a:p></p:txBody></p:sp>"#,
+            self.transform(rect),
+        ));
+    }
+
     fn label(&mut self, rect: Rect, value: &str, size: f32, color: Color) {
         self.text(
             "Label",
@@ -259,6 +341,79 @@ impl Drawing {
             esc(name), self.width, self.height, self.width, self.height,
             if color.is_some() { "" } else { r#" fill="none""# },
             fill(color)));
+    }
+
+    /// Closed polygon with a gradient fill. The shape box is the polygon's
+    /// bounds, so DrawingML stretches the gradient over it; rotated linear and
+    /// radial gradients are approximated by their angle and the box centre.
+    fn gradient_poly(
+        &mut self,
+        name: &str,
+        points: &[Vec2],
+        paint: &thinoda_core::shape_style::ShapePaint,
+    ) {
+        use thinoda_core::shape_style::ShapePaint;
+        if points.len() < 3 {
+            return;
+        }
+        let (min, max) = points.iter().fold(
+            (
+                Vec2::new(f32::INFINITY, f32::INFINITY),
+                Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+            ),
+            |(lo, hi), p| {
+                (
+                    Vec2::new(lo.x.min(p.x), lo.y.min(p.y)),
+                    Vec2::new(hi.x.max(p.x), hi.y.max(p.y)),
+                )
+            },
+        );
+        let (w, h) = (
+            self.emu(max.x - min.x).max(1),
+            self.emu(max.y - min.y).max(1),
+        );
+        let id = self.id();
+        let point = |p: Vec2| {
+            format!(
+                r#"<a:pt x="{}" y="{}"/>"#,
+                self.emu(p.x - min.x),
+                self.emu(p.y - min.y)
+            )
+        };
+        let mut path = format!("<a:moveTo>{}</a:moveTo>", point(points[0]));
+        for p in &points[1..] {
+            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", point(*p)));
+        }
+        path.push_str("<a:close/>");
+        let stop = |position: u32, color: Color| {
+            format!(
+                r#"<a:gs pos="{position}"><a:srgbClr val="{:02X}{:02X}{:02X}"><a:alpha val="{}"/></a:srgbClr></a:gs>"#,
+                color.r,
+                color.g,
+                color.b,
+                u32::from(color.a) * 100_000 / 255
+            )
+        };
+        let shade = match *paint {
+            ShapePaint::Linear { from, to, .. } => {
+                let angle = (to.y - from.y).atan2(to.x - from.x).to_degrees();
+                format!(
+                    r#"<a:lin ang="{}" scaled="0"/>"#,
+                    ((angle * 60_000.0).round() as i64).rem_euclid(21_600_000)
+                )
+            }
+            ShapePaint::Radial { .. } => {
+                r#"<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>"#.to_owned()
+            }
+        };
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="{}" y="{}"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{w}" h="{h}">{path}</a:path></a:pathLst></a:custGeom><a:gradFill rotWithShape="1"><a:gsLst>{}{}</a:gsLst>{shade}</a:gradFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>"#,
+            esc(name),
+            self.emu(min.x - self.frame.min.x),
+            self.emu(min.y - self.frame.min.y),
+            stop(0, paint.start()),
+            stop(100_000, paint.end()),
+        ));
     }
 
     fn rectangle_sides(
@@ -317,6 +472,9 @@ impl Drawing {
                     fill,
                     stroke,
                 ),
+                super::board::Prim::Gradient { points, paint } => {
+                    self.gradient_poly(&format!("Canvas object {}", object.id), &points, &paint)
+                }
                 super::board::Prim::RectangleSides {
                     paths,
                     stroke,
@@ -401,6 +559,66 @@ impl Drawing {
                     }
                     self.rotation = previous_rotation;
                 }
+                super::board::Prim::StyledLabel {
+                    layout,
+                    style,
+                    color,
+                    opacity,
+                } => {
+                    if layout.lines.is_empty() {
+                        continue;
+                    }
+                    let previous_rotation = self.rotation;
+                    self.rotation = (layout.rotation != 0.0).then_some(Rotation {
+                        center: layout.pivot,
+                        degrees: layout.rotation,
+                    });
+                    let fade = |c: Color| {
+                        Color::rgba(
+                            c.r,
+                            c.g,
+                            c.b,
+                            (f32::from(c.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                        )
+                    };
+                    if style.background.is_some() || style.border.is_some() {
+                        let id = self.id();
+                        self.shape(
+                            id,
+                            "Label background",
+                            layout.box_rect(),
+                            "rect",
+                            style.background.map(fade),
+                            style.border.map_or(Color::TRANSPARENT, fade),
+                            if style.border.is_some() { 1.0 } else { 0.0 },
+                            false,
+                        );
+                    }
+                    let family = style.font_family.as_deref().unwrap_or("Segoe UI");
+                    for line in &layout.lines {
+                        if !line.runs.is_empty() {
+                            self.rich_label_line(&layout, line, &style, color, opacity);
+                            continue;
+                        }
+                        self.text(
+                            "Label",
+                            Rect::from_min_size(
+                                Vec2::new(layout.frame.min.x, line.rect.min.y),
+                                Vec2::new(layout.frame.size.x, line.rect.size.y),
+                            ),
+                            &line.text,
+                            layout.size,
+                            family,
+                            color,
+                            style.bold,
+                            style.italic,
+                            style.underline,
+                            style.strikethrough,
+                            layout.align,
+                        );
+                    }
+                    self.rotation = previous_rotation;
+                }
             }
         }
     }
@@ -463,6 +681,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
     {
+        let object = &*object;
         draw.board_object(item, object, page, options.dark, visual);
     }
     for boundary in &layout.boundaries {
@@ -822,6 +1041,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
     {
+        let object = &*object;
         draw.board_object(item, object, page, options.dark, visual);
     }
     if sheet

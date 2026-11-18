@@ -95,6 +95,37 @@ const COLLAPSE_LAYOUT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-COLLAPSE-LAYOUT
 const COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-COLLAPSE-LAYOUT-1";
 const SEMANTIC_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SEMANTIC-1";
 const SEMANTIC_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SEMANTIC-1";
+const MARKER_LIBRARY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKER-LIBRARY-1";
+const MARKER_LIBRARY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKER-LIBRARY-1";
+const LINE_JUMPS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LINE-JUMPS-1";
+const LINE_JUMPS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LINE-JUMPS-1";
+const EDGE_ROUTES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-EDGE-ROUTES-1";
+const EDGE_ROUTES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-EDGE-ROUTES-1";
+const SEGMENT_ROUTES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SEGMENT-ROUTES-1";
+const SEGMENT_ROUTES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SEGMENT-ROUTES-1";
+const EDGE_SHAPES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-EDGE-SHAPES-1";
+const EDGE_SHAPES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-EDGE-SHAPES-1";
+const CONNECTOR_LABELS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-CONNECTOR-LABELS-1";
+const CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-CONNECTOR-LABELS-1";
+const OBJECT_DATA_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-OBJECT-DATA-1";
+const OBJECT_DATA_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-OBJECT-DATA-1";
+const LAYERS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LAYERS-1";
+const LAYERS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LAYERS-1";
+const TABLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-TABLES-1";
+const TABLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-TABLES-1";
+const SHAPE_STYLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SHAPE-STYLES-1";
+const SHAPE_STYLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SHAPE-STYLES-1";
+const LABEL_STYLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LABEL-STYLES-1";
+const LABEL_STYLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LABEL-STYLES-1";
+const RICH_LABELS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RICH-LABELS-1";
+const RICH_LABELS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-RICH-LABELS-1";
+const RICH_CONNECTOR_LABELS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1";
+const RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str =
+    "THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1";
+const RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION: &str =
+    "THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1";
+const RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str =
+    "THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -116,7 +147,35 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_semantic_model() {
+        tuple.serialize_element(if self.workbook.has_rich_extra_connector_labels() {
+            RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rich_connector_labels() {
+            RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rich_labels() {
+            RICH_LABELS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_label_styles() {
+            LABEL_STYLES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_shape_styles() {
+            SHAPE_STYLES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_tables() {
+            TABLES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_layers() {
+            LAYERS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_object_data() {
+            OBJECT_DATA_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_labels() {
+            CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_line_jumps() {
+            LINE_JUMPS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_semantic_model() {
             SEMANTIC_INK_WORKBOOK_VERSION
         } else if self.workbook.has_scene_collapse() && self.workbook.has_scene_layout_policies() {
             COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
@@ -234,7 +293,35 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_semantic_model() {
+    let version = if workbook.has_rich_extra_connector_labels() {
+        RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+    } else if workbook.has_rich_connector_labels() {
+        RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+    } else if workbook.has_rich_labels() {
+        RICH_LABELS_WORKBOOK_VERSION
+    } else if workbook.has_label_styles() {
+        LABEL_STYLES_WORKBOOK_VERSION
+    } else if workbook.has_shape_styles() {
+        SHAPE_STYLES_WORKBOOK_VERSION
+    } else if workbook.has_tables() {
+        TABLES_WORKBOOK_VERSION
+    } else if workbook.has_layers() {
+        LAYERS_WORKBOOK_VERSION
+    } else if workbook.has_object_data() {
+        OBJECT_DATA_WORKBOOK_VERSION
+    } else if workbook.has_connector_labels() {
+        CONNECTOR_LABELS_WORKBOOK_VERSION
+    } else if workbook.has_connector_edge_shapes() {
+        EDGE_SHAPES_WORKBOOK_VERSION
+    } else if workbook.has_drawio_segment_routes() {
+        SEGMENT_ROUTES_WORKBOOK_VERSION
+    } else if workbook.has_drawio_edge_routes() {
+        EDGE_ROUTES_WORKBOOK_VERSION
+    } else if workbook.has_connector_line_jumps() {
+        LINE_JUMPS_WORKBOOK_VERSION
+    } else if workbook.has_library_connector_markers() {
+        MARKER_LIBRARY_WORKBOOK_VERSION
+    } else if workbook.has_semantic_model() {
         SEMANTIC_WORKBOOK_VERSION
     } else if workbook.has_scene_collapse() && workbook.has_scene_layout_policies() {
         COLLAPSE_LAYOUT_WORKBOOK_VERSION
@@ -319,6 +406,66 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_rich_labels() {
+                return Err(A::Error::custom(
+                    "rich labels require a rich-label-aware recovery workbook",
+                ));
+            }
+            if workbook.has_label_styles() {
+                return Err(A::Error::custom(
+                    "label styles require a label-style-aware recovery workbook",
+                ));
+            }
+            if workbook.has_shape_styles() {
+                return Err(A::Error::custom(
+                    "shape styles require a shape-style-aware recovery workbook",
+                ));
+            }
+            if workbook.has_tables() {
+                return Err(A::Error::custom(
+                    "tables require a table-aware recovery workbook",
+                ));
+            }
+            if workbook.has_layers() {
+                return Err(A::Error::custom(
+                    "layers require a layer-aware recovery workbook",
+                ));
+            }
+            if workbook.has_object_data() {
+                return Err(A::Error::custom(
+                    "object data requires an object-data-aware recovery workbook",
+                ));
+            }
+            if workbook.has_connector_labels() {
+                return Err(A::Error::custom(
+                    "connector labels require a connector-label-aware recovery workbook",
+                ));
+            }
+            if workbook.has_connector_edge_shapes() {
+                return Err(A::Error::custom(
+                    "connector edge shapes require an edge-shape-aware recovery workbook",
+                ));
+            }
+            if workbook.has_drawio_segment_routes() {
+                return Err(A::Error::custom(
+                    "draw.io segment routes require a segment-route-aware recovery workbook",
+                ));
+            }
+            if workbook.has_drawio_edge_routes() {
+                return Err(A::Error::custom(
+                    "draw.io edge routes require an edge-route-aware recovery workbook",
+                ));
+            }
+            if workbook.has_connector_line_jumps() {
+                return Err(A::Error::custom(
+                    "connector line jumps require a line-jump-aware recovery workbook",
+                ));
+            }
+            if workbook.has_library_connector_markers() {
+                return Err(A::Error::custom(
+                    "draw.io library connector markers require a marker-library-aware recovery workbook",
+                ));
+            }
             if workbook.has_scene_hierarchy() {
                 return Err(A::Error::custom(
                     "scene hierarchy requires scene-aware recovery",
@@ -440,6 +587,34 @@ where
                 && version != COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
                 && version != SEMANTIC_WORKBOOK_VERSION
                 && version != SEMANTIC_INK_WORKBOOK_VERSION
+                && version != MARKER_LIBRARY_WORKBOOK_VERSION
+                && version != MARKER_LIBRARY_INK_WORKBOOK_VERSION
+                && version != LINE_JUMPS_WORKBOOK_VERSION
+                && version != LINE_JUMPS_INK_WORKBOOK_VERSION
+                && version != EDGE_ROUTES_WORKBOOK_VERSION
+                && version != EDGE_ROUTES_INK_WORKBOOK_VERSION
+                && version != SEGMENT_ROUTES_WORKBOOK_VERSION
+                && version != SEGMENT_ROUTES_INK_WORKBOOK_VERSION
+                && version != EDGE_SHAPES_WORKBOOK_VERSION
+                && version != EDGE_SHAPES_INK_WORKBOOK_VERSION
+                && version != CONNECTOR_LABELS_WORKBOOK_VERSION
+                && version != CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                && version != OBJECT_DATA_WORKBOOK_VERSION
+                && version != OBJECT_DATA_INK_WORKBOOK_VERSION
+                && version != LAYERS_WORKBOOK_VERSION
+                && version != LAYERS_INK_WORKBOOK_VERSION
+                && version != TABLES_WORKBOOK_VERSION
+                && version != TABLES_INK_WORKBOOK_VERSION
+                && version != SHAPE_STYLES_WORKBOOK_VERSION
+                && version != SHAPE_STYLES_INK_WORKBOOK_VERSION
+                && version != LABEL_STYLES_WORKBOOK_VERSION
+                && version != LABEL_STYLES_INK_WORKBOOK_VERSION
+                && version != RICH_LABELS_WORKBOOK_VERSION
+                && version != RICH_LABELS_INK_WORKBOOK_VERSION
+                && version != RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                && version != RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                && version != RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+                && version != RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -449,6 +624,486 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let rich_extra_connector_labels_envelope = version
+                == RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+                || version == RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION;
+            if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
+                return Err(A::Error::custom(
+                    "rich extra connector labels require a rich-extra-connector-label-aware recovery workbook",
+                ));
+            }
+            let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                || version == RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+            if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
+                return Err(A::Error::custom(
+                    "rich connector labels require a rich-connector-label-aware recovery workbook",
+                ));
+            }
+            let rich_labels_envelope = version == RICH_LABELS_WORKBOOK_VERSION
+                || version == RICH_LABELS_INK_WORKBOOK_VERSION
+                || rich_connector_labels_envelope
+                || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+            if workbook.has_rich_labels() != rich_labels_envelope {
+                return Err(A::Error::custom(
+                    "rich labels require a rich-label-aware recovery workbook",
+                ));
+            }
+            let label_styles_envelope = version == LABEL_STYLES_WORKBOOK_VERSION
+                || version == LABEL_STYLES_INK_WORKBOOK_VERSION
+                || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+                    && workbook.has_label_styles();
+            if workbook.has_label_styles() != label_styles_envelope {
+                return Err(A::Error::custom(
+                    "label styles require a label-style-aware recovery workbook",
+                ));
+            }
+            let version = if !label_styles_envelope
+                && !rich_labels_envelope
+                && !rich_extra_connector_labels_envelope
+            {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_shape_styles() {
+                    (
+                        SHAPE_STYLES_WORKBOOK_VERSION,
+                        SHAPE_STYLES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_tables() {
+                    (TABLES_WORKBOOK_VERSION, TABLES_INK_WORKBOOK_VERSION)
+                } else if workbook.has_layers() {
+                    (LAYERS_WORKBOOK_VERSION, LAYERS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let shape_styles_envelope = version == SHAPE_STYLES_WORKBOOK_VERSION
+                || version == SHAPE_STYLES_INK_WORKBOOK_VERSION;
+            if workbook.has_shape_styles() != shape_styles_envelope {
+                return Err(A::Error::custom(
+                    "shape styles require a shape-style-aware recovery workbook",
+                ));
+            }
+            let version = if !shape_styles_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_tables() {
+                    (TABLES_WORKBOOK_VERSION, TABLES_INK_WORKBOOK_VERSION)
+                } else if workbook.has_layers() {
+                    (LAYERS_WORKBOOK_VERSION, LAYERS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let tables_envelope =
+                version == TABLES_WORKBOOK_VERSION || version == TABLES_INK_WORKBOOK_VERSION;
+            if workbook.has_tables() != tables_envelope {
+                return Err(A::Error::custom(
+                    "tables require a table-aware recovery workbook",
+                ));
+            }
+            let version = if !tables_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_layers() {
+                    (LAYERS_WORKBOOK_VERSION, LAYERS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let layers_envelope =
+                version == LAYERS_WORKBOOK_VERSION || version == LAYERS_INK_WORKBOOK_VERSION;
+            if workbook.has_layers() != layers_envelope {
+                return Err(A::Error::custom(
+                    "layers require a layer-aware recovery workbook",
+                ));
+            }
+            let version = if !layers_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let object_data_envelope = version == OBJECT_DATA_WORKBOOK_VERSION
+                || version == OBJECT_DATA_INK_WORKBOOK_VERSION;
+            if workbook.has_object_data() != object_data_envelope {
+                return Err(A::Error::custom(
+                    "object data requires an object-data-aware recovery workbook",
+                ));
+            }
+            let version = if !object_data_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let connector_labels_envelope = version == CONNECTOR_LABELS_WORKBOOK_VERSION
+                || version == CONNECTOR_LABELS_INK_WORKBOOK_VERSION;
+            if workbook.has_connector_labels() != connector_labels_envelope {
+                return Err(A::Error::custom(
+                    "connector labels require a connector-label-aware recovery workbook",
+                ));
+            }
+            let version = if !connector_labels_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let edge_shapes_envelope = version == EDGE_SHAPES_WORKBOOK_VERSION
+                || version == EDGE_SHAPES_INK_WORKBOOK_VERSION;
+            if workbook.has_connector_edge_shapes() != edge_shapes_envelope {
+                return Err(A::Error::custom(
+                    "connector edge shapes require an edge-shape-aware recovery workbook",
+                ));
+            }
+            // Map the edge-shape envelope down to the next older one, so the
+            // older checks still run.
+            let version = if !edge_shapes_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let segment_routes_envelope = version == SEGMENT_ROUTES_WORKBOOK_VERSION
+                || version == SEGMENT_ROUTES_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_segment_routes() != segment_routes_envelope {
+                return Err(A::Error::custom(
+                    "draw.io segment routes require a segment-route-aware recovery workbook",
+                ));
+            }
+            // Map the segment envelope down to the next older one the
+            // workbook's other content selects, so the older checks still run.
+            let version = if !segment_routes_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
+            let edge_routes_envelope = version == EDGE_ROUTES_WORKBOOK_VERSION
+                || version == EDGE_ROUTES_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_edge_routes() != edge_routes_envelope {
+                return Err(A::Error::custom(
+                    "draw.io edge routes require an edge-route-aware recovery workbook",
+                ));
+            }
+            let version = match (
+                edge_routes_envelope,
+                workbook.has_connector_line_jumps(),
+                workbook.has_library_connector_markers(),
+                workbook.has_semantic_model(),
+                has_pending_ink,
+            ) {
+                (false, ..) => version,
+                (true, true, _, _, true) => LINE_JUMPS_INK_WORKBOOK_VERSION.to_owned(),
+                (true, true, _, _, false) => LINE_JUMPS_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, _, true) => MARKER_LIBRARY_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, _, false) => MARKER_LIBRARY_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, true, true) => SEMANTIC_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, true, false) => SEMANTIC_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, false, true) => {
+                    COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION.to_owned()
+                }
+                (true, false, false, false, false) => COLLAPSE_LAYOUT_WORKBOOK_VERSION.to_owned(),
+            };
+            let line_jumps_envelope = version == LINE_JUMPS_WORKBOOK_VERSION
+                || version == LINE_JUMPS_INK_WORKBOOK_VERSION;
+            if workbook.has_connector_line_jumps() != line_jumps_envelope {
+                return Err(A::Error::custom(
+                    "connector line jumps require a line-jump-aware recovery workbook",
+                ));
+            }
+            let version = match (
+                line_jumps_envelope,
+                workbook.has_library_connector_markers(),
+                workbook.has_semantic_model(),
+                has_pending_ink,
+            ) {
+                (false, _, _, _) => version,
+                (true, true, _, true) => MARKER_LIBRARY_INK_WORKBOOK_VERSION.to_owned(),
+                (true, true, _, false) => MARKER_LIBRARY_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, true) => SEMANTIC_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, false) => SEMANTIC_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, true) => COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, false) => COLLAPSE_LAYOUT_WORKBOOK_VERSION.to_owned(),
+            };
+            let marker_library_envelope = version == MARKER_LIBRARY_WORKBOOK_VERSION
+                || version == MARKER_LIBRARY_INK_WORKBOOK_VERSION;
+            if workbook.has_library_connector_markers() != marker_library_envelope {
+                return Err(A::Error::custom(
+                    "draw.io library connector markers require a marker-library-aware recovery workbook",
+                ));
+            }
+            let version = match (
+                marker_library_envelope,
+                workbook.has_semantic_model(),
+                has_pending_ink,
+            ) {
+                (false, _, _) => version,
+                (true, true, true) => SEMANTIC_INK_WORKBOOK_VERSION.to_owned(),
+                (true, true, false) => SEMANTIC_WORKBOOK_VERSION.to_owned(),
+                (true, false, true) => COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, false) => COLLAPSE_LAYOUT_WORKBOOK_VERSION.to_owned(),
+            };
             let semantic_envelope =
                 version == SEMANTIC_WORKBOOK_VERSION || version == SEMANTIC_INK_WORKBOOK_VERSION;
             if workbook.has_semantic_model() != semantic_envelope {
@@ -2397,6 +3052,820 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn rich_labels_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::board::{CanvasObject, CanvasObjectKind, ShapeKind};
+        use thinoda_core::{Rect, Vec2};
+
+        for label_style in [false, true] {
+            let mut book = Workbook::default();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+                unreachable!()
+            };
+            *label = "A🙂B".into();
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range(label, 1..2, |style| style.italic = Some(true))
+                .unwrap();
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+            if label_style {
+                object.label_style =
+                    Some(std::sync::Arc::new(thinoda_core::label_style::LabelStyle {
+                        bold: true,
+                        ..Default::default()
+                    }));
+            }
+            book.active_mut().add_canvas_object(object).unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        RICH_LABELS_INK_WORKBOOK_VERSION
+                    } else {
+                        RICH_LABELS_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    LABEL_STYLES_INK_WORKBOOK_VERSION
+                } else {
+                    LABEL_STYLES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn rich_connector_labels_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::board::{CanvasConnector, CanvasObject};
+        use thinoda_core::{Endpoint, Vec2};
+
+        let mut book = Workbook::default();
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        ));
+        object.set_label("A🙂B").unwrap();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.italic = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                } else {
+                    RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                RICH_LABELS_INK_WORKBOOK_VERSION
+            } else {
+                RICH_LABELS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+        }
+    }
+
+    #[test]
+    fn rich_extra_connector_labels_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::board::{CanvasConnector, CanvasObject, ConnectorLabel, ShapeKind};
+        use thinoda_core::{Endpoint, Vec2};
+
+        for primary in [false, true] {
+            for (label_style, shape_rich) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let mut book = Workbook::default();
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                let mut rich = thinoda_core::InlineText::default();
+                rich.update_range("A🙂B", 1..2, |style| style.italic = Some(true))
+                    .unwrap();
+                connector.extra_labels.push(ConnectorLabel {
+                    text: "A🙂B".into(),
+                    rich_text: Some(Arc::new(rich.clone())),
+                    ..Default::default()
+                });
+                let mut object = CanvasObject::connector(connector);
+                if primary {
+                    object.set_label("A🙂B").unwrap();
+                    object.label_rich_text = Some(Arc::new(rich));
+                }
+                book.active_mut().add_canvas_object(object).unwrap();
+                if label_style || shape_rich {
+                    let mut shape = CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+                    );
+                    if label_style {
+                        shape.label_style = Some(Arc::new(thinoda_core::label_style::LabelStyle {
+                            bold: true,
+                            ..Default::default()
+                        }));
+                    }
+                    if shape_rich {
+                        shape.set_label("shape").unwrap();
+                        let mut rich = thinoda_core::InlineText::default();
+                        rich.update_range("shape", 0..5, |style| style.bold = Some(true))
+                            .unwrap();
+                        shape.label_rich_text = Some(Arc::new(rich));
+                    }
+                    book.active_mut().add_canvas_object(shape).unwrap();
+                }
+                for ink in [None, Some("pending ink")] {
+                    let bytes = match ink {
+                        Some(ink) => {
+                            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                                .unwrap()
+                        }
+                        None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                    };
+                    let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(snapshot.workbook, book);
+                    assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                    let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(
+                        older["workbook"][0],
+                        if ink.is_some() {
+                            RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                        } else {
+                            RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+                        }
+                    );
+                    older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                        RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                    } else {
+                        RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                    });
+                    assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                    let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                    assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn label_styles_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::Vec2;
+        use thinoda_core::board::{CanvasObject, ShapeKind};
+        use thinoda_core::label_style::LabelStyle;
+
+        for shape_style in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            object.label_style = Some(std::sync::Arc::new(LabelStyle {
+                italic: true,
+                ..LabelStyle::default()
+            }));
+            object.style.shadow = shape_style;
+            sheet.add_canvas_object(object).unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        LABEL_STYLES_INK_WORKBOOK_VERSION
+                    } else {
+                        LABEL_STYLES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    SHAPE_STYLES_INK_WORKBOOK_VERSION
+                } else {
+                    SHAPE_STYLES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn shape_styles_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::Vec2;
+        use thinoda_core::board::{CanvasObject, ShapeKind};
+
+        for table in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            object.style.shadow = true;
+            sheet.add_canvas_object(object).unwrap();
+            if table {
+                sheet
+                    .insert_canvas_table(Vec2::new(100.0, 0.0), 2, 2, None)
+                    .unwrap();
+            }
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        SHAPE_STYLES_INK_WORKBOOK_VERSION
+                    } else {
+                        SHAPE_STYLES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    TABLES_INK_WORKBOOK_VERSION
+                } else {
+                    TABLES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn tables_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::Vec2;
+
+        for layered in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 3, None).unwrap();
+            if layered {
+                let layer = sheet.add_board_layer("Tables").unwrap();
+                sheet
+                    .move_canvas_objects_to_layer(&[table], Some(layer))
+                    .unwrap();
+            }
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        TABLES_INK_WORKBOOK_VERSION
+                    } else {
+                        TABLES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    LAYERS_INK_WORKBOOK_VERSION
+                } else {
+                    LAYERS_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn layers_require_aware_recovery_with_and_without_pending_ink() {
+        use std::sync::Arc;
+        use thinoda_core::object_data::ObjectData;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        for data in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+            );
+            if data {
+                object.data = Some(Arc::new(ObjectData {
+                    tags: vec!["n".into()],
+                    ..Default::default()
+                }));
+            }
+            let id = sheet.add_canvas_object(object).unwrap();
+            let layer = sheet.add_board_layer("Hidden notes").unwrap();
+            sheet
+                .move_canvas_objects_to_layer(&[id], Some(layer))
+                .unwrap();
+            sheet.set_board_layer_visible(layer, false).unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        LAYERS_INK_WORKBOOK_VERSION
+                    } else {
+                        LAYERS_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    OBJECT_DATA_INK_WORKBOOK_VERSION
+                } else {
+                    OBJECT_DATA_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn object_data_requires_aware_recovery_with_and_without_pending_ink() {
+        use std::sync::Arc;
+        use thinoda_core::object_data::ObjectData;
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorLabel, ConnectorLabelPlacement, Endpoint, Vec2,
+        };
+
+        for labels in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            if labels {
+                connector.extra_labels.push(ConnectorLabel {
+                    text: "n".into(),
+                    placement: ConnectorLabelPlacement::default(),
+                    rich_text: None,
+                });
+            }
+            let mut object = CanvasObject::connector(connector);
+            object.data = Some(Arc::new(ObjectData {
+                link: Some("data:page/id,p2".into()),
+                ..Default::default()
+            }));
+            book.active_mut().add_canvas_object(object).unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        OBJECT_DATA_INK_WORKBOOK_VERSION
+                    } else {
+                        OBJECT_DATA_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                } else {
+                    CONNECTOR_LABELS_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn connector_labels_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorLabel, ConnectorLabelPlacement, EdgeShape,
+            EdgeShapeKind, Endpoint, Vec2,
+        };
+
+        for edge_shape in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.extra_labels.push(ConnectorLabel {
+                text: "n".into(),
+                placement: ConnectorLabelPlacement::default(),
+                rich_text: None,
+            });
+            if edge_shape {
+                connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Pipe));
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                    } else {
+                        CONNECTOR_LABELS_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    EDGE_SHAPES_INK_WORKBOOK_VERSION
+                } else {
+                    EDGE_SHAPES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn edge_shapes_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, EdgeShape, EdgeShapeKind, Endpoint, Vec2,
+        };
+
+        for segment_route in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::TaperedArrow));
+            if segment_route {
+                connector.route = ConnectorRoute::Segment;
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION
+                    } else {
+                        EDGE_SHAPES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    SEGMENT_ROUTES_INK_WORKBOOK_VERSION
+                } else {
+                    SEGMENT_ROUTES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn segment_routes_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{CanvasConnector, CanvasObject, ConnectorRoute, Endpoint, Vec2};
+
+        for edge_route in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.route = ConnectorRoute::Segment;
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            if edge_route {
+                let mut other = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(0.0, 80.0)),
+                );
+                other.route = ConnectorRoute::ElbowVertical;
+                book.active_mut()
+                    .add_canvas_object(CanvasObject::connector(other))
+                    .unwrap();
+            }
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION
+                    } else {
+                        SEGMENT_ROUTES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    EDGE_ROUTES_INK_WORKBOOK_VERSION
+                } else {
+                    EDGE_ROUTES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn edge_routes_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, Endpoint, LineJumpStyle, LineJumps, Vec2,
+        };
+
+        for jumps in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.route = ConnectorRoute::TopToBottom;
+            if jumps {
+                connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Gap));
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION
+                    } else {
+                        EDGE_ROUTES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    LINE_JUMPS_INK_WORKBOOK_VERSION
+                } else {
+                    LINE_JUMPS_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn line_jumps_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+            LineJumpStyle, LineJumps, Vec2,
+        };
+
+        for library in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Gap));
+            if library {
+                connector.end_marker = Some(ConnectorMarker {
+                    kind: ConnectorMarkerKind::Box,
+                });
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        LINE_JUMPS_INK_WORKBOOK_VERSION
+                    } else {
+                        LINE_JUMPS_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    MARKER_LIBRARY_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_LIBRARY_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn library_markers_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::DoubleBlock,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    MARKER_LIBRARY_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_LIBRARY_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
+            } else {
+                COLLAPSE_LAYOUT_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+            let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
         }
     }
 

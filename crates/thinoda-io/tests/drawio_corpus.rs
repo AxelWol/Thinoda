@@ -593,6 +593,30 @@ fn check(path: &Path) -> Result<String, String> {
                 })
                 .collect();
             endpoints.sort();
+            let mut tables: Vec<_> = sheet
+                .canvas
+                .scene
+                .tables
+                .iter()
+                .filter_map(|(id, table)| {
+                    let cells: Vec<_> = table
+                        .cells
+                        .iter()
+                        .map(|cell| {
+                            (
+                                object_keys.get(&cell.id).cloned(),
+                                [cell.row, cell.column, cell.row_span, cell.column_span],
+                            )
+                        })
+                        .collect();
+                    Some((
+                        object_keys.get(id)?.clone(),
+                        format!("{:?} {:?} {:?}", table.rows, table.columns, table.stripes),
+                        cells,
+                    ))
+                })
+                .collect();
+            tables.sort();
             (
                 objects,
                 containers,
@@ -601,6 +625,7 @@ fn check(path: &Path) -> Result<String, String> {
                 collapsed,
                 policies,
                 endpoints,
+                tables,
             )
         };
         if has_scene_hierarchy {
@@ -728,7 +753,7 @@ fn check(path: &Path) -> Result<String, String> {
         }
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} fixed port(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} fixed port(s), {} table(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -756,6 +781,10 @@ fn check(path: &Path) -> Result<String, String> {
         book.sheets
             .iter()
             .map(|sheet| fixed_ports(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| sheet.canvas.scene.tables.len())
             .sum::<usize>(),
         report.warnings.len()
     ))
@@ -789,6 +818,51 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
     }
     eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn corpus_cells_naming_bundled_drawio_shapes_draw_their_stencils() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let bundle = thinoda_io::drawio_bundle::bundle();
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "drawio"))
+        .collect();
+    files.sort();
+    let mut drawn = 0;
+    for path in &files {
+        let bytes = std::fs::read(path).unwrap();
+        let Ok(report) = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes) else {
+            continue;
+        };
+        for sheet in &report.workbook.sheets {
+            for object in &sheet.canvas.objects {
+                let Some(stencil) = &object.stencil else {
+                    continue;
+                };
+                if bundle.package_by_id(&stencil.package).is_none() {
+                    continue;
+                }
+                assert!(
+                    stencil.package_resource.is_some()
+                        && thinoda_core::stencil_object::render(object).is_some(),
+                    "{}: {}/{}",
+                    path.display(),
+                    stencil.package,
+                    stencil.definition
+                );
+                drawn += 1;
+            }
+        }
+    }
+    eprintln!("{drawn} corpus cell(s) drawn by bundled draw.io stencils");
+    if std::env::var_os("THINODA_DRAWIO_CORPUS").is_none() {
+        assert!(drawn >= 60, "{drawn}");
+    }
 }
 
 #[test]
@@ -904,6 +978,61 @@ fn supplied_requirements_flow_keeps_its_annotation_brackets() {
 }
 
 #[test]
+fn supplied_edge_shapes_import_and_round_trip() {
+    use thinoda_core::board::EdgeShapeKind;
+
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for (name, kind, expected) in [
+        ("requirements-flow.drawio", EdgeShapeKind::FlexArrow, 8),
+        ("home-lab-example.drawio", EdgeShapeKind::Link, 2),
+        ("sankey-diagrams.drawio", EdgeShapeKind::FilledEdge, 8),
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let count = |book: &Workbook| {
+            book.sheets
+                .iter()
+                .flat_map(|sheet| &sheet.canvas.objects)
+                .filter(|object| {
+                    matches!(
+                        &object.kind,
+                        CanvasObjectKind::Connector(connector)
+                            if connector.edge_shape.is_some_and(|shape| shape.kind == kind)
+                    )
+                })
+                .count()
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        assert_eq!(count(&report.workbook), expected, "{name}");
+        report.workbook.validate().unwrap();
+        // Pages export one at a time because isolated scene containers
+        // across pages are not exportable yet; attachment approximations
+        // unrelated to edge shapes need consent.
+        let mut round_tripped = 0;
+        for sheet in &report.workbook.sheets {
+            let mut book = report.workbook.clone();
+            book.sheets = vec![sheet.clone()];
+            let exported = thinoda_io::export_bytes_with_consent(
+                &book,
+                Format::DrawIo,
+                &ExportOptions::default(),
+                true,
+            )
+            .unwrap();
+            let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported).unwrap();
+            assert_eq!(count(&reopened.workbook), count(&book), "{name}");
+            round_tripped += count(&reopened.workbook);
+        }
+        assert_eq!(round_tripped, expected, "{name}");
+    }
+}
+
+#[test]
 fn supplied_gantt_processes_remain_editable_with_a_warning() {
     let Some(dir) = corpus_dir() else {
         return;
@@ -947,7 +1076,7 @@ fn supplied_gantt_processes_remain_editable_with_a_warning() {
 }
 
 #[test]
-fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
+fn supplied_floorplan_chairs_draw_their_bundled_stencils() {
     let Some(dir) = corpus_dir() else {
         return;
     };
@@ -963,43 +1092,45 @@ fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
         }
         let bytes = std::fs::read(path).unwrap();
         let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
-        assert!(
-            report
-                .warnings
-                .contains(&thinoda_io::ImportWarning::UnsupportedDrawioShapes),
-            "{name}"
-        );
-        let placeholders = report
+        let chairs: Vec<_> = report
             .workbook
             .sheets
             .iter()
             .flat_map(|sheet| &sheet.canvas.objects)
             .filter(|object| {
-                matches!(
-                    object.kind,
-                    CanvasObjectKind::Shape {
-                        shape: ShapeKind::Rectangle,
-                        ..
-                    }
-                ) && object.label().is_empty()
+                object.label().is_empty()
                     && (object.rect.size == Vec2::new(40.0, 43.0)
                         || object.rect.size == Vec2::new(43.0, 40.0))
             })
-            .count();
-        assert!(placeholders >= minimum, "{name}: {placeholders}");
+            .collect();
+        assert!(chairs.len() >= minimum, "{name}: {}", chairs.len());
+        for chair in chairs {
+            let stencil = chair.stencil.as_ref();
+            assert!(
+                stencil.is_some_and(|stencil| {
+                    stencil.package == "drawio.floorplan" && stencil.definition.contains("chair")
+                }) && thinoda_core::stencil_object::render(chair).is_some(),
+                "{name}: {stencil:?}"
+            );
+        }
         report.workbook.validate().unwrap();
     }
 }
 
 #[test]
-fn supplied_diagrams_report_unresolved_metadata_placeholders() {
+fn supplied_diagrams_resolve_object_placeholders() {
     let Some(dir) = corpus_dir() else {
         return;
     };
-    for (name, token) in [
-        ("C4.drawio", "%c4Name%"),
-        ("kanban-examples.drawio", "%status%"),
-        ("home-lab-example.drawio", "%subnet%"),
+    for (name, token, resolved, templates_lost) in [
+        ("C4.drawio", "%c4Name%", None, false),
+        ("kanban-examples.drawio", "%status%", None, false),
+        (
+            "home-lab-example.drawio",
+            "%subnet%",
+            Some("192.168.3.1"),
+            true,
+        ),
     ] {
         let path = dir.join(name);
         if !path.is_file() {
@@ -1007,31 +1138,55 @@ fn supplied_diagrams_report_unresolved_metadata_placeholders() {
         }
         let bytes = std::fs::read(path).unwrap();
         let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
-        assert!(
+        assert_eq!(
             report
                 .warnings
                 .contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported),
+            templates_lost,
             "{name}"
         );
         assert!(
-            report.workbook.sheets.iter().any(|sheet| {
-                sheet
-                    .topics
-                    .values()
-                    .any(|topic| topic.title.contains(token))
-                    || sheet
-                        .canvas
-                        .objects
-                        .iter()
-                        .any(|object| object.label().contains(token))
-            }),
-            "{name}: expected unresolved {token}"
+            report
+                .workbook
+                .sheets
+                .iter()
+                .all(|sheet| sheet.zones.iter().all(|zone| !zone.name.contains(token))),
+            "{name}: Zone names are resolved on import"
         );
-        assert!(matches!(
-            thinoda_io::import_bytes(Format::DrawIo, &bytes),
-            Err(IoError::ImportNeedsConfirmation(warnings))
-                if warnings.contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported)
-        ));
+        let labels: Vec<String> = report
+            .workbook
+            .sheets
+            .iter()
+            .flat_map(|sheet| {
+                sheet.canvas.objects.iter().map(|object| {
+                    thinoda_core::object_data::with_resolved_placeholders(
+                        &sheet.canvas,
+                        object,
+                        Some(&sheet.title),
+                    )
+                    .label()
+                    .to_owned()
+                })
+            })
+            .collect();
+        assert!(
+            report.workbook.sheets.iter().any(|sheet| sheet
+                .canvas
+                .objects
+                .iter()
+                .any(|object| object.label().contains(token))),
+            "{name}: raw {token} is kept for editing and export"
+        );
+        assert!(
+            labels.iter().all(|label| !label.contains(token)),
+            "{name}: {token} must resolve"
+        );
+        if let Some(resolved) = resolved {
+            assert!(
+                labels.iter().any(|label| label.contains(resolved)),
+                "{name}"
+            );
+        }
         report.workbook.validate().unwrap();
     }
 }

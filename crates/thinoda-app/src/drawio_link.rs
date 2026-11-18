@@ -354,7 +354,7 @@ mod tests {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();
         let count = app.docs.len();
-        let lossy = link("dashed=1;");
+        let lossy = link("fillStyle=future;");
         app.import_drawio_link_text(&lossy).unwrap();
         assert_eq!(app.docs.len(), count);
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
@@ -442,7 +442,7 @@ mod tests {
     fn unsupported_shape_link_shows_a_cancelable_specific_warning() {
         let xml = concat!(
             r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.floorplan.office_chair;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.example.not_a_stencil;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
             r#"</root></mxGraphModel>"#
         );
         let link = format!(
@@ -599,7 +599,7 @@ mod tests {
     fn placeholder_link_shows_a_cancelable_specific_warning() {
         let xml = concat!(
             r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<object id="shape" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
+            r#"<object id="shape" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
             r#"</root></mxGraphModel>"#
         );
         let link = format!(
@@ -617,7 +617,7 @@ mod tests {
         assert!(h.query_all_by_role(Role::Label).any(|node| {
             node.value().is_some_and(|value| {
                 value.contains(t(
-                    "draw.io placeholders are not resolved and their data is not preserved",
+                    "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields",
                 ))
             })
         }));
@@ -657,7 +657,8 @@ mod tests {
         );
         app.dialogs.drawio_link = None;
 
-        app.import_drawio_link_text(&link("dashed=1;")).unwrap();
+        app.import_drawio_link_text(&link("fillStyle=future;"))
+            .unwrap();
         assert_eq!(app.dialogs.imports.front().unwrap().3, Some(viewport));
         app.current_viewport = ViewportId::ROOT;
         app.resolve_import(true);
@@ -665,7 +666,8 @@ mod tests {
         assert_eq!(app.document_windows.get(&key), Some(&viewport));
 
         app.current_viewport = viewport;
-        app.import_drawio_link_text(&link("dashed=1;")).unwrap();
+        app.import_drawio_link_text(&link("fillStyle=future;"))
+            .unwrap();
         app.return_drawio_import_viewport(viewport);
         assert_eq!(
             app.dialogs.imports.front().unwrap().3,
@@ -695,7 +697,7 @@ mod tests {
         h.get_by_label(t(LINK_LABEL)).focus();
         h.key_press_modifiers(Modifiers::COMMAND, Key::A);
         h.run_steps(2);
-        let published_link = link("dashed=1;");
+        let published_link = link("fillStyle=future;");
         h.get_by_label(t(LINK_LABEL)).type_text(&published_link);
         h.run_steps(2);
         assert_eq!(
@@ -781,7 +783,7 @@ mod tests {
         let cells: String = (0..10)
             .map(|index| {
                 format!(
-                    r#"<mxCell id="shape{index}" value="Diagram item {index}" style="dashed=1;" vertex="1" parent="1"><mxGeometry x="{}" y="0" width="100" height="60" as="geometry"/></mxCell>"#,
+                    r#"<mxCell id="shape{index}" value="Diagram item {index}" style="fillStyle=future;" vertex="1" parent="1"><mxGeometry x="{}" y="0" width="100" height="60" as="geometry"/></mxCell>"#,
                     index * 110
                 )
             })

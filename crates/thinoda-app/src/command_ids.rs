@@ -142,6 +142,7 @@ impl Cmd {
             Self::BoardGrid(GridKind::Lines) => "board.grid.lines",
             Self::BoardSnap => "board.snap",
             Self::BoardMinimap => "board.minimap",
+            Self::BoardLayers => "board.layers",
             Self::BoardImage => "board.image",
             Self::BoardZoomSelection => "board.zoom-selection",
             Self::AiSettings => "ai.settings",

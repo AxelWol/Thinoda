@@ -58,6 +58,81 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "socio-technical data requires native format version 36".into(),
             ));
         }
+        if version < 37 && book.has_drawio_passthrough() {
+            return Err(IoError::NewerVersion(
+                "draw.io passthrough requires native format version 37".into(),
+            ));
+        }
+        if version < 51 && book.has_rich_extra_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "rich extra connector labels require native format version 51".into(),
+            ));
+        }
+        if version < 50 && book.has_rich_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "rich connector labels require native format version 50".into(),
+            ));
+        }
+        if version < 49 && book.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require native format version 49".into(),
+            ));
+        }
+        if version < 48 && book.has_label_styles() {
+            return Err(IoError::NewerVersion(
+                "label styles require native format version 48".into(),
+            ));
+        }
+        if version < 47 && book.has_shape_styles() {
+            return Err(IoError::NewerVersion(
+                "shape styles require native format version 47".into(),
+            ));
+        }
+        if version < 46 && book.has_tables() {
+            return Err(IoError::NewerVersion(
+                "tables require native format version 46".into(),
+            ));
+        }
+        if version < 45 && book.has_layers() {
+            return Err(IoError::NewerVersion(
+                "layers require native format version 45".into(),
+            ));
+        }
+        if version < 44 && book.has_object_data() {
+            return Err(IoError::NewerVersion(
+                "object data requires native format version 44".into(),
+            ));
+        }
+        if version < 43 && book.has_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "connector labels require native format version 43".into(),
+            ));
+        }
+        if version < 42 && book.has_connector_edge_shapes() {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require native format version 42".into(),
+            ));
+        }
+        if version < 41 && book.has_drawio_segment_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require native format version 41".into(),
+            ));
+        }
+        if version < 40 && book.has_drawio_edge_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io edge routes require native format version 40".into(),
+            ));
+        }
+        if version < 39 && book.has_connector_line_jumps() {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require native format version 39".into(),
+            ));
+        }
+        if version < 38 && book.has_library_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require native format version 38".into(),
+            ));
+        }
         if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
@@ -241,6 +316,76 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_rich_extra_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "rich extra connector labels require native format version 51".into(),
+            ));
+        }
+        if book.has_rich_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "rich connector labels require native format version 50".into(),
+            ));
+        }
+        if book.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require native format version 49".into(),
+            ));
+        }
+        if book.has_label_styles() {
+            return Err(IoError::NewerVersion(
+                "label styles require native format version 48".into(),
+            ));
+        }
+        if book.has_shape_styles() {
+            return Err(IoError::NewerVersion(
+                "shape styles require native format version 47".into(),
+            ));
+        }
+        if book.has_tables() {
+            return Err(IoError::NewerVersion(
+                "tables require native format version 46".into(),
+            ));
+        }
+        if book.has_layers() {
+            return Err(IoError::NewerVersion(
+                "layers require native format version 45".into(),
+            ));
+        }
+        if book.has_object_data() {
+            return Err(IoError::NewerVersion(
+                "object data requires native format version 44".into(),
+            ));
+        }
+        if book.has_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "connector labels require native format version 43".into(),
+            ));
+        }
+        if book.has_connector_edge_shapes() {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require native format version 42".into(),
+            ));
+        }
+        if book.has_drawio_segment_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require native format version 41".into(),
+            ));
+        }
+        if book.has_drawio_edge_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io edge routes require native format version 40".into(),
+            ));
+        }
+        if book.has_connector_line_jumps() {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require native format version 39".into(),
+            ));
+        }
+        if book.has_library_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require native format version 38".into(),
+            ));
+        }
         if book.has_semantic_model() {
             return Err(IoError::NewerVersion(
                 "socio-technical data requires a versioned native archive".into(),

@@ -56,20 +56,27 @@ pub enum SceneHit {
 }
 
 /// Paint geometry for a non-default connector marker, in sheet coordinates.
+/// Composite markers (ER, SysML, double block) add up to two extra parts.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConnectorMarkerGeometry {
     shape: ConnectorMarkerShape,
     pub closed: bool,
     pub filled: bool,
     pub line_inset: f32,
+    extra: [Option<ConnectorMarkerPart>; 2],
+}
+
+/// One independently stroked (and optionally filled) piece of a marker.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorMarkerPart {
+    shape: ConnectorMarkerShape,
+    pub closed: bool,
+    pub filled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ConnectorMarkerShape {
-    Polygon {
-        points: [Vec2; 4],
-        point_count: usize,
-    },
+    Polygon { points: [Vec2; 4], point_count: u8 },
     Circle(Vec2, f32),
     Curve([Vec2; 5]),
 }
@@ -151,36 +158,32 @@ fn point_near_curve_path(point: Vec2, path: &[Vec2], radius: f64) -> bool {
     })
 }
 
-impl ConnectorMarkerGeometry {
-    /// The polygonal marker outline, including the notch of a classic arrow.
-    pub fn points(&self) -> &[Vec2] {
-        match &self.shape {
-            ConnectorMarkerShape::Polygon {
+impl ConnectorMarkerShape {
+    fn points(&self) -> &[Vec2] {
+        match self {
+            Self::Polygon {
                 points,
                 point_count,
-            } => &points[..*point_count],
+            } => &points[..usize::from(*point_count)],
             _ => &[],
         }
     }
 
-    /// The center and radius of a circular marker, when present.
-    pub fn circle(&self) -> Option<(Vec2, f32)> {
-        match self.shape {
-            ConnectorMarkerShape::Circle(center, radius) => Some((center, radius)),
+    fn circle(&self) -> Option<(Vec2, f32)> {
+        match *self {
+            Self::Circle(center, radius) => Some((center, radius)),
             _ => None,
         }
     }
 
-    /// Two connected quadratic spans: start, control, join, control, end.
-    pub fn curve(&self) -> Option<[Vec2; 5]> {
-        match self.shape {
-            ConnectorMarkerShape::Curve(points) => Some(points),
+    fn curve(&self) -> Option<[Vec2; 5]> {
+        match *self {
+            Self::Curve(points) => Some(points),
             _ => None,
         }
     }
 
-    /// Flatten a marker curve for conservative stroke hit testing.
-    pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+    fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
         let points = self.curve()?;
         let spans = [
             [points[0], points[1], points[2]],
@@ -218,6 +221,289 @@ impl ConnectorMarkerGeometry {
     }
 }
 
+macro_rules! marker_shape_accessors {
+    () => {
+        /// The polygonal outline, including the notch of a classic arrow.
+        pub fn points(&self) -> &[Vec2] {
+            self.shape.points()
+        }
+
+        /// The center and radius of a circular part, when present.
+        pub fn circle(&self) -> Option<(Vec2, f32)> {
+            self.shape.circle()
+        }
+
+        /// Two connected quadratic spans: start, control, join, control, end.
+        pub fn curve(&self) -> Option<[Vec2; 5]> {
+            self.shape.curve()
+        }
+
+        /// Flatten a marker curve for conservative stroke hit testing.
+        pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+            self.shape.flattened_curve(width)
+        }
+    };
+}
+
+impl ConnectorMarkerPart {
+    marker_shape_accessors!();
+
+    fn segment(a: Vec2, b: Vec2) -> Self {
+        Self::polygon(&[a, b], false, false)
+    }
+
+    fn polygon(points: &[Vec2], closed: bool, filled: bool) -> Self {
+        let mut stored = [points[points.len() - 1]; 4];
+        stored[..points.len()].copy_from_slice(points);
+        Self {
+            shape: ConnectorMarkerShape::Polygon {
+                points: stored,
+                point_count: points.len() as u8,
+            },
+            closed,
+            filled: closed && filled,
+        }
+    }
+
+    fn circle_part(center: Vec2, radius: f32, filled: bool) -> Self {
+        Self {
+            shape: ConnectorMarkerShape::Circle(center, radius),
+            closed: true,
+            filled,
+        }
+    }
+}
+
+impl ConnectorMarkerGeometry {
+    marker_shape_accessors!();
+
+    /// The primary part followed by any extra parts, in paint order.
+    pub fn parts(&self) -> impl Iterator<Item = ConnectorMarkerPart> + '_ {
+        std::iter::once(ConnectorMarkerPart {
+            shape: self.shape,
+            closed: self.closed,
+            filled: self.filled,
+        })
+        .chain(self.extra.iter().flatten().copied())
+    }
+
+    fn single(shape: ConnectorMarkerShape, closed: bool, filled: bool, line_inset: f32) -> Self {
+        Self {
+            shape,
+            closed,
+            filled,
+            line_inset,
+            extra: [None, None],
+        }
+    }
+
+    fn compose(line_inset: f32, parts: &[ConnectorMarkerPart]) -> Self {
+        let primary = parts[0];
+        Self {
+            shape: primary.shape,
+            closed: primary.closed,
+            filled: primary.filled,
+            line_inset,
+            extra: [parts.get(1).copied(), parts.get(2).copied()],
+        }
+    }
+}
+
+/// draw.io's library markers (mxMarker.js, mxER.js, mxSysML.js, Shapes.js).
+/// `n` is draw.io's `size + sw + 1` unit; `d` points back from the tip.
+/// Tip position plus the unit travel direction and its normal at a connector end.
+#[derive(Clone, Copy)]
+struct MarkerFrame {
+    tip: Vec2,
+    direction: Vec2,
+    normal: Vec2,
+}
+
+fn library_marker_geometry(
+    frame: MarkerFrame,
+    at_start: bool,
+    kind: ConnectorMarkerKind,
+    width: f32,
+    marker_size: f32,
+    fill: bool,
+) -> Option<ConnectorMarkerGeometry> {
+    use ConnectorMarkerKind as K;
+    use ConnectorMarkerPart as P;
+    let MarkerFrame {
+        tip,
+        direction,
+        normal,
+    } = frame;
+    let n = marker_size + width + 1.0;
+    let back = |distance: f32| tip - direction * distance;
+    let bar = |distance: f32| {
+        P::segment(
+            back(distance) + normal * (n * 0.5),
+            back(distance) - normal * (n * 0.5),
+        )
+    };
+    let crow = P::polygon(
+        &[tip - normal * (n * 0.5), back(n), tip + normal * (n * 0.5)],
+        false,
+        false,
+    );
+    let ring = |filled: bool| P::circle_part(back(1.5 * n), marker_size * 0.5, filled);
+    let er_inset = 2.0 * n - width * 0.5;
+    // Async barbs sit on the left of the travel direction at the source, right at the target.
+    let side = |sign: f32, u: f32| normal * (sign * u * 0.5);
+    let geometry = match kind {
+        K::ErOne => ConnectorMarkerGeometry::compose(0.0, &[bar(n * 0.5)]),
+        K::ErMandOne => ConnectorMarkerGeometry::compose(0.0, &[bar(n * 0.5), bar(n)]),
+        K::ErMany => ConnectorMarkerGeometry::compose(0.0, &[crow]),
+        K::ErOneToMany => ConnectorMarkerGeometry::compose(0.0, &[bar(n), crow]),
+        // draw.io fills the "filled" ER ring with white and leaves the line untrimmed;
+        // an unfilled ring with a trimmed line looks identical on the default canvas.
+        K::ErZeroToMany => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[ring(false), crow, P::segment(back(n), tip)],
+        ),
+        K::ErZeroToOne => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[
+                ring(false),
+                bar(n * 0.5),
+                P::segment(back(n + width * 0.5), tip),
+            ],
+        ),
+        K::ManyOptional => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[ring(fill), P::segment(tip, back(n)), crow],
+        ),
+        K::Box => {
+            let p = tip + direction * (n * 0.5);
+            let half = normal * (n * 0.5);
+            let near = p - direction * (n * 0.5);
+            let far = p - direction * (n * 1.5);
+            ConnectorMarkerGeometry::compose(
+                n,
+                &[P::polygon(
+                    &[near + half, near - half, far - half, far + half],
+                    true,
+                    fill,
+                )],
+            )
+        }
+        K::Cross => {
+            let half = normal * (n * 0.5);
+            ConnectorMarkerGeometry::compose(
+                0.0,
+                &[
+                    P::segment(back(n * 0.5) + half, back(n * 1.5) - half),
+                    P::segment(back(n * 0.5) - half, back(n * 1.5) + half),
+                ],
+            )
+        }
+        K::Circle | K::CirclePlus => {
+            let s = marker_size + width;
+            let center = back(s + width);
+            let circle = P::circle_part(center, s, fill);
+            if kind == K::Circle {
+                ConnectorMarkerGeometry::compose(2.0 * s + width, &[circle])
+            } else {
+                let m = marker_size + 2.0 * width;
+                let cross_center = back(m);
+                ConnectorMarkerGeometry::compose(
+                    2.0 * s + width,
+                    &[
+                        circle,
+                        P::segment(back(width), back(2.0 * m - width)),
+                        P::segment(
+                            cross_center + normal * (m - width),
+                            cross_center - normal * (m - width),
+                        ),
+                    ],
+                )
+            }
+        }
+        K::Async | K::OpenAsync | K::DoubleBlock => {
+            let u = marker_size + width;
+            let offset = if kind == K::OpenAsync {
+                0.0
+            } else {
+                width * 1.118
+            };
+            let pt = tip - direction * offset;
+            let barb = |at: Vec2, sign: f32| at - direction * u + side(sign, u);
+            let sign = if at_start { 1.0 } else { -1.0 };
+            match kind {
+                K::OpenAsync => {
+                    ConnectorMarkerGeometry::compose(0.0, &[P::segment(pt, barb(pt, sign))])
+                }
+                K::Async => ConnectorMarkerGeometry::compose(
+                    u + offset,
+                    &[P::polygon(
+                        &[pt, barb(pt, sign), pt - direction * u],
+                        true,
+                        fill,
+                    )],
+                ),
+                _ => {
+                    let second = pt - direction * u;
+                    let triangle = |at: Vec2| {
+                        P::polygon(
+                            &[
+                                at,
+                                at - direction * u + side(1.0, u),
+                                at - direction * u + side(-1.0, u),
+                            ],
+                            true,
+                            fill,
+                        )
+                    };
+                    ConnectorMarkerGeometry::compose(
+                        2.0 * u + offset,
+                        &[triangle(pt), triangle(second)],
+                    )
+                }
+            }
+        }
+        K::SysmlX => {
+            let along = direction * (n * 0.5);
+            let across = normal * (n * 0.5);
+            ConnectorMarkerGeometry::compose(
+                0.0,
+                &[
+                    P::segment(tip - along + across, tip + along - across),
+                    P::segment(tip + along + across, tip - along - across),
+                ],
+            )
+        }
+        K::SysmlLost => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[
+                P::polygon(
+                    &[
+                        back(1.5 * n) + normal * (n * 0.5),
+                        back(n * 0.5),
+                        back(1.5 * n) - normal * (n * 0.5),
+                    ],
+                    false,
+                    false,
+                ),
+                P::circle_part(back(n * 0.5), marker_size * 0.5, true),
+            ],
+        ),
+        K::SysmlFound => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[P::circle_part(back(n * 0.5), marker_size * 0.5, true)],
+        ),
+        K::SysmlPackCont => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[
+                bar(n * 0.5),
+                P::circle_part(back(n * 0.5), marker_size * 0.5, false),
+            ],
+        ),
+        _ => return None,
+    };
+    Some(geometry)
+}
+
 fn connector_marker_geometry(
     points: &[Vec2],
     at_start: bool,
@@ -244,31 +530,39 @@ fn connector_marker_geometry(
     let delta = tip - *toward;
     let direction = delta * (1.0 / delta.length());
     let normal = Vec2::new(-direction.y, direction.x);
+    if kind.requires_marker_library_format() {
+        return library_marker_geometry(
+            MarkerFrame {
+                tip,
+                direction,
+                normal,
+            },
+            at_start,
+            kind,
+            width,
+            marker_size,
+            fill,
+        );
+    }
     if kind == ConnectorMarkerKind::Oval {
         let radius = marker_size * 0.5;
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Circle(tip, radius),
-            closed: true,
-            filled: fill,
-            line_inset: radius,
-        });
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Circle(tip, radius),
+            true,
+            fill,
+            radius,
+        ));
     }
     if kind == ConnectorMarkerKind::HalfCircle {
         let radius = marker_size + width + 1.0;
         let apex = tip - direction * radius;
         let side = normal * radius;
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Curve([
-                tip + side,
-                apex + side,
-                apex,
-                apex - side,
-                tip - side,
-            ]),
-            closed: false,
-            filled: false,
-            line_inset: radius,
-        });
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Curve([tip + side, apex + side, apex, apex - side, tip - side]),
+            false,
+            false,
+            radius,
+        ));
     }
     if kind.is_bar() {
         let length = marker_size + width + 1.0;
@@ -281,15 +575,15 @@ fn connector_marker_geometry(
                 tip - direction * (length * 1.5) - side,
             )
         };
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Polygon {
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Polygon {
                 points: [first, last, last, last],
                 point_count: 2,
             },
-            closed: false,
-            filled: false,
-            line_inset: 0.0,
-        });
+            false,
+            false,
+            0.0,
+        ));
     }
     // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
     let offset = width
@@ -309,8 +603,8 @@ fn connector_marker_geometry(
             } else {
                 3.4
             };
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Polygon {
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Polygon {
                 points: [
                     midpoint + normal * wing,
                     tip,
@@ -319,10 +613,10 @@ fn connector_marker_geometry(
                 ],
                 point_count: 4,
             },
-            closed: true,
-            filled: fill,
-            line_inset: offset + size,
-        });
+            true,
+            fill,
+            offset + size,
+        ));
     }
     let classic = matches!(
         kind,
@@ -358,6 +652,7 @@ fn connector_marker_geometry(
         } else {
             offset * 2.0
         },
+        extra: [None, None],
     })
 }
 
@@ -367,7 +662,20 @@ pub fn connector_stroke_path(
     points: &[Vec2],
     markers: &[Option<ConnectorMarkerGeometry>; 2],
 ) -> Vec<Vec2> {
-    if markers.iter().all(Option::is_none) || points.len() < 2 {
+    if markers.iter().all(Option::is_none) {
+        return points.to_vec();
+    }
+    trim_path(
+        points,
+        markers[0].map_or(0.0, |marker| marker.line_inset),
+        markers[1].map_or(0.0, |marker| marker.line_inset),
+    )
+}
+
+/// Shorten a path by `start` and `end` along its length; overlapping trims on
+/// a short path collapse it to a point.
+fn trim_path(points: &[Vec2], mut start: f32, mut end: f32) -> Vec<Vec2> {
+    if points.len() < 2 || (start <= 0.0 && end <= 0.0) {
         return points.to_vec();
     }
     let total: f32 = points
@@ -377,8 +685,6 @@ pub fn connector_stroke_path(
     if total <= f32::EPSILON {
         return points.to_vec();
     }
-    let mut start = markers[0].map_or(0.0, |marker| marker.line_inset);
-    let mut end = markers[1].map_or(0.0, |marker| marker.line_inset);
     if start + end > total {
         let scale = total / (start + end);
         start *= scale;
@@ -417,6 +723,244 @@ pub fn connector_stroke_path(
     result
 }
 
+/// Jumped stroke of a connector crossing earlier connectors, already flattened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineJumpGeometry {
+    pub style: crate::board::LineJumpStyle,
+    /// Open subpaths replacing the marker-trimmed stroke.
+    pub paths: Vec<Vec<Vec2>>,
+}
+
+/// Total segment-pair tests one scene may spend on line jumps.
+const LINE_JUMP_TEST_BUDGET: usize = 4_000_000;
+const LINE_JUMP_ARC_STEPS: usize = 8;
+
+/// Open subpaths a connector stroke is painted with, including line jumps.
+pub fn connector_stroke_paths(
+    points: &[Vec2],
+    markers: &[Option<ConnectorMarkerGeometry>; 2],
+    jumps: Option<&LineJumpGeometry>,
+) -> Vec<Vec<Vec2>> {
+    match jumps {
+        Some(jumps) => jumps.paths.clone(),
+        None => vec![connector_stroke_path(points, markers)],
+    }
+}
+
+/// Remove waypoints lying on the segment between their neighbours, like draw.io.
+fn merge_collinear(points: &[Vec2]) -> Vec<Vec2> {
+    let mut result: Vec<Vec2> = Vec::with_capacity(points.len());
+    for (index, &point) in points.iter().enumerate() {
+        if let (Some(&previous), Some(&next)) = (result.last(), points.get(index + 1))
+            && index > 0
+            && point_segment_distance_squared(point, previous, next) < 1.0
+        {
+            continue;
+        }
+        result.push(point);
+    }
+    result
+}
+
+fn dot(a: Vec2, b: Vec2) -> f32 {
+    a.x * b.x + a.y * b.y
+}
+
+fn point_segment_distance_squared(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let length = dot(ab, ab);
+    let t = if length <= f32::EPSILON {
+        0.0
+    } else {
+        (dot(p - a, ab) / length).clamp(0.0, 1.0)
+    };
+    let d = p - (a + ab * t);
+    dot(d, d)
+}
+
+fn segment_crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
+    let r = b - a;
+    let s = d - c;
+    let denominator = r.x * s.y - r.y * s.x;
+    if denominator.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ac = c - a;
+    let t = (ac.x * s.y - ac.y * s.x) / denominator;
+    let u = (ac.x * r.y - ac.y * r.x) / denominator;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| a + r * t)
+}
+
+fn near(a: Vec2, b: Vec2) -> bool {
+    (a.x - b.x).abs() <= 0.5 && (a.y - b.y).abs() <= 0.5
+}
+
+/// draw.io `jumpStyle` geometry: `stroke` jumps wherever it crosses `others`.
+/// Returns `None` when nothing is crossed or the jump would be invisible.
+pub fn line_jump_geometry(
+    stroke: &[Vec2],
+    others: &[&[Vec2]],
+    jumps: crate::board::LineJumps,
+    width: f32,
+    budget: &mut usize,
+) -> Option<LineJumpGeometry> {
+    use crate::board::LineJumpStyle;
+    let half = (jumps.size - 2.0) / 2.0 + width;
+    if half.is_nan() || half <= 0.0 || stroke.len() < 2 || others.is_empty() {
+        return None;
+    }
+    let stroke = merge_collinear(stroke);
+    let others: Vec<(Rect, Vec<Vec2>)> = others
+        .iter()
+        .filter_map(|points| {
+            let points = merge_collinear(points);
+            Some((points_bounds(&points)?.expand(0.5), points))
+        })
+        .collect();
+    let mut paths = Vec::new();
+    let mut current = vec![stroke[0]];
+    let mut jumped = false;
+    let mut last = stroke[0];
+    let half_squared = half * half;
+    for pair in stroke.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let segment = Rect::from_min_size(
+            Vec2::new(a.x.min(b.x), a.y.min(b.y)),
+            Vec2::new((a.x - b.x).abs(), (a.y - b.y).abs()),
+        )
+        .expand(0.5);
+        let mut crossings: Vec<(f32, Vec2)> = Vec::new();
+        for (bounds, points) in &others {
+            if !bounds.intersects(&segment) {
+                continue;
+            }
+            for other in points.windows(2) {
+                if *budget == 0 {
+                    break;
+                }
+                *budget -= 1;
+                if let Some(pt) = segment_crossing(a, b, other[0], other[1])
+                    && !near(pt, a)
+                    && !near(pt, b)
+                {
+                    crossings.push(((pt - a).length(), pt));
+                }
+            }
+        }
+        crossings.sort_by(|x, y| x.0.total_cmp(&y.0));
+        crossings.dedup_by(|later, earlier| near(later.1, earlier.1));
+        let mut direction = None;
+        for (_, pt) in crossings {
+            let distance_next = dot(b - pt, b - pt);
+            let distance_last = dot(last - pt, last - pt);
+            if distance_next <= half_squared || distance_last <= half_squared {
+                last = pt;
+                continue;
+            }
+            let n = *direction.get_or_insert_with(|| {
+                let delta = pt - last;
+                delta * (half / delta.length())
+            });
+            let p0 = pt - n;
+            let p1 = pt + n;
+            let flip = if n.x.round() < 0.0 || (n.x.round() == 0.0 && n.y.round() <= 0.0) {
+                1.0
+            } else {
+                -1.0
+            };
+            current.push(p0);
+            jumped = true;
+            match jumps.style {
+                LineJumpStyle::Sharp => {
+                    let offset = Vec2::new(-n.y * flip, n.x * flip);
+                    current.extend([p0 + offset, p1 + offset, p1]);
+                }
+                LineJumpStyle::Arc => {
+                    let flip = flip * 1.3;
+                    let offset = Vec2::new(-n.y * flip, n.x * flip);
+                    let (c0, c1) = (p0 + offset, p1 + offset);
+                    for step in 1..=LINE_JUMP_ARC_STEPS {
+                        let t = step as f32 / LINE_JUMP_ARC_STEPS as f32;
+                        let u = 1.0 - t;
+                        current.push(
+                            p0 * (u * u * u)
+                                + c0 * (3.0 * u * u * t)
+                                + c1 * (3.0 * u * t * t)
+                                + p1 * (t * t * t),
+                        );
+                    }
+                }
+                LineJumpStyle::Line => {
+                    let tick = Vec2::new(n.y * flip, -n.x * flip);
+                    paths.push(std::mem::take(&mut current));
+                    paths.push(vec![p0 + tick, p0 - tick]);
+                    paths.push(vec![p1 + tick, p1 - tick]);
+                    current.push(p1);
+                }
+                LineJumpStyle::Gap => {
+                    paths.push(std::mem::take(&mut current));
+                    current.push(p1);
+                }
+            }
+        }
+        current.push(b);
+        last = b;
+    }
+    if !jumped {
+        return None;
+    }
+    paths.push(current);
+    paths.retain(|path| path.len() >= 2);
+    Some(LineJumpGeometry {
+        style: jumps.style,
+        paths,
+    })
+}
+
+/// Apply draw.io line jumps in paint order: each jumping connector jumps over
+/// straight and elbow connectors painted before it; curves neither jump nor
+/// are jumped over.
+fn apply_line_jumps(
+    items: &mut [SceneItem],
+    jumpers: &[(usize, Option<crate::board::LineJumps>, f32)],
+) {
+    if jumpers.iter().all(|(_, jumps, _)| jumps.is_none()) {
+        return;
+    }
+    let mut budget = LINE_JUMP_TEST_BUDGET;
+    for (position, &(index, jumps, width)) in jumpers.iter().enumerate() {
+        let Some(jumps) = jumps else {
+            continue;
+        };
+        let geometry = {
+            let others: Vec<&[Vec2]> = jumpers[..position]
+                .iter()
+                .filter_map(|&(other, _, _)| match &items[other].geometry {
+                    SceneGeometry::Polyline { points, .. } => Some(points.as_slice()),
+                    _ => None,
+                })
+                .collect();
+            let SceneGeometry::Polyline {
+                points, markers, ..
+            } = &items[index].geometry
+            else {
+                continue;
+            };
+            let stroke = connector_stroke_path(points, markers);
+            line_jump_geometry(&stroke, &others, jumps, width, &mut budget)
+        };
+        if let Some(geometry) = geometry {
+            let item = &mut items[index];
+            if let SceneGeometry::Polyline { jumps, .. } = &mut item.geometry {
+                *jumps = Some(Box::new(geometry));
+            }
+            if let Some(bounds) = geometry_bounds(&item.geometry) {
+                item.bounds = item.bounds.union(&bounds);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneGeometry {
     /// Derived semantic flow, shared by canvas, export, bounds and hit testing.
@@ -425,6 +969,7 @@ pub enum SceneGeometry {
         mass: f64,
         color: Option<crate::Color>,
         label_bounds: Rect,
+        extra_label_bounds: Vec<Rect>,
     },
     /// Unrotated rect turned by `rotation` degrees around its centre.
     Rect { rect: Rect, rotation: f32 },
@@ -446,8 +991,15 @@ pub enum SceneGeometry {
         width: f32,
         /// Shared color-scale override for an unassigned semantic placeholder.
         color: Option<crate::Color>,
-        markers: [Option<ConnectorMarkerGeometry>; 2],
+        /// Boxed so composite marker parts do not bloat every scene item.
+        markers: Box<[Option<ConnectorMarkerGeometry>; 2]>,
         label_bounds: Option<Rect>,
+        /// Estimated frames of positioned labels, which may sit away from the path.
+        text_labels: Vec<Rect>,
+        /// draw.io line jumps over connectors painted earlier.
+        jumps: Option<Box<LineJumpGeometry>>,
+        /// draw.io body shape replacing or overpainting the plain stroke.
+        body: Option<Box<EdgeBody>>,
     },
 }
 
@@ -460,9 +1012,13 @@ impl SceneGeometry {
             SceneGeometry::Ribbon {
                 outline,
                 label_bounds,
+                extra_label_bounds,
                 ..
             } => {
                 label_bounds.expand(tolerance).contains(p)
+                    || extra_label_bounds
+                        .iter()
+                        .any(|bounds| bounds.expand(tolerance).contains(p))
                     || point_in_polygon(p, outline)
                     || distance_to_outline(p, outline) <= tolerance
             }
@@ -487,37 +1043,68 @@ impl SceneGeometry {
                 width,
                 markers,
                 label_bounds,
+                text_labels,
+                body,
                 ..
             } => {
-                let radius = width / 2.0 + tolerance;
-                let stroke_hit = if markers.iter().any(Option::is_some) {
+                let radius = body
+                    .as_ref()
+                    .map_or(*width, |body| body.stroke_width(*width))
+                    / 2.0
+                    + tolerance;
+                let label_hit = label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
+                    || text_labels.iter().any(|r| r.expand(tolerance).contains(p));
+                match body.as_deref() {
+                    Some(EdgeBody::Rails(rails)) => {
+                        return label_hit
+                            || rails
+                                .iter()
+                                .any(|rail| distance_to_polyline(p, rail) <= radius);
+                    }
+                    Some(EdgeBody::Band { outline, .. })
+                        if point_in_polygon(p, outline)
+                            || distance_to_outline(p, outline) <= radius =>
+                    {
+                        return true;
+                    }
+                    _ => {}
+                }
+                let stroke_hit = if body.as_ref().is_some_and(|body| body.replaces_stroke()) {
+                    false
+                } else if markers.iter().any(Option::is_some) {
                     distance_to_polyline(p, &connector_stroke_path(points, markers)) <= radius
                 } else {
                     distance_to_polyline(p, points) <= radius
                 };
-                label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
+                label_hit
                     || stroke_hit
-                    || markers.iter().flatten().any(|marker| {
-                        if let Some((center, marker_radius)) = marker.circle() {
-                            let distance = (p - center).length();
-                            marker_radius > 0.0
-                                && ((marker.filled && distance <= marker_radius + radius)
-                                    || (distance - marker_radius).abs() <= radius)
-                        } else if let Some((path, error)) = marker.flattened_curve(*width) {
-                            point_near_curve_path(
-                                p,
-                                &path,
-                                f64::from(*width) / 2.0 + f64::from(tolerance) + f64::from(error),
-                            )
-                        } else {
-                            (marker.filled && point_in_polygon(p, marker.points()))
-                                || if marker.closed {
-                                    distance_to_outline(p, marker.points()) <= radius
-                                } else {
-                                    distance_to_polyline(p, marker.points()) <= radius
-                                }
-                        }
-                    })
+                    || markers
+                        .iter()
+                        .flatten()
+                        .flat_map(ConnectorMarkerGeometry::parts)
+                        .any(|marker| {
+                            if let Some((center, marker_radius)) = marker.circle() {
+                                let distance = (p - center).length();
+                                marker_radius > 0.0
+                                    && ((marker.filled && distance <= marker_radius + radius)
+                                        || (distance - marker_radius).abs() <= radius)
+                            } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                                point_near_curve_path(
+                                    p,
+                                    &path,
+                                    f64::from(*width) / 2.0
+                                        + f64::from(tolerance)
+                                        + f64::from(error),
+                                )
+                            } else {
+                                (marker.filled && point_in_polygon(p, marker.points()))
+                                    || if marker.closed {
+                                        distance_to_outline(p, marker.points()) <= radius
+                                    } else {
+                                        distance_to_polyline(p, marker.points()) <= radius
+                                    }
+                            }
+                        })
             }
         }
     }
@@ -534,6 +1121,9 @@ pub struct SceneItem {
     pub geometry: SceneGeometry,
     /// Resolved stencil data shared by paint, labels, hit geometry and export.
     pub stencil_render: Option<crate::stencil::StencilRender>,
+    /// Styled shape label placed outside the outline; it is part of the
+    /// bounds and selects the shape.
+    pub outside_label: Option<Box<crate::label_style::LabelLayout>>,
 }
 
 impl SceneItem {
@@ -742,6 +1332,7 @@ fn build_scene_with_collapse<'a>(
     let mut connectors = ConnectorResolver::with_collapse(sheet, layout, collapse);
     let flow_values = crate::sankey::evaluate(sheet).unwrap_or_default();
     let ribbons = crate::sankey::ribbons_with_values(sheet, layout, &flow_values);
+    let mut jumpers = Vec::new();
     for zone in &sheet.zones {
         items.push(SceneItem {
             id: SceneId::Zone(zone.id),
@@ -753,10 +1344,17 @@ fn build_scene_with_collapse<'a>(
                 rotation: 0.0,
             },
             stencil_render: None,
+            outside_label: None,
         });
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
-        for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
+        let jumpers = &mut jumpers;
+        for object in sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|o| o.band == band && sheet.canvas.is_layer_visible(o.layer))
+        {
             let object = if let Some(collapse) = collapse {
                 let Some(object) = collapse.object(object.id) else {
                     continue;
@@ -768,23 +1366,49 @@ fn build_scene_with_collapse<'a>(
             if let Some(item) = object_item(sheet, object, &mut connectors) {
                 if let Some(outline) = ribbons.get(&object.id) {
                     if let Some(bounds) = crate::board::points_bounds(outline) {
-                        let c = match &object.kind {
+                        let display = crate::object_data::with_resolved_placeholders(
+                            &sheet.canvas,
+                            object,
+                            Some(&sheet.title),
+                        );
+                        let c = match &display.kind {
                             CanvasObjectKind::Connector(c) => c,
                             _ => continue,
                         };
                         let mass = flow_values.mass.get(&object.id).copied().unwrap_or(0.0);
                         let anchor =
                             crate::sankey::ribbon_label_anchor(outline).unwrap_or(bounds.center());
-                        let label_bounds = crate::sankey::label_bounds(
-                            anchor,
-                            &crate::sankey::flow_label(c, mass),
-                        );
+                        let text = crate::sankey::flow_label(c, mass);
+                        let mut label_bounds = crate::sankey::label_bounds(anchor, &text);
+                        if let Some(rich) = display.label_rich_text.as_deref() {
+                            let layout =
+                                crate::label_style::layout_connector(anchor, &text, rich, true);
+                            label_bounds =
+                                label_bounds.union(&crate::label_style::connector_bounds(&layout));
+                        }
+                        let extra_label_bounds: Vec<_> = if c.extra_labels.is_empty() {
+                            Vec::new()
+                        } else {
+                            let centerline = crate::sankey::ribbon_centerline(outline);
+                            c.extra_labels
+                                .iter()
+                                .filter_map(|label| {
+                                    extra_connector_label_bounds(label, &centerline)
+                                })
+                                .collect()
+                        };
+                        let bounds = extra_label_bounds
+                            .iter()
+                            .fold(bounds.union(&label_bounds), |bounds, label| {
+                                bounds.union(label)
+                            });
                         items.push(SceneItem {
-                            bounds: bounds.union(&label_bounds),
+                            bounds,
                             geometry: SceneGeometry::Ribbon {
                                 outline: outline.clone(),
                                 mass,
                                 label_bounds,
+                                extra_label_bounds,
                                 color: sheet.sankey.as_ref().filter(|s| s.color_scale).map(|_| {
                                     crate::sankey::weight_color(
                                         flow_values.mass.get(&object.id).copied().unwrap_or(0.0),
@@ -795,6 +1419,16 @@ fn build_scene_with_collapse<'a>(
                         });
                     }
                 } else {
+                    if let (CanvasObjectKind::Connector(c), SceneGeometry::Polyline { .. }) =
+                        (&object.kind, &item.geometry)
+                        && c.route != ConnectorRoute::Curve
+                    {
+                        let jumps = c.line_jumps.filter(|_| {
+                            c.edge_shape
+                                .is_none_or(|shape| shape.kind.supports_line_jumps())
+                        });
+                        jumpers.push((items.len(), jumps, c.width));
+                    }
                     items.push(item);
                 }
             }
@@ -819,9 +1453,11 @@ fn build_scene_with_collapse<'a>(
                 rotation,
             },
             stencil_render: None,
+            outside_label: None,
         });
     }
     objects(Band::Above, &mut items);
+    apply_line_jumps(&mut items, &jumpers);
     let grid =
         (sheet.board.grid != GridKind::None).then_some((sheet.board.grid, sheet.board.grid_size));
     Scene { grid, items }
@@ -867,37 +1503,55 @@ fn object_item(
             if points.len() < 2 {
                 return None;
             }
+            let display = crate::object_data::with_resolved_placeholders(
+                &sheet.canvas,
+                object,
+                Some(&sheet.title),
+            );
+            let CanvasObjectKind::Connector(display_connector) = &display.kind else {
+                unreachable!("resolving a connector does not change its kind");
+            };
+            let mut markers = Box::new([
+                c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
+                    connector_marker_geometry(
+                        &points,
+                        true,
+                        marker.kind,
+                        c.width,
+                        c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        !c.start_marker_unfilled,
+                    )
+                }),
+                c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
+                    connector_marker_geometry(
+                        &points,
+                        false,
+                        marker.kind,
+                        c.width,
+                        c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        !c.end_marker_unfilled,
+                    )
+                }),
+            ]);
+            let body = edge_shape::edge_body(c, &points, &mut markers);
             SceneGeometry::Polyline {
                 color: (c.sankey.is_some() && sheet.sankey.as_ref().is_some_and(|s| s.color_scale))
                     .then(|| crate::sankey::weight_color(0.0)),
                 label_bounds: c.sankey.filter(|f| f.weight.is_none()).map(|_| {
-                    crate::sankey::label_bounds(
-                        crate::board::polyline_midpoint(&points).unwrap_or_default(),
-                        &crate::sankey::flow_label(c, 0.0),
-                    )
+                    let anchor = crate::board::polyline_midpoint(&points).unwrap_or_default();
+                    let text = crate::sankey::flow_label(display_connector, 0.0);
+                    let mut bounds = crate::sankey::label_bounds(anchor, &text);
+                    if let Some(rich) = display.label_rich_text.as_deref() {
+                        let layout =
+                            crate::label_style::layout_connector(anchor, &text, rich, true);
+                        bounds = bounds.union(&crate::label_style::connector_bounds(&layout));
+                    }
+                    bounds
                 }),
-                markers: [
-                    c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
-                        connector_marker_geometry(
-                            &points,
-                            true,
-                            marker.kind,
-                            c.width,
-                            c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
-                            !c.start_marker_unfilled,
-                        )
-                    }),
-                    c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
-                        connector_marker_geometry(
-                            &points,
-                            false,
-                            marker.kind,
-                            c.width,
-                            c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
-                            !c.end_marker_unfilled,
-                        )
-                    }),
-                ],
+                text_labels: positioned_label_bounds(&display, display_connector, &points),
+                markers,
+                jumps: None,
+                body,
                 points,
                 width: c.width,
             }
@@ -917,6 +1571,26 @@ fn object_item(
             bounds = bounds.expand(width * std::f32::consts::FRAC_1_SQRT_2);
         }
     }
+    let outside_label = match &object.kind {
+        CanvasObjectKind::Shape { label, .. }
+            if (!label.is_empty() || object.has_label_list())
+                && object
+                    .label_style
+                    .as_ref()
+                    .is_some_and(|style| style.is_outside()) =>
+        {
+            stencil_render
+                .as_ref()
+                .map(|render| crate::stencil_object::label_rect(object, render))
+                .or_else(|| crate::board::object_label_rect(object))
+                .and_then(|base| crate::label_style::layout(object, base, label))
+                .map(Box::new)
+        }
+        _ => None,
+    };
+    if let Some(label) = &outside_label {
+        bounds = bounds.union(&label.bounds());
+    }
     let clip = match &object.kind {
         CanvasObjectKind::Connector(_) => object_clip_at(sheet, object.id, bounds.center()),
         _ => object_clip_rect(sheet, object),
@@ -928,6 +1602,7 @@ fn object_item(
         clip,
         geometry,
         stencil_render,
+        outside_label,
     })
 }
 
@@ -985,14 +1660,63 @@ pub fn object_clip_at(sheet: &Sheet, object: CanvasObjectId, center: Vec2) -> Op
         .map(|zone| zone.frame)
 }
 
+/// Estimated frames of labels placed away from the default midpoint; the
+/// renderers measure text exactly, so these only widen hit testing and bounds.
+fn positioned_label_bounds(
+    object: &CanvasObject,
+    c: &CanvasConnector,
+    points: &[Vec2],
+) -> Vec<Rect> {
+    let mut bounds = Vec::new();
+    let unset = c.sankey.is_some_and(|flow| flow.weight.is_none());
+    if !unset
+        && (!c.label.is_empty() || object.has_label_list())
+        && let Some(anchor) = c.primary_label_anchor(points)
+    {
+        if let Some(rich) = object.label_rich_text.as_deref() {
+            let layout = crate::label_style::layout_connector(anchor, &c.label, rich, false);
+            bounds.push(crate::label_style::connector_bounds(&layout));
+        } else if c.label_placement.is_some() {
+            bounds.push(crate::board::approx_connector_label_bounds(
+                anchor, &c.label,
+            ));
+        }
+    }
+    bounds.extend(
+        c.extra_labels
+            .iter()
+            .filter_map(|label| extra_connector_label_bounds(label, points)),
+    );
+    bounds
+}
+
+/// Bounds of one positioned connector label on its rendered path.
+pub fn extra_connector_label_bounds(
+    label: &crate::board::ConnectorLabel,
+    points: &[Vec2],
+) -> Option<Rect> {
+    let anchor = crate::board::connector_label_point(points, label.placement)?;
+    Some(if let Some(rich) = label.rich_text.as_deref() {
+        let layout = crate::label_style::layout_connector(anchor, &label.text, rich, false);
+        crate::label_style::connector_bounds(&layout)
+    } else {
+        crate::board::approx_connector_label_bounds(anchor, &label.text)
+    })
+}
+
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
     match geometry {
         SceneGeometry::Rect { rect, rotation } => Some(rotated_bounds(*rect, *rotation)),
         SceneGeometry::Ribbon {
             outline,
             label_bounds,
+            extra_label_bounds,
             ..
-        } => crate::board::points_bounds(outline).map(|r| r.union(label_bounds)),
+        } => crate::board::points_bounds(outline).map(|r| {
+            extra_label_bounds
+                .iter()
+                .fold(r.union(label_bounds), |bounds, label| bounds.union(label))
+        }),
         SceneGeometry::Polygon { outline, details } => {
             let mut r = points_bounds(outline)?;
             for d in details {
@@ -1018,13 +1742,46 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             width,
             markers,
             label_bounds,
+            text_labels,
+            jumps,
+            body,
             ..
         } => {
+            let width = &body
+                .as_ref()
+                .map_or(*width, |body| body.stroke_width(*width));
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
+            match body.as_deref() {
+                Some(EdgeBody::Rails(rails)) => {
+                    for rail in rails {
+                        if let Some(rail_bounds) = points_bounds(rail) {
+                            bounds = bounds.union(&rail_bounds.expand(width / 2.0));
+                        }
+                    }
+                }
+                Some(EdgeBody::Band { outline, .. }) => {
+                    if let Some(outline_bounds) = points_bounds(outline) {
+                        bounds = bounds.union(&outline_bounds.expand(width / 2.0));
+                    }
+                }
+                _ => {}
+            }
             if let Some(label_bounds) = label_bounds {
                 bounds = bounds.union(label_bounds);
             }
-            for marker in markers.iter().flatten() {
+            for label in text_labels {
+                bounds = bounds.union(label);
+            }
+            for path in jumps.iter().flat_map(|jumps| &jumps.paths) {
+                if let Some(path_bounds) = points_bounds(path) {
+                    bounds = bounds.union(&path_bounds.expand(width / 2.0));
+                }
+            }
+            for marker in markers
+                .iter()
+                .flatten()
+                .flat_map(ConnectorMarkerGeometry::parts)
+            {
                 let marker_bounds = if let Some((center, radius)) = marker.circle() {
                     (radius > 0.0).then(|| {
                         Rect::from_center_size(center, Vec2::new(2.0 * radius, 2.0 * radius))
@@ -1162,7 +1919,11 @@ impl Scene {
             };
             (item.clip.is_none_or(|clip| clip.contains(p))
                 && item.bounds.expand(tolerance).contains(p)
-                && item.geometry.hit(p, tolerance))
+                && (item.geometry.hit(p, tolerance)
+                    || item
+                        .outside_label
+                        .as_ref()
+                        .is_some_and(|label| label.hits(p))))
             .then_some(hit)
         })
     }
@@ -1224,6 +1985,8 @@ struct EndTarget {
     rotation: f32,
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
     custom_outline: Option<Vec<Vec2>>,
+    /// Horizontal and vertical mirroring applied before the rotation.
+    flip: (bool, bool),
 }
 
 impl EndTarget {
@@ -1233,7 +1996,17 @@ impl EndTarget {
             rotation,
             shape: None,
             custom_outline: None,
+            flip: (false, false),
         }
+    }
+
+    /// Places an unrotated, unmirrored frame point.
+    fn place(&self, point: Vec2) -> Vec2 {
+        rotate_around(
+            crate::shape_style::mirror(point, self.rect, self.flip.0, self.flip.1),
+            self.rect.center(),
+            self.rotation,
+        )
     }
 
     fn with_port(self, port: Option<ConnectorPort>) -> Self {
@@ -1260,12 +2033,12 @@ impl EndTarget {
                         projected = corner + delta * (radius / length);
                     }
                 }
-                rotate_around(projected, self.rect.center(), self.rotation)
+                self.place(projected)
             } else {
-                self.clip(rotate_around(point, self.rect.center(), self.rotation))
+                self.clip(self.place(point))
             }
         } else {
-            rotate_around(point, self.rect.center(), self.rotation)
+            self.place(point)
         };
         Self::boxed(Rect::from_center_size(point, Vec2::ZERO), 0.0)
     }
@@ -1319,6 +2092,79 @@ impl EndTarget {
                 clip_to_polygon(&outline, origin, toward)
             })
             .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
+    }
+
+    /// draw.io's orthogonal perimeter projection for routed edge styles: when
+    /// `next` lies within the target's horizontal or vertical span, the end
+    /// leaves the outline straight towards it instead of from the centre.
+    fn clip_orthogonal(&self, next: Vec2) -> Vec2 {
+        let rect = self.rect;
+        if self.rotation != 0.0 || rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+            return self.clip(next);
+        }
+        let max = rect.max();
+        let center = rect.center();
+        let within_x = (rect.min.x..=max.x).contains(&next.x);
+        let within_y = (rect.min.y..=max.y).contains(&next.y);
+        // Rectangular shapes use draw.io's rectangle perimeter unless a
+        // rounded perimeter is requested.
+        let rectangle_perimeter = self.shape.is_none_or(|(kind, rounding)| {
+            matches!(
+                kind,
+                ShapeKind::Rectangle
+                    | ShapeKind::RoundedRectangle
+                    | ShapeKind::Process
+                    | ShapeKind::PredefinedProcess
+            ) && !rounding.is_some_and(|rounding| rounding.rounded_perimeter)
+        });
+        if self.custom_outline.is_none() && rectangle_perimeter {
+            // Exactly mxPerimeter.RectanglePerimeter with `orthogonal` set.
+            let mut point = self.clip(next);
+            if within_x {
+                point.x = next.x;
+            } else if within_y {
+                point.y = next.y;
+            }
+            point.x = point.x.clamp(rect.min.x, max.x);
+            point.y = point.y.clamp(rect.min.y, max.y);
+            if next.x < rect.min.x {
+                point.x = rect.min.x;
+            } else if next.x > max.x {
+                point.x = max.x;
+            }
+            if next.y < rect.min.y {
+                point.y = rect.min.y;
+            } else if next.y > max.y {
+                point.y = max.y;
+            }
+            return point;
+        }
+        let origin = match (within_x, within_y) {
+            (true, false) => Vec2::new(next.x, center.y),
+            (false, true) => Vec2::new(center.x, next.y),
+            _ => return self.clip(next),
+        };
+        if origin == center {
+            return self.clip(next);
+        }
+        let outline = match (&self.custom_outline, self.shape) {
+            (Some(outline), _) if outline.len() >= 3 => outline.clone(),
+            (_, Some((kind, rounding))) => {
+                shape_geometry_with_rounding(kind, rect, 0.0, rounding).outline
+            }
+            _ => vec![
+                rect.min,
+                Vec2::new(max.x, rect.min.y),
+                max,
+                Vec2::new(rect.min.x, max.y),
+            ],
+        };
+        if point_in_polygon(origin, &outline)
+            && let Some(point) = clip_to_polygon(&outline, origin, next)
+        {
+            return point;
+        }
+        self.clip(next)
     }
 }
 
@@ -1394,15 +2240,65 @@ pub fn fixed_connector_port_position(
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
     port: ConnectorPort,
 ) -> Vec2 {
+    fixed_flipped_connector_port_position(rect, rotation, shape, (false, false), port)
+}
+
+/// [`fixed_connector_port_position`] on a shape mirrored by `flip` (h, v).
+pub fn fixed_flipped_connector_port_position(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    flip: (bool, bool),
+    port: ConnectorPort,
+) -> Vec2 {
     EndTarget {
         rect,
         rotation,
         shape,
-        custom_outline: None,
+        custom_outline: flipped_outline(rect, rotation, shape, flip),
+        flip,
     }
     .with_port(Some(port))
     .rect
     .center()
+}
+
+/// The mirrored outline of an asymmetric built-in shape, for perimeter clips.
+fn flipped_outline(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    flip: (bool, bool),
+) -> Option<Vec<Vec2>> {
+    let (kind, rounding) = shape?;
+    if !(flip.0 || flip.1)
+        || rounding.is_some()
+        || matches!(
+            kind,
+            ShapeKind::Rectangle
+                | ShapeKind::RoundedRectangle
+                | ShapeKind::Process
+                | ShapeKind::PredefinedProcess
+                | ShapeKind::Ellipse
+                | ShapeKind::DoubleEllipse
+                | ShapeKind::FinalState
+                | ShapeKind::Diamond
+        )
+    {
+        return None;
+    }
+    let style = crate::board::ObjectStyle {
+        flip_h: flip.0,
+        flip_v: flip.1,
+        ..Default::default()
+    };
+    Some(
+        shape_geometry_with_rounding(kind, rect, 0.0, None)
+            .outline
+            .into_iter()
+            .map(|point| crate::shape_style::place(&style, point, rect, rotation))
+            .collect(),
+    )
 }
 
 /// draw.io applies a constraint to the unrotated perimeter before rotating it.
@@ -1559,6 +2455,12 @@ fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2>
 }
 
 fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    if is_drawio_loop(connector) {
+        return loop_path(connector, a, b);
+    }
+    if connector.route.is_drawio_edge_style() {
+        return drawio_edge_style_path(connector, a, b);
+    }
     if !connector.waypoints.is_empty() {
         return routed_waypoints(connector, a, b);
     }
@@ -1580,7 +2482,456 @@ fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<V
                 .map(|i| cubic(a, c1, c2, b, i as f32 / CURVE_SEGMENTS as f32))
                 .collect()
         }
+        ConnectorRoute::ElbowHorizontal
+        | ConnectorRoute::ElbowVertical
+        | ConnectorRoute::SideToSide
+        | ConnectorRoute::TopToBottom
+        | ConnectorRoute::EntityRelation
+        | ConnectorRoute::Segment
+        | ConnectorRoute::IsometricHorizontal
+        | ConnectorRoute::IsometricVertical => drawio_edge_style_path(connector, a, b),
     }
+}
+
+/// draw.io's default grid size, the `segment` of its loop router.
+const LOOP_SEGMENT: f32 = 10.0;
+
+/// Whether draw.io's `Loop` router replaces the edge style, as it does for
+/// floating self-loops with fewer than two waypoints (mxGraphView's
+/// `isLoopStyleEnabled`).
+fn is_drawio_loop(connector: &CanvasConnector) -> bool {
+    connector.from == connector.to
+        && !matches!(connector.from, Endpoint::Point(_))
+        && connector.waypoints.len() < 2
+        && connector.from_port.is_none()
+        && connector.to_port.is_none()
+}
+
+/// The two bends of draw.io's `Loop` router with its default west direction:
+/// a loop beside the right edge, or through the first waypoint as a hint.
+fn loop_points(source: Rect, hint: Option<Vec2>) -> [Vec2; 2] {
+    let center = source.center();
+    let max = source.max();
+    let hint = hint.filter(|&hint| !rect_contains(source, hint));
+    let (x, dx, y, dy) = match hint {
+        Some(hint) if (source.min.x..=max.x).contains(&hint.x) => (
+            center.x,
+            (center.x - hint.x).abs().max(LOOP_SEGMENT),
+            hint.y,
+            0.0,
+        ),
+        Some(hint) => (
+            hint.x,
+            0.0,
+            center.y,
+            (center.y - hint.y).abs().max(LOOP_SEGMENT),
+        ),
+        None => (max.x + 2.0 * LOOP_SEGMENT, 0.0, center.y, LOOP_SEGMENT),
+    };
+    [Vec2::new(x - dx, y - dy), Vec2::new(x + dx, y + dy)]
+}
+
+/// A self-loop routed like draw.io: through the loop bends, smoothed for curves.
+fn loop_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let mut looped = connector.clone();
+    looped.waypoints = loop_points(a.rect, connector.waypoints.first().copied())
+        .to_vec()
+        .into();
+    if looped.route != ConnectorRoute::Curve {
+        looped.route = ConnectorRoute::Straight;
+    }
+    routed_waypoints(&looped, a, b)
+}
+
+/// draw.io's default `segment` for entity-relation edges.
+const ENTITY_RELATION_SEGMENT: f32 = 30.0;
+
+fn rect_contains(rect: Rect, point: Vec2) -> bool {
+    let max = rect.max();
+    point.x >= rect.min.x && point.x <= max.x && point.y >= rect.min.y && point.y <= max.y
+}
+
+/// JavaScript's `Math.round`, which rounds halves towards positive infinity.
+fn js_round(value: f32) -> f32 {
+    (value + 0.5).floor()
+}
+
+/// Interior points of draw.io's `SideToSide` router (mxEdgeStyle.js).
+fn side_to_side_points(source: Rect, target: Rect, hint: Option<Vec2>) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let left = source.min.x.max(target.min.x);
+    let right = source_max.x.min(target_max.x);
+    let x = hint.map_or_else(|| js_round(right + (left - right) / 2.0), |hint| hint.x);
+    let mut y1 = source.center().y;
+    let mut y2 = target.center().y;
+    if let Some(hint) = hint {
+        if (source.min.y..=source_max.y).contains(&hint.y) {
+            y1 = hint.y;
+        }
+        if (target.min.y..=target_max.y).contains(&hint.y) {
+            y2 = hint.y;
+        }
+    }
+    let outside = |point| !rect_contains(source, point) && !rect_contains(target, point);
+    let mut points: Vec<Vec2> = [y1, y2]
+        .into_iter()
+        .map(|y| Vec2::new(x, y))
+        .filter(|&point| outside(point))
+        .collect();
+    if points.len() == 1 {
+        match hint {
+            Some(hint) => {
+                let point = Vec2::new(x, hint.y);
+                if outside(point) {
+                    points.push(point);
+                }
+            }
+            None => {
+                let top = source.min.y.max(target.min.y);
+                let bottom = source_max.y.min(target_max.y);
+                points.push(Vec2::new(x, top + (bottom - top) / 2.0));
+            }
+        }
+    }
+    points
+}
+
+/// Interior points of draw.io's `TopToBottom` router (mxEdgeStyle.js).
+fn top_to_bottom_points(source: Rect, target: Rect, hint: Option<Vec2>) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let top = source.min.y.max(target.min.y);
+    let bottom = source_max.y.min(target_max.y);
+    let x1 = hint
+        .filter(|hint| (source.min.x..=source_max.x).contains(&hint.x))
+        .map_or(source.center().x, |hint| hint.x);
+    let y = hint.map_or_else(|| js_round(bottom + (top - bottom) / 2.0), |hint| hint.y);
+    let x2 = hint
+        .filter(|hint| (target.min.x..=target_max.x).contains(&hint.x))
+        .map_or(target.center().x, |hint| hint.x);
+    let outside = |point| !rect_contains(source, point) && !rect_contains(target, point);
+    let mut points: Vec<Vec2> = [x1, x2]
+        .into_iter()
+        .map(|x| Vec2::new(x, y))
+        .filter(|&point| outside(point))
+        .collect();
+    if points.len() == 1 {
+        match hint {
+            Some(hint) => {
+                let point = Vec2::new(hint.x, y);
+                if outside(point) {
+                    points.push(point);
+                }
+            }
+            None => {
+                let left = source.min.x.max(target.min.x);
+                let right = source_max.x.min(target_max.x);
+                points.push(Vec2::new(left + (right - left) / 2.0, y));
+            }
+        }
+    }
+    points
+}
+
+/// draw.io's `ElbowConnector`: side-to-side unless the hint or the terminal
+/// overlap demands top-to-bottom, or `elbow=vertical` prefers it.
+fn elbow_points(source: Rect, target: Rect, hint: Option<Vec2>, vertical: bool) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let (force_vertical, force_horizontal) = match hint {
+        Some(hint) => {
+            let left = source.min.x.min(target.min.x);
+            let right = source_max.x.max(target_max.x);
+            let top = source.min.y.min(target.min.y);
+            let bottom = source_max.y.max(target_max.y);
+            (
+                hint.y < top || hint.y > bottom,
+                hint.x < left || hint.x > right,
+            )
+        }
+        None => {
+            let left = source.min.x.max(target.min.x);
+            let right = source_max.x.min(target_max.x);
+            let force_vertical = left == right;
+            let top = source.min.y.max(target.min.y);
+            let bottom = source_max.y.min(target_max.y);
+            (force_vertical, !force_vertical && top == bottom)
+        }
+    };
+    if !force_horizontal && (force_vertical || vertical) {
+        top_to_bottom_points(source, target, hint)
+    } else {
+        side_to_side_points(source, target, hint)
+    }
+}
+
+/// Interior points of draw.io's `EntityRelation` router, which leaves both
+/// terminals horizontally through a fixed-length segment and ignores hints.
+fn entity_relation_points(source: Rect, target: Rect) -> Vec<Vec2> {
+    let segment = ENTITY_RELATION_SEGMENT;
+    let (source_max, target_max) = (source.max(), target.max());
+    let source_left = target_max.x < source.min.x;
+    let target_left = source_max.x < target.min.x;
+    let x0 = if source_left {
+        source.min.x
+    } else {
+        source_max.x
+    };
+    let xe = if target_left {
+        target.min.x
+    } else {
+        target_max.x
+    };
+    let (y0, ye) = (source.center().y, target.center().y);
+    let departure = Vec2::new(x0 + if source_left { -segment } else { segment }, y0);
+    let arrival = Vec2::new(xe + if target_left { -segment } else { segment }, ye);
+    if source_left == target_left {
+        let x = if source_left {
+            x0.min(xe) - segment
+        } else {
+            x0.max(xe) + segment
+        };
+        vec![Vec2::new(x, y0), Vec2::new(x, ye)]
+    } else if (departure.x < arrival.x) == source_left {
+        let middle = y0 + (ye - y0) / 2.0;
+        vec![
+            departure,
+            Vec2::new(departure.x, middle),
+            Vec2::new(arrival.x, middle),
+            arrival,
+        ]
+    } else {
+        vec![departure, arrival]
+    }
+}
+
+/// Interior points of draw.io's `SegmentConnector`, where each waypoint fixes
+/// the position of the next segment, alternating between horizontal and
+/// vertical segments. Zero-sized terminals are fixed points, like draw.io's
+/// absolute terminal points.
+fn segment_points(source: Rect, target: Rect, waypoints: &[Vec2]) -> Vec<Vec2> {
+    const TOLERANCE: f32 = 1.0;
+    let fixed = |rect: Rect| (rect.size == Vec2::ZERO).then(|| rect.center());
+    let (p0, pe) = (fixed(source), fixed(target));
+    let (source_max, target_max) = (source.max(), target.max());
+    let outside_y = |rect: Rect, max: Vec2, y: f32| y < rect.min.y || y > max.y;
+    let outside_x = |rect: Rect, max: Vec2, x: f32| x < rect.min.x || x > max.x;
+    let mut temp = Vec::new();
+    let mut horizontal = true;
+    let mut pt = source.center();
+    let mut hint = pt;
+    if !waypoints.is_empty() {
+        let mut hints = waypoints.to_vec();
+        if (hints[0].x - pt.x).abs() < TOLERANCE {
+            hints[0].x = pt.x;
+        }
+        if (hints[0].y - pt.y).abs() < TOLERANCE {
+            hints[0].y = pt.y;
+        }
+        if let Some(pe) = pe {
+            let last = hints.last_mut().expect("hints are not empty");
+            if (last.x - pe.x).abs() < TOLERANCE {
+                last.x = pe.x;
+            }
+            if (last.y - pe.y).abs() < TOLERANCE {
+                last.y = pe.y;
+            }
+        }
+        hint = hints[0];
+        // Orientation of the first segment from alignment with fixed points or
+        // the terminal channels, trying the source end and then the target end.
+        let (mut terminal, mut channel, mut current, mut current_hint) =
+            (p0.is_none(), source, p0, hint);
+        for end in 0..2 {
+            let fixed_vertical = current.is_some_and(|point| point.x == current_hint.x);
+            let fixed_horizontal = current.is_some_and(|point| point.y == current_hint.y);
+            let channel_max = channel.max();
+            let in_horizontal_channel =
+                terminal && (channel.min.y..=channel_max.y).contains(&current_hint.y);
+            let in_vertical_channel =
+                terminal && (channel.min.x..=channel_max.x).contains(&current_hint.x);
+            let horizontal_channel =
+                fixed_horizontal || (current.is_none() && in_horizontal_channel);
+            let vertical_channel = fixed_vertical || (current.is_none() && in_vertical_channel);
+            let ambiguous =
+                (horizontal_channel && vertical_channel) || (fixed_vertical && fixed_horizontal);
+            if !(end == 0 && ambiguous) && (vertical_channel || horizontal_channel) {
+                horizontal = if end == 1 && hints.len() % 2 == 1 {
+                    vertical_channel
+                } else {
+                    horizontal_channel
+                };
+                break;
+            }
+            (terminal, channel, current) = (pe.is_none(), target, pe);
+            current_hint = *hints.last().expect("hints are not empty");
+            if fixed_vertical && fixed_horizontal {
+                hints.remove(0);
+            }
+        }
+        if horizontal && p0.map_or(outside_y(source, source_max, hint.y), |p0| p0.y != hint.y) {
+            temp.push(Vec2::new(pt.x, hint.y));
+        } else if !horizontal
+            && p0.map_or(outside_x(source, source_max, hint.x), |p0| p0.x != hint.x)
+        {
+            temp.push(Vec2::new(hint.x, pt.y));
+        }
+        if horizontal {
+            pt.y = hint.y;
+        } else {
+            pt.x = hint.x;
+        }
+        for &next in &hints {
+            horizontal = !horizontal;
+            hint = next;
+            if horizontal {
+                pt.y = hint.y;
+            } else {
+                pt.x = hint.x;
+            }
+            temp.push(pt);
+        }
+    }
+    let last = pe.unwrap_or(target.center());
+    if horizontal && pe.map_or(outside_y(target, target_max, hint.y), |pe| pe.y != hint.y) {
+        temp.push(Vec2::new(last.x, hint.y));
+    } else if !horizontal && pe.map_or(outside_x(target, target_max, hint.x), |pe| pe.x != hint.x) {
+        temp.push(Vec2::new(hint.x, last.y));
+    }
+    // Bends inside a floating terminal are dropped.
+    if p0.is_none() {
+        let inside = temp
+            .iter()
+            .take_while(|&&point| rect_contains(source, point))
+            .count();
+        temp.drain(..inside);
+    }
+    if pe.is_none() {
+        while temp
+            .last()
+            .is_some_and(|&point| rect_contains(target, point))
+        {
+            temp.pop();
+        }
+    }
+    let mut result: Vec<Vec2> = Vec::with_capacity(temp.len());
+    for point in temp {
+        let point = Vec2::new(
+            js_round(point.x * 10.0) / 10.0,
+            js_round(point.y * 10.0) / 10.0,
+        );
+        if result.last().is_none_or(|last| {
+            (last.x - point.x).abs() >= TOLERANCE || (last.y - point.y).abs() >= TOLERANCE
+        }) {
+            result.push(point);
+        }
+    }
+    if let Some(pe) = pe
+        && result.last().is_some_and(|last| {
+            (last.x - pe.x).abs() <= TOLERANCE && (last.y - pe.y).abs() <= TOLERANCE
+        })
+    {
+        result.pop();
+        if let Some(last) = result.last_mut() {
+            if (last.x - pe.x).abs() < TOLERANCE {
+                last.x = pe.x;
+            }
+            if (last.y - pe.y).abs() < TOLERANCE {
+                last.y = pe.y;
+            }
+        }
+    }
+    result
+}
+
+/// Interior points of draw.io's `IsometricConnector`: from the source centre
+/// along one isometric axis and then the other to the hint (or the midpoint),
+/// then on along the second axis, leaving the last span to the target on the
+/// first axis. Bends that coincide with a terminal centre are dropped so
+/// that the ends still leave along an axis.
+fn isometric_points(source: Rect, target: Rect, hint: Option<Vec2>, vertical: bool) -> Vec<Vec2> {
+    let (p0, pe) = (source.center(), target.center());
+    let angle = |degrees: f32| {
+        let radians = degrees.to_radians();
+        Vec2::new(radians.cos(), radians.sin())
+    };
+    let (a, b) = (angle(-30.0), angle(-150.0));
+    let mut result = Vec::with_capacity(3);
+    let mut last = p0;
+    let mut line_to = |to: Vec2, both: bool| {
+        let c = to - last;
+        let h = (b.y * c.x - b.x * c.y) / (a.x * b.y - a.y * b.x);
+        let v = (a.y * c.x - a.x * c.y) / (a.y * b.x - a.x * b.y);
+        let (first, second) = if vertical {
+            (b * v, a * h)
+        } else {
+            (a * h, b * v)
+        };
+        if both {
+            last = last + first;
+            result.push(last);
+        }
+        last = last + second;
+        result.push(last);
+    };
+    let hint = hint.unwrap_or(p0 + (pe - p0) * 0.5);
+    line_to(hint, true);
+    line_to(pe, false);
+    let near = |p: Vec2, q: Vec2| (p - q).length() < 1e-3;
+    let mut points: Vec<Vec2> = Vec::with_capacity(result.len());
+    for point in result {
+        if !near(point, p0) && !near(point, pe) && points.last().is_none_or(|&l| !near(l, point)) {
+            points.push(point);
+        }
+    }
+    points
+}
+
+/// Path of a connector using one of draw.io's routed edge styles. Like draw.io,
+/// only the first waypoint is a routing hint for elbow and isometric styles,
+/// segment routes use every waypoint, and entity relations ignore them.
+fn drawio_edge_style_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let hint = connector
+        .route
+        .uses_waypoint_hint()
+        .then(|| connector.waypoints.first().copied())
+        .flatten();
+    let (source, target) = (a.rect, b.rect);
+    let interior = match connector.route {
+        ConnectorRoute::ElbowHorizontal => elbow_points(source, target, hint, false),
+        ConnectorRoute::ElbowVertical => elbow_points(source, target, hint, true),
+        ConnectorRoute::SideToSide => side_to_side_points(source, target, hint),
+        ConnectorRoute::TopToBottom => top_to_bottom_points(source, target, hint),
+        ConnectorRoute::EntityRelation => entity_relation_points(source, target),
+        ConnectorRoute::Segment => segment_points(source, target, &connector.waypoints),
+        ConnectorRoute::IsometricHorizontal => isometric_points(source, target, hint, false),
+        ConnectorRoute::IsometricVertical => isometric_points(source, target, hint, true),
+        ConnectorRoute::Straight | ConnectorRoute::Elbow | ConnectorRoute::Curve => Vec::new(),
+    };
+    // Like mxGraphView, the source end aims at the first route point (or the
+    // target centre) and the target end at the point preceding it. Isometric
+    // routes are not orthogonal, so their ends clip from the centre.
+    let orthogonal = !matches!(
+        connector.route,
+        ConnectorRoute::IsometricHorizontal | ConnectorRoute::IsometricVertical
+    );
+    let clip = |end: &EndTarget, next: Vec2| {
+        if orthogonal {
+            end.clip_orthogonal(next)
+        } else {
+            end.clip(next)
+        }
+    };
+    let start = clip(&a, interior.first().copied().unwrap_or(target.center()));
+    let end = clip(&b, interior.last().copied().unwrap_or(start));
+    let mut points = Vec::with_capacity(interior.len() + 2);
+    push_distinct(&mut points, start);
+    for point in interior {
+        push_distinct(&mut points, point);
+    }
+    push_distinct(&mut points, end);
+    if points.len() == 1 {
+        points.push(points[0]);
+    }
+    points
 }
 
 fn push_distinct(points: &mut Vec<Vec2>, point: Vec2) {
@@ -1790,17 +3141,19 @@ impl<'a> ConnectorResolver<'a> {
                         0.0,
                     ))
                 } else {
+                    let shape = match &object.kind {
+                        CanvasObjectKind::Shape { shape, .. } => Some((*shape, object.rounding)),
+                        _ => None,
+                    };
+                    let flip = (object.style.flip_h, object.style.flip_v);
                     Some(EndTarget {
                         rect: object.rect,
                         rotation: object.rotation,
-                        shape: match &object.kind {
-                            CanvasObjectKind::Shape { shape, .. } => {
-                                Some((*shape, object.rounding))
-                            }
-                            _ => None,
-                        },
+                        shape,
                         custom_outline: crate::stencil_object::render(object)
-                            .map(|render| crate::stencil_object::geometry(object, &render).outline),
+                            .map(|render| crate::stencil_object::geometry(object, &render).outline)
+                            .or_else(|| flipped_outline(object.rect, object.rotation, shape, flip)),
+                        flip,
                     })
                 }
             }
@@ -1974,9 +3327,16 @@ pub fn connector_insert_handles(
     let Some((from, to)) = connector_targets(sheet, layout, connector) else {
         return Vec::new();
     };
+    let looped = is_drawio_loop(connector);
+    let hinted = connector.route.uses_waypoint_hint() || connector.route == ConnectorRoute::Segment;
+    if (connector.route == ConnectorRoute::EntityRelation && !looped)
+        || ((hinted || looped) && !connector.waypoints.is_empty())
+    {
+        return Vec::new();
+    }
     if connector.waypoints.is_empty() {
         let path = routed_path(connector, from, to);
-        if connector.route == ConnectorRoute::Curve {
+        if connector.route == ConnectorRoute::Curve || hinted || looped {
             return crate::board::polyline_midpoint(&path)
                 .map(|point| {
                     vec![ConnectorInsertHandle {
@@ -2027,3 +3387,6 @@ pub fn connector_insert_handles(
 
 #[cfg(test)]
 mod tests;
+
+mod edge_shape;
+pub use edge_shape::EdgeBody;

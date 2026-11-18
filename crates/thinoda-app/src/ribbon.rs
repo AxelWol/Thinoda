@@ -143,7 +143,8 @@ fn command_groups<'a>(
                 | Cmd::ToggleZen
                 | Cmd::ToggleFormatPanel
                 | Cmd::ToggleSymbolsPanel
-                | Cmd::ToggleStatusBar => t("View"),
+                | Cmd::ToggleStatusBar
+                | Cmd::BoardLayers => t("View"),
                 Cmd::Canvas(Action::ZoomIn | Action::ZoomOut | Action::ZoomReset | Action::Fit) => {
                     t("Zoom In")
                 }

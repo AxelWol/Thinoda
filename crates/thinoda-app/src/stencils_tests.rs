@@ -69,6 +69,39 @@ fn json_package_import_is_atomic_and_rejects_duplicate_or_builtin_ids() {
 }
 
 #[test]
+fn drawio_stencil_xml_installs_as_packages_that_resolve_drawio_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let mut panel = StencilPanel::default();
+    assert_eq!(panel.ensure_loaded(Some(&paths)), None);
+    let xml = r#"<?xml version="1.0"?>
+<shapes name="mxgraph.thinodaVendor"><shape name="Edge Router" w="40" h="20"><foreground><rect x="0" y="0" w="40" h="20"/><fillstroke/></foreground></shape></shapes>"#;
+    let (id, unavailable) = panel.import("Vendor", xml).unwrap();
+    assert_eq!((id.as_str(), unavailable), ("lib-1", 0));
+    assert_eq!(panel.packages[0].1.id, "user.drawio.thinodavendor");
+    assert!(panel.sections().iter().any(|section| section.id == id));
+    let alias = "mxgraph.thinodavendor.edge_router";
+    assert!(thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+    assert!(
+        panel
+            .import("Vendor", xml)
+            .unwrap_err()
+            .contains("already installed")
+    );
+    assert!(panel.import("Broken", "<shapes name=\"x\"/>").is_err());
+    assert_eq!(panel.state.packages.len(), 1);
+    panel.save(Some(&paths)).unwrap();
+    thinoda_io::drawio_stencil::set_user_stencil_packages([]);
+    let mut restored = StencilPanel::default();
+    assert_eq!(restored.ensure_loaded(Some(&paths)), None);
+    assert_eq!(restored.packages.len(), 1);
+    assert!(thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+    restored.remove_library(&id);
+    assert!(!thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+}
+
+#[test]
 fn installed_packages_survive_reload_and_removal_does_not_change_pinned_objects() {
     let dir = tempfile::tempdir().unwrap();
     let paths = thinoda_platform::Paths::from_root(dir.path());
@@ -1158,4 +1191,148 @@ fn parametric_shape_entries_insert_as_rendered_stencil_objects() {
         assert_eq!(stencil.package, "thinoda.general");
         assert!(thinoda_core::stencil_object::render(object).is_some());
     }
+}
+
+fn bundled_section(panel: &StencilPanel, family: &str) -> Section {
+    panel
+        .sections_with(true)
+        .into_iter()
+        .find(|section| matches!(section.content, SectionContent::Bundled(f) if f == family))
+        .unwrap()
+}
+
+#[test]
+fn drawio_families_are_opt_in_and_listed_from_the_catalog() {
+    let mut panel = loaded_panel();
+    assert!(
+        !section_ids(&panel)
+            .iter()
+            .any(|id| id.starts_with("drawio."))
+    );
+    panel.set_drawio_visible("electrical", true);
+    panel.set_drawio_visible("no-such-family", true);
+    assert_eq!(panel.state.shown_drawio, ["electrical"]);
+    let ids = section_ids(&panel);
+    let position = ids.iter().position(|id| id == "drawio.electrical").unwrap();
+    assert_eq!(
+        ids[position - 1],
+        "thinoda.drawio",
+        "after the built-in sections"
+    );
+
+    let section = bundled_section(&panel, "electrical");
+    let expected: usize = drawio_bundle::bundle()
+        .catalog()
+        .packages
+        .iter()
+        .filter(|package| package.family == "electrical")
+        .map(|package| package.shapes.len())
+        .sum();
+    let entries = section.entries();
+    assert_eq!(entries.len(), expected);
+    assert!(
+        entries
+            .iter()
+            .enumerate()
+            .all(|(i, (index, _))| i == *index)
+    );
+    // Search matches names and package titles from the catalog alone.
+    let networks = bundled_section(&panel, "networks2");
+    assert!(
+        networks
+            .entries()
+            .iter()
+            .any(|(_, entry)| entry.matches_query("big data"))
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|(_, entry)| entry.matches_query("resistors"))
+    );
+    panel.set_drawio_visible("electrical", false);
+    assert!(panel.state.shown_drawio.is_empty());
+}
+
+#[test]
+fn shapes_from_one_bundled_package_share_one_embedded_resource() {
+    let mut panel = loaded_panel();
+    let section = bundled_section(&panel, "flowchart");
+    let entries = section.entries();
+    let mut prepared = Vec::new();
+    for &(index, entry) in entries.iter().take(2) {
+        let mut budget = 1;
+        let tile = panel
+            .prepared(&section, index, entry, false, &mut budget)
+            .unwrap()
+            .expect("bundled shape prepares");
+        assert!(tile.shared_bytes > 0);
+        assert!(prepared_cache_bytes(&tile) < tile.shared_bytes);
+        prepared.push(tile);
+    }
+
+    let mut app = app();
+    for tile in &prepared {
+        let doc = app.doc_mut().unwrap();
+        doc.view
+            .paste_foreign_board(&mut doc.doc, &tile.payload, Some(tile.bounds), INSERT_LABEL)
+            .unwrap();
+    }
+    let sheet = app.doc().unwrap().doc.sheet();
+    let stencils: Vec<_> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object.stencil.as_ref())
+        .collect();
+    assert_eq!(stencils.len(), 2);
+    assert_ne!(stencils[0].definition, stencils[1].definition);
+    assert_eq!(stencils[0].package_resource, stencils[1].package_resource);
+    assert_eq!(sheet.resources.entries.len(), 1);
+
+    // draw.io copies write the original style name.
+    let xml = thinoda_io::drawio_clipboard::encode(&prepared[0].payload).unwrap();
+    let xml = urlencoding_decode(&xml);
+    assert!(xml.contains("mxgraph.flowchart."), "{xml}");
+}
+
+#[test]
+fn every_drawio_family_has_a_title_and_translated_names() {
+    for family in drawio_bundle::FAMILIES {
+        assert!(
+            DRAWIO_FAMILY_TITLES.iter().any(|(id, _)| *id == family),
+            "{family}"
+        );
+    }
+    for (_, title) in DRAWIO_FAMILY_TITLES {
+        assert!(
+            DRAWIO_PROPER_TITLES.contains(title) || crate::i18n::has_translations(title),
+            "missing translation {title}"
+        );
+    }
+    assert!(crate::i18n::has_translations(
+        "Refine the search to see more"
+    ));
+}
+
+#[test]
+fn a_broad_search_caps_bundled_results() {
+    let mut app = app();
+    app.stencils.ensure_loaded(None);
+    let mut h = harness(app);
+    search(&mut h, "e");
+    assert!(h.query_by_label("Refine the search to see more").is_some());
+}
+
+fn urlencoding_decode(text: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut iter = text.bytes();
+    while let Some(byte) = iter.next() {
+        if byte == b'%' {
+            let hex = [iter.next().unwrap(), iter.next().unwrap()];
+            bytes.push(u8::from_str_radix(std::str::from_utf8(&hex).unwrap(), 16).unwrap());
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8(bytes).unwrap()
 }

@@ -531,6 +531,252 @@ fn cross_axis_fill_selects_native_v35_and_rejects_v34_archives() {
 }
 
 #[test]
+fn rich_labels_select_native_v49_and_reject_older_or_legacy_archives() {
+    use thinoda_core::board::{CanvasObject, CanvasObjectKind, ShapeKind};
+    let mut sheet = Sheet::new("Rich labels", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+        unreachable!()
+    };
+    *label = "A🙂B".into();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range(label, 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(std::sync::Arc::new(rich));
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 49);
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 48,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    for bytes in [older.as_slice(), content.as_slice()] {
+        assert!(
+            crate::formats::native_import(bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("rich labels require native format version 49")
+        );
+    }
+}
+
+#[test]
+fn rich_connector_labels_select_native_v50_and_reject_older_or_legacy_archives() {
+    use thinoda_core::Endpoint;
+    use thinoda_core::board::{CanvasConnector, CanvasObject};
+    let mut sheet = Sheet::new("Rich connector", "Root");
+    let connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut object = CanvasObject::connector(connector);
+    object.set_label("A🙂B").unwrap();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(std::sync::Arc::new(rich));
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 50);
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 49,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    for bytes in [older.as_slice(), content.as_slice()] {
+        assert!(
+            crate::formats::native_import(bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("rich connector labels require native format version 50")
+        );
+    }
+}
+
+#[test]
+fn rich_extra_connector_labels_select_native_v51_and_reject_older_or_legacy_archives() {
+    use thinoda_core::Endpoint;
+    use thinoda_core::board::{CanvasConnector, CanvasObject, ConnectorLabel};
+    let mut sheet = Sheet::new("Rich extra connector", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "A🙂B".into(),
+        rich_text: Some(std::sync::Arc::new(rich)),
+        ..Default::default()
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 51);
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 50,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    for bytes in [older.as_slice(), content.as_slice()] {
+        assert!(
+            crate::formats::native_import(bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("rich extra connector labels require native format version 51")
+        );
+    }
+}
+
+#[test]
+fn label_styles_select_native_v48_and_reject_older_or_legacy_archives() {
+    let mut sheet = Sheet::new("Label styles", "Root");
+    let mut object = thinoda_core::board::CanvasObject::shape(
+        thinoda_core::board::ShapeKind::Rectangle,
+        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.label_style = Some(std::sync::Arc::new(thinoda_core::label_style::LabelStyle {
+        font_family: Some("Georgia".into()),
+        ..Default::default()
+    }));
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 48);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 47,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    for bytes in [older.as_slice(), content.as_slice()] {
+        let error = crate::formats::native_import(bytes).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("label styles require native format version 48")
+        );
+    }
+}
+
+#[test]
+fn shape_styles_select_native_v47_and_reject_older_or_legacy_archives() {
+    let mut sheet = Sheet::new("Shape styles", "Root");
+    let mut object = thinoda_core::board::CanvasObject::shape(
+        thinoda_core::board::ShapeKind::Triangle,
+        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.style.flip_v = true;
+    object.style.glass = true;
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 47);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 46,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    for bytes in [older.as_slice(), content.as_slice()] {
+        let error = crate::formats::native_import(bytes).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("shape styles require native format version 47")
+        );
+    }
+}
+
+#[test]
+fn tables_select_native_v46_and_reject_older_or_legacy_archives() {
+    let mut sheet = Sheet::new("Tables", "Root");
+    sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 46);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 45,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&older).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tables require native format version 46")
+    );
+    let error = crate::formats::native_import(&content).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tables require native format version 46")
+    );
+}
+
+#[test]
 fn rejects_tampering_invalid_metadata_and_missing_or_unlisted_blobs_atomically() {
     let mut book = empty_book(1);
     let first = entry(0, "first.bin", b"first resource");

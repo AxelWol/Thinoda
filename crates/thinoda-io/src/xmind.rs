@@ -41,6 +41,21 @@ const SCENE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-LAYOUT-1";
 const SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-STENCIL-LAYOUT-1";
 const COLLAPSE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-LAYOUT-1";
 const SEMANTIC_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SEMANTIC-1";
+const MARKER_LIBRARY_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKER-LIBRARY-1";
+const LINE_JUMPS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LINE-JUMPS-1";
+const EDGE_ROUTES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-EDGE-ROUTES-1";
+const SEGMENT_ROUTES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SEGMENT-ROUTES-1";
+const EDGE_SHAPES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-EDGE-SHAPES-1";
+const CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CONNECTOR-LABELS-1";
+const OBJECT_DATA_SNAPSHOT_VERSION: &str = "THINODA-XMIND-OBJECT-DATA-1";
+const LAYERS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LAYERS-1";
+const TABLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-TABLES-1";
+const SHAPE_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SHAPE-STYLES-1";
+const LABEL_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LABEL-STYLES-1";
+const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
+const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECTOR-LABELS-1";
+const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
+    "THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -730,7 +745,68 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_semantic_model() {
+    if book.has_rich_extra_connector_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_connector_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_label_styles() {
+        Ok(serde_json::to_string(&(
+            LABEL_STYLES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_shape_styles() {
+        Ok(serde_json::to_string(&(
+            SHAPE_STYLES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_tables() {
+        Ok(serde_json::to_string(&(TABLES_SNAPSHOT_VERSION, book))?)
+    } else if book.has_layers() {
+        Ok(serde_json::to_string(&(LAYERS_SNAPSHOT_VERSION, book))?)
+    } else if book.has_object_data() {
+        Ok(serde_json::to_string(&(
+            OBJECT_DATA_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_labels() {
+        Ok(serde_json::to_string(&(
+            CONNECTOR_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_edge_shapes() {
+        Ok(serde_json::to_string(&(
+            EDGE_SHAPES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_segment_routes() {
+        Ok(serde_json::to_string(&(
+            SEGMENT_ROUTES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_edge_routes() {
+        Ok(serde_json::to_string(&(
+            EDGE_ROUTES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_line_jumps() {
+        Ok(serde_json::to_string(&(LINE_JUMPS_SNAPSHOT_VERSION, book))?)
+    } else if book.has_library_connector_markers() {
+        Ok(serde_json::to_string(&(
+            MARKER_LIBRARY_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_semantic_model() {
         Ok(serde_json::to_string(&(SEMANTIC_SNAPSHOT_VERSION, book))?)
     } else if book.has_scene_collapse() && book.has_scene_layout_policies() {
         Ok(serde_json::to_string(&(
@@ -873,6 +949,20 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
                 || version == COLLAPSE_LAYOUT_SNAPSHOT_VERSION
                 || version == SEMANTIC_SNAPSHOT_VERSION
+                || version == MARKER_LIBRARY_SNAPSHOT_VERSION
+                || version == LINE_JUMPS_SNAPSHOT_VERSION
+                || version == EDGE_ROUTES_SNAPSHOT_VERSION
+                || version == SEGMENT_ROUTES_SNAPSHOT_VERSION
+                || version == EDGE_SHAPES_SNAPSHOT_VERSION
+                || version == CONNECTOR_LABELS_SNAPSHOT_VERSION
+                || version == OBJECT_DATA_SNAPSHOT_VERSION
+                || version == LAYERS_SNAPSHOT_VERSION
+                || version == TABLES_SNAPSHOT_VERSION
+                || version == SHAPE_STYLES_SNAPSHOT_VERSION
+                || version == LABEL_STYLES_SNAPSHOT_VERSION
+                || version == RICH_LABELS_SNAPSHOT_VERSION
+                || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+                || version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
         })
 }
 
@@ -894,6 +984,10 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                         .get("canvas")
                         .and_then(|canvas| canvas.get("scene"))
                         .is_some()
+                    || sheet
+                        .get("canvas")
+                        .and_then(|canvas| canvas.get("layers"))
+                        .is_some()
             })
         })
     {
@@ -908,6 +1002,9 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .flatten()
         .any(|object| {
             object.get("rounding").is_some()
+                || object.get("data").is_some()
+                || object.get("layer").is_some()
+                || object.get("label_rich_text").is_some()
                 || object.get("rectangle_sides").is_some()
                 || object.get("double_ellipse_margin").is_some()
                 || object.get("stencil").is_some()
@@ -933,6 +1030,23 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                             || connector.contains_key("end_marker_unfilled")
                             || connector.contains_key("from_port")
                             || connector.contains_key("to_port")
+                            || connector.contains_key("line_jumps")
+                            || connector.contains_key("edge_shape")
+                            || connector.contains_key("label_placement")
+                            || connector.contains_key("extra_labels")
+                            || matches!(
+                                connector.get("route").and_then(Value::as_str),
+                                Some(
+                                    "elbow-horizontal"
+                                        | "elbow-vertical"
+                                        | "side-to-side"
+                                        | "top-to-bottom"
+                                        | "entity-relation"
+                                        | "segment"
+                                        | "isometric-horizontal"
+                                        | "isometric-vertical"
+                                )
+                            )
                     })
         })
 }
@@ -966,10 +1080,308 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
             && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
             && version != SEMANTIC_SNAPSHOT_VERSION
+            && version != MARKER_LIBRARY_SNAPSHOT_VERSION
+            && version != LINE_JUMPS_SNAPSHOT_VERSION
+            && version != EDGE_ROUTES_SNAPSHOT_VERSION
+            && version != SEGMENT_ROUTES_SNAPSHOT_VERSION
+            && version != EDGE_SHAPES_SNAPSHOT_VERSION
+            && version != CONNECTOR_LABELS_SNAPSHOT_VERSION
+            && version != OBJECT_DATA_SNAPSHOT_VERSION
+            && version != LAYERS_SNAPSHOT_VERSION
+            && version != TABLES_SNAPSHOT_VERSION
+            && version != SHAPE_STYLES_SNAPSHOT_VERSION
+            && version != LABEL_STYLES_SNAPSHOT_VERSION
+            && version != RICH_LABELS_SNAPSHOT_VERSION
+            && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            && version != RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let rich_extra_connector_labels_envelope =
+            version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich extra connector labels require a rich-extra-connector-label-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+        if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich connector labels require a rich-connector-label-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION
+            || rich_connector_labels_envelope
+            || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+        if workbook.has_rich_labels() != rich_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich labels require a rich-label-aware private XMind snapshot".into(),
+            ));
+        }
+        let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION
+            || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+                && workbook.has_label_styles();
+        if workbook.has_label_styles() != label_styles_envelope {
+            return Err(IoError::NewerVersion(
+                "label styles require a label-style-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !label_styles_envelope
+            && !rich_labels_envelope
+            && !rich_extra_connector_labels_envelope
+        {
+            version
+        } else if workbook.has_shape_styles() {
+            SHAPE_STYLES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_tables() {
+            TABLES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_layers() {
+            LAYERS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_object_data() {
+            OBJECT_DATA_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let shape_styles_envelope = version == SHAPE_STYLES_SNAPSHOT_VERSION;
+        if workbook.has_shape_styles() != shape_styles_envelope {
+            return Err(IoError::NewerVersion(
+                "shape styles require a shape-style-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !shape_styles_envelope {
+            version
+        } else if workbook.has_tables() {
+            TABLES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_layers() {
+            LAYERS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_object_data() {
+            OBJECT_DATA_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let tables_envelope = version == TABLES_SNAPSHOT_VERSION;
+        if workbook.has_tables() != tables_envelope {
+            return Err(IoError::NewerVersion(
+                "tables require a table-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !tables_envelope {
+            version
+        } else if workbook.has_layers() {
+            LAYERS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_object_data() {
+            OBJECT_DATA_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let layers_envelope = version == LAYERS_SNAPSHOT_VERSION;
+        if workbook.has_layers() != layers_envelope {
+            return Err(IoError::NewerVersion(
+                "layers require a layer-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !layers_envelope {
+            version
+        } else if workbook.has_object_data() {
+            OBJECT_DATA_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let object_data_envelope = version == OBJECT_DATA_SNAPSHOT_VERSION;
+        if workbook.has_object_data() != object_data_envelope {
+            return Err(IoError::NewerVersion(
+                "object data requires an object-data-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !object_data_envelope {
+            version
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let connector_labels_envelope = version == CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        if workbook.has_connector_labels() != connector_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "connector labels require a connector-label-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !connector_labels_envelope {
+            version
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let edge_shapes_envelope = version == EDGE_SHAPES_SNAPSHOT_VERSION;
+        if workbook.has_connector_edge_shapes() != edge_shapes_envelope {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require an edge-shape-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !edge_shapes_envelope {
+            version
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let segment_routes_envelope = version == SEGMENT_ROUTES_SNAPSHOT_VERSION;
+        if workbook.has_drawio_segment_routes() != segment_routes_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require a segment-route-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let version = if !segment_routes_envelope {
+            version
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let edge_routes_envelope = version == EDGE_ROUTES_SNAPSHOT_VERSION;
+        if workbook.has_drawio_edge_routes() != edge_routes_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io edge routes require an edge-route-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !edge_routes_envelope {
+            version
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let line_jumps_envelope = version == LINE_JUMPS_SNAPSHOT_VERSION;
+        if workbook.has_connector_line_jumps() != line_jumps_envelope {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require a line-jump-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !line_jumps_envelope {
+            version
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
+        let marker_library_envelope = version == MARKER_LIBRARY_SNAPSHOT_VERSION;
+        if workbook.has_library_connector_markers() != marker_library_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require a marker-library-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let version = if !marker_library_envelope {
+            version
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
         let semantic_envelope = version == SEMANTIC_SNAPSHOT_VERSION;
         if workbook.has_semantic_model() != semantic_envelope {
             return Err(IoError::NewerVersion(
@@ -1222,6 +1634,68 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require a rich-label-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_label_styles() {
+            return Err(IoError::NewerVersion(
+                "label styles require a label-style-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_shape_styles() {
+            return Err(IoError::NewerVersion(
+                "shape styles require a shape-style-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_tables() {
+            return Err(IoError::NewerVersion(
+                "tables require a table-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_layers() {
+            return Err(IoError::NewerVersion(
+                "layers require a layer-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_object_data() {
+            return Err(IoError::NewerVersion(
+                "object data requires an object-data-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_connector_labels() {
+            return Err(IoError::NewerVersion(
+                "connector labels require a connector-label-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_connector_edge_shapes() {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require an edge-shape-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_drawio_segment_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require a segment-route-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        if workbook.has_drawio_edge_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io edge routes require an edge-route-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_connector_line_jumps() {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require a line-jump-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_library_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require a marker-library-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
         if workbook.has_semantic_model() {
             return Err(IoError::NewerVersion(
                 "socio-technical data requires a semantic-aware private XMind snapshot".into(),
@@ -2659,6 +3133,688 @@ mod tests {
                     Err(IoError::NewerVersion(_))
                 ));
             }
+        }
+    }
+
+    #[test]
+    fn rich_labels_require_matching_private_snapshot_envelope() {
+        use thinoda_core::board::{CanvasObject, CanvasObjectKind, ShapeKind};
+        use thinoda_core::{Rect, Vec2};
+
+        for label_style in [false, true] {
+            let mut book = Workbook::default();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+                unreachable!()
+            };
+            *label = "A🙂B".into();
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range(label, 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+            if label_style {
+                object.label_style =
+                    Some(std::sync::Arc::new(thinoda_core::label_style::LabelStyle {
+                        bold: true,
+                        ..Default::default()
+                    }));
+            }
+            book.active_mut().add_canvas_object(object).unwrap();
+            let snapshot = private_snapshot(&book).unwrap();
+            assert!(snapshot.contains(RICH_LABELS_SNAPSHOT_VERSION));
+            assert!(strict_private_snapshot(&snapshot));
+            assert!(snapshot_contains_versioned_fields(&snapshot));
+            assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+            for forged in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(LABEL_STYLES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(RICH_LABELS_SNAPSHOT_VERSION, &Workbook::default()))
+                    .unwrap(),
+            ] {
+                assert!(read_private_snapshot(&forged).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn rich_connector_labels_require_matching_private_snapshot_envelope() {
+        use thinoda_core::board::{CanvasConnector, CanvasObject};
+        use thinoda_core::{Endpoint, Vec2};
+
+        let mut book = Workbook::default();
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        ));
+        object.set_label("A🙂B").unwrap();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        for forged in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(RICH_LABELS_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap(),
+        ] {
+            assert!(read_private_snapshot(&forged).is_err());
+        }
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+    }
+
+    #[test]
+    fn rich_extra_connector_labels_require_matching_private_snapshot_envelope() {
+        use std::sync::Arc;
+        use thinoda_core::board::{CanvasConnector, CanvasObject, ConnectorLabel, ShapeKind};
+        use thinoda_core::{Endpoint, Vec2};
+
+        for primary in [false, true] {
+            for (label_style, shape_rich) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let mut book = Workbook::default();
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                let mut rich = thinoda_core::InlineText::default();
+                rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+                    .unwrap();
+                connector.extra_labels.push(ConnectorLabel {
+                    text: "A🙂B".into(),
+                    rich_text: Some(Arc::new(rich.clone())),
+                    ..Default::default()
+                });
+                let mut object = CanvasObject::connector(connector);
+                if primary {
+                    object.set_label("A🙂B").unwrap();
+                    object.label_rich_text = Some(Arc::new(rich));
+                }
+                book.active_mut().add_canvas_object(object).unwrap();
+                if label_style || shape_rich {
+                    let mut shape = CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+                    );
+                    if label_style {
+                        shape.label_style = Some(Arc::new(thinoda_core::label_style::LabelStyle {
+                            bold: true,
+                            ..Default::default()
+                        }));
+                    }
+                    if shape_rich {
+                        shape.set_label("shape").unwrap();
+                        let mut rich = thinoda_core::InlineText::default();
+                        rich.update_range("shape", 0..5, |style| style.italic = Some(true))
+                            .unwrap();
+                        shape.label_rich_text = Some(Arc::new(rich));
+                    }
+                    book.active_mut().add_canvas_object(shape).unwrap();
+                }
+                let snapshot = private_snapshot(&book).unwrap();
+                assert!(snapshot.contains(RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION));
+                assert!(strict_private_snapshot(&snapshot));
+                assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+                for forged in [
+                    serde_json::to_string(&book).unwrap(),
+                    serde_json::to_string(&(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION, &book))
+                        .unwrap(),
+                    serde_json::to_string(&(
+                        RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+                        &Workbook::default(),
+                    ))
+                    .unwrap(),
+                ] {
+                    assert!(read_private_snapshot(&forged).is_err());
+                }
+                assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+            }
+        }
+    }
+
+    #[test]
+    fn label_styles_require_matching_private_snapshot_envelope() {
+        use thinoda_core::Vec2;
+        use thinoda_core::board::{CanvasObject, ShapeKind};
+        use thinoda_core::label_style::LabelStyle;
+
+        for shape_style in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            object.label_style = Some(std::sync::Arc::new(LabelStyle {
+                bold: true,
+                ..LabelStyle::default()
+            }));
+            object.style.shadow = shape_style;
+            sheet.add_canvas_object(object).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(SHAPE_STYLES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(COLLAPSE_LAYOUT_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(LABEL_STYLES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shape_styles_require_matching_private_snapshot_envelope() {
+        use thinoda_core::Vec2;
+        use thinoda_core::board::{CanvasObject, ShapeKind};
+
+        for table in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Triangle,
+                thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            object.style.flip_h = true;
+            sheet.add_canvas_object(object).unwrap();
+            if table {
+                sheet
+                    .insert_canvas_table(Vec2::new(100.0, 0.0), 2, 2, None)
+                    .unwrap();
+            }
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(TABLES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(COLLAPSE_LAYOUT_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(SHAPE_STYLES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tables_require_matching_private_snapshot_envelope() {
+        use thinoda_core::Vec2;
+
+        for layered in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+            if layered {
+                let layer = sheet.add_board_layer("Notes").unwrap();
+                sheet
+                    .move_canvas_objects_to_layer(&[table], Some(layer))
+                    .unwrap();
+            }
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(LAYERS_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(COLLAPSE_LAYOUT_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(TABLES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn layers_require_matching_private_snapshot_envelope() {
+        use std::sync::Arc;
+        use thinoda_core::object_data::ObjectData;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        for data in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+            );
+            if data {
+                object.data = Some(Arc::new(ObjectData {
+                    tags: vec!["flow".into()],
+                    ..Default::default()
+                }));
+            }
+            let id = sheet.add_canvas_object(object).unwrap();
+            let layer = sheet.add_board_layer("Notes").unwrap();
+            sheet
+                .move_canvas_objects_to_layer(&[id], Some(layer))
+                .unwrap();
+            sheet.set_board_layer_locked(layer, true).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(OBJECT_DATA_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(LAYERS_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn object_data_requires_matching_private_snapshot_envelope() {
+        use std::sync::Arc;
+        use thinoda_core::object_data::ObjectData;
+        use thinoda_core::{CanvasConnector, CanvasObject, ConnectorLabel, Endpoint, Vec2};
+
+        for labels in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            if labels {
+                connector.extra_labels.push(ConnectorLabel {
+                    text: "n".into(),
+                    placement: Default::default(),
+                    rich_text: None,
+                });
+            }
+            let mut object = CanvasObject::connector(connector);
+            object.data = Some(Arc::new(ObjectData {
+                tags: vec!["flow".into()],
+                ..Default::default()
+            }));
+            book.active_mut().add_canvas_object(object).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(CONNECTOR_LABELS_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(OBJECT_DATA_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connector_labels_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorLabel, ConnectorLabelPlacement, EdgeShape,
+            EdgeShapeKind, Endpoint, Vec2,
+        };
+
+        for edge_shape in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.extra_labels.push(ConnectorLabel {
+                text: "0..1".into(),
+                placement: ConnectorLabelPlacement {
+                    along: 1.0,
+                    orthogonal: 6.0,
+                    offset: Vec2::ZERO,
+                },
+                rich_text: None,
+            });
+            if edge_shape {
+                connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Link));
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(EDGE_SHAPES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(CONNECTOR_LABELS_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn edge_shapes_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, EdgeShape, EdgeShapeKind, Endpoint, Vec2,
+        };
+
+        for segment_route in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Link));
+            if segment_route {
+                connector.route = ConnectorRoute::Segment;
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(SEGMENT_ROUTES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(EDGE_SHAPES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn segment_routes_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{CanvasConnector, CanvasObject, ConnectorRoute, Endpoint, Vec2};
+
+        for edge_route in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.route = ConnectorRoute::IsometricHorizontal;
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            if edge_route {
+                let mut other = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(0.0, 80.0)),
+                );
+                other.route = ConnectorRoute::TopToBottom;
+                book.active_mut()
+                    .add_canvas_object(CanvasObject::connector(other))
+                    .unwrap();
+            }
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(EDGE_ROUTES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(SEGMENT_ROUTES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn edge_routes_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, Endpoint, LineJumpStyle, LineJumps, Vec2,
+        };
+
+        for jumps in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.route = ConnectorRoute::SideToSide;
+            if jumps {
+                connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Arc));
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(LINE_JUMPS_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(EDGE_ROUTES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn line_jumps_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+            LineJumpStyle, LineJumps, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Arc));
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::ErOne,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        let plain = Workbook::default();
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(MARKER_LIBRARY_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&(LINE_JUMPS_SNAPSHOT_VERSION, &plain)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(
+                matches!(
+                    import(&make_archive(&entries)),
+                    Err(IoError::NewerVersion(_))
+                ),
+                "{snapshot}"
+            );
+        }
+    }
+
+    #[test]
+    fn library_markers_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::ErZeroToMany,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        let plain = Workbook::default();
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(SEMANTIC_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&(COLLAPSE_LAYOUT_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&(MARKER_LIBRARY_SNAPSHOT_VERSION, &plain)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(
+                matches!(
+                    import(&make_archive(&entries)),
+                    Err(IoError::NewerVersion(_))
+                ),
+                "{snapshot}"
+            );
         }
     }
 

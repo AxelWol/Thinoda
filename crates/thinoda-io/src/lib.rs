@@ -5,6 +5,7 @@
 //! (including outlined text); JPEG always uses an opaque background.
 mod board_export;
 mod drawio;
+pub mod drawio_bundle;
 pub mod drawio_clipboard;
 pub mod drawio_library;
 pub mod drawio_stencil;
@@ -402,7 +403,9 @@ pub enum ImportWarning {
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.
     DrawioFoldedNotesApproximated,
-    /// draw.io placeholder resolution and its metadata are not represented.
+    /// Some draw.io placeholders are not live fields: global variables (dates,
+    /// page numbers, file name, lengths, unit sizes) and `placeholder` bindings
+    /// stay literal, frame names are resolved once, and topic text stays literal.
     DrawioPlaceholdersUnsupported,
     /// draw.io container child-layout behavior is only partially represented.
     DrawioSceneLayoutNotPreserved,
@@ -410,6 +413,9 @@ pub enum ImportWarning {
     DrawioCollapsedSceneExpanded,
     /// draw.io cards inside scene containers are imported without their containment.
     DrawioSceneCardContainmentNotPreserved,
+    /// draw.io cards and frames on named or hidden layers (or layers beyond the
+    /// layer limit) were placed on the base layer.
+    DrawioLayerContentFlattened,
     Other,
 }
 
@@ -1078,7 +1084,17 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
         .objects
         .iter()
         .filter_map(|object| object.stencil.as_ref())
-        .filter(|stencil| stencil.package == drawio_stencil::INLINE_PACKAGE_ID)
+        .filter(|stencil| {
+            stencil.package == drawio_stencil::INLINE_PACKAGE_ID
+                || drawio_bundle::bundle()
+                    .package_by_id(&stencil.package)
+                    .and_then(|package| {
+                        package
+                            .definition(&stencil.definition)
+                            .map(thinoda_core::stencil::StencilPackage::definition_hash)
+                    })
+                    .is_some_and(|hash| stencil.definition_hash.as_ref() == Some(&hash))
+        })
         .filter_map(|stencil| stencil.package_resource.as_deref())
         .collect();
     sheet.topics.values().all(|topic| {
@@ -1089,7 +1105,7 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
                 .is_none_or(|image| card_images.contains(image))
     }) && sheet.resources.entries.iter().all(|(id, resource)| {
         let reference = format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX);
-        // draw.io re-creates an imported inline stencil from its `shape=stencil(...)` style.
+        // draw.io re-creates an inline or unchanged bundled stencil from its `shape=` style.
         (resource.media_type == "application/json" && inline_stencils.contains(reference.as_str()))
             || (matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
                 && card_images.contains(reference.as_str()))
