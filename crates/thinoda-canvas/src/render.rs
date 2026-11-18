@@ -874,7 +874,7 @@ fn shape_label_visible_bounds(
     let CanvasObjectKind::Shape { label, .. } = &object.kind else {
         return None;
     };
-    if label.is_empty() {
+    if label.is_empty() && !object.has_label_list() {
         return None;
     }
     let label_rect = item
@@ -1608,14 +1608,14 @@ fn paint_stencil_object(
     let CanvasObjectKind::Shape { label, .. } = &object.kind else {
         return;
     };
-    if label.is_empty() || editing_board_object == Some(object.id) {
+    if (label.is_empty() && !object.has_label_list()) || editing_board_object == Some(object.id) {
         return;
     }
     let text_rect = thinoda_core::stencil_object::label_rect(object, render);
     let text_color = opacity_color(text_color, object.style.opacity);
-    if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label)
-        && let Some(style) = object.label_style.as_deref()
-    {
+    if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label) {
+        let default = thinoda_core::label_style::LabelStyle::default();
+        let style = object.label_style.as_deref().unwrap_or(&default);
         crate::label_text::paint(
             painter,
             &layout,
@@ -1804,7 +1804,9 @@ fn paint_canvas_object(
                 (dashed_stroke != Stroke::NONE).then_some(stroke_width),
                 xf,
             );
-            if !label.is_empty() && editing_board_object != Some(object.id) {
+            if (!label.is_empty() || object.has_label_list())
+                && editing_board_object != Some(object.id)
+            {
                 let text_rect = thinoda_core::board::flipped_frame_rect(
                     object,
                     shape_label_rect_with_style(
@@ -1816,9 +1818,9 @@ fn paint_canvas_object(
                 );
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
-                if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label)
-                    && let Some(style) = object.label_style.as_deref()
-                {
+                if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label) {
+                    let default = thinoda_core::label_style::LabelStyle::default();
+                    let style = object.label_style.as_deref().unwrap_or(&default);
                     crate::label_text::paint(
                         painter,
                         &layout,

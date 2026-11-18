@@ -7,7 +7,7 @@
 
 use crate::board::{CanvasLayer, CanvasObject, CanvasObjectKind};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, ops::Range};
 
 /// Upper bound for one object's data, in bytes of link, tags, names and values.
 pub const MAX_OBJECT_DATA_BYTES: usize = 32 * 1024;
@@ -201,7 +201,15 @@ fn placeholder_name_len(rest: &str) -> Option<usize> {
 /// writes `%name%`, `%label%` and `%tooltip%` stay, and unknown names stay.
 pub fn replace_placeholders<'a>(
     text: &'a str,
+    lookup: impl FnMut(&str) -> Option<String>,
+) -> Cow<'a, str> {
+    replace_placeholders_reporting(text, lookup, |_, _| {})
+}
+
+fn replace_placeholders_reporting<'a>(
+    text: &'a str,
     mut lookup: impl FnMut(&str) -> Option<String>,
+    mut changed: impl FnMut(Range<usize>, &str),
 ) -> Cow<'a, str> {
     let mut out = String::new();
     let mut last = 0;
@@ -223,6 +231,11 @@ pub fn replace_placeholders<'a>(
         } else {
             lookup(name)
         };
+        if let Some(value) = &value
+            && value != &text[start..end]
+        {
+            changed(start..end, value);
+        }
         out.push_str(&text[last..start]);
         out.push_str(value.as_deref().unwrap_or(&text[start..end]));
         last = end;
@@ -266,42 +279,56 @@ pub fn resolve_placeholders<'a>(
     page: Option<&str>,
     text: &'a str,
 ) -> Cow<'a, str> {
+    resolve_placeholders_reporting(canvas, object, page, text, |_, _| {})
+}
+
+fn resolve_placeholders_reporting<'a>(
+    canvas: &CanvasLayer,
+    object: &CanvasObject,
+    page: Option<&str>,
+    text: &'a str,
+    changed: impl FnMut(Range<usize>, &str),
+) -> Cow<'a, str> {
     if !text.contains('%') || !replaces_placeholders(object) {
         return Cow::Borrowed(text);
     }
-    replace_placeholders(text, |name| {
-        match name {
-            "id" => {
-                return Some(
-                    object
-                        .drawio
-                        .as_ref()
-                        .and_then(|drawio| drawio.source_id.clone())
-                        .unwrap_or_else(|| object.id.to_string()),
-                );
-            }
-            "width" | "height" if !object.is_connector() => {
-                let size = object.rect.size;
-                return Some(if name == "width" { size.x } else { size.y }.to_string());
-            }
-            _ => {}
-        }
-        if !name.contains('{') {
-            let mut current = Some(object);
-            for _ in 0..=canvas.objects.len() {
-                let Some(cell) = current else { break };
-                if let Some(value) = attribute(cell, name) {
-                    return Some(value);
+    replace_placeholders_reporting(
+        text,
+        |name| {
+            match name {
+                "id" => {
+                    return Some(
+                        object
+                            .drawio
+                            .as_ref()
+                            .and_then(|drawio| drawio.source_id.clone())
+                            .unwrap_or_else(|| object.id.to_string()),
+                    );
                 }
-                current = canvas
-                    .scene
-                    .parents
-                    .get(&cell.id)
-                    .and_then(|parent| canvas.object(*parent));
+                "width" | "height" if !object.is_connector() => {
+                    let size = object.rect.size;
+                    return Some(if name == "width" { size.x } else { size.y }.to_string());
+                }
+                _ => {}
             }
-        }
-        (name == "page").then(|| page.map(str::to_owned)).flatten()
-    })
+            if !name.contains('{') {
+                let mut current = Some(object);
+                for _ in 0..=canvas.objects.len() {
+                    let Some(cell) = current else { break };
+                    if let Some(value) = attribute(cell, name) {
+                        return Some(value);
+                    }
+                    current = canvas
+                        .scene
+                        .parents
+                        .get(&cell.id)
+                        .and_then(|parent| canvas.object(*parent));
+                }
+            }
+            (name == "page").then(|| page.map(str::to_owned)).flatten()
+        },
+        changed,
+    )
 }
 
 /// `object` with placeholders replaced in its labels and description; borrowed
@@ -325,14 +352,44 @@ pub fn with_resolved_placeholders<'a>(
         resolve_placeholders(canvas, object, page, &object.alt_text),
     );
     match &object.kind {
-        CanvasObjectKind::Shape { label, .. } => set(
-            &|object, value| {
-                if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
-                    *label = value;
-                }
-            },
-            resolve_placeholders(canvas, object, page, label),
-        ),
+        CanvasObjectKind::Shape { label, .. } => {
+            let mut changes = Vec::new();
+            let value =
+                resolve_placeholders_reporting(canvas, object, page, label, |range, value| {
+                    changes.push((range, value.to_owned()))
+                });
+            set(
+                &|object, value| {
+                    if let Some(rich) = &object.label_rich_text {
+                        let mut text = label.clone();
+                        let mut rich = (**rich).clone();
+                        let result: Result<(), String> =
+                            changes.iter().rev().try_for_each(|(range, replacement)| {
+                                let start = text[..range.start].chars().count();
+                                let end = text[..range.end].chars().count();
+                                (text, rich) =
+                                    rich.replace_label_range(&text, start..end, replacement)?;
+                                Ok(())
+                            });
+                        match result {
+                            Ok(()) => {
+                                debug_assert_eq!(text, value);
+                                object.label_rich_text =
+                                    (!rich.is_empty()).then(|| std::sync::Arc::new(rich));
+                            }
+                            Err(error) => {
+                                log::warn!("Cannot render formatted placeholder: {error}");
+                                object.label_rich_text = None;
+                            }
+                        }
+                    }
+                    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                        *label = value;
+                    }
+                },
+                value,
+            );
+        }
         CanvasObjectKind::Connector(connector) => {
             set(
                 &|object, value| {
@@ -479,6 +536,43 @@ mod tests {
             with_resolved_placeholders(&canvas, &plain, None),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn resolved_placeholders_shift_each_rich_run_without_mutating_the_source() {
+        use crate::board::ShapeKind;
+        use crate::{InlineText, Rect, Vec2};
+        use std::sync::Arc;
+
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+        );
+        object.set_label("%name% + %role%").unwrap();
+        let mut rich = InlineText::default();
+        rich.update_range(object.label(), 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        rich.update_range(object.label(), 9..15, |style| style.underline = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(Arc::new(rich.clone()));
+        object.data = Some(Arc::new(ObjectData {
+            properties: vec![("name".into(), "🙂".into()), ("role".into(), "lead".into())],
+            placeholders: true,
+            ..Default::default()
+        }));
+        let resolved = with_resolved_placeholders(&CanvasLayer::default(), &object, None);
+        assert_eq!(resolved.label(), "🙂 + lead");
+        let resolved_rich = resolved.label_rich_text.as_ref().unwrap();
+        assert_eq!(
+            (resolved_rich.runs[0].start, resolved_rich.runs[0].end),
+            (0, 1)
+        );
+        assert_eq!(
+            (resolved_rich.runs[1].start, resolved_rich.runs[1].end),
+            (4, 8)
+        );
+        assert_eq!(object.label(), "%name% + %role%");
+        assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
     }
 
     #[test]

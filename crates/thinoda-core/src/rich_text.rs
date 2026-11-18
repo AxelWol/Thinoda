@@ -13,8 +13,17 @@ pub const MAX_INLINE_FONT_SIZE: f32 = 256.0;
 pub const FORMATTED_CARD_REQUIRED: &str =
     "Formatted card text must remain on a floating sticky note or text card.";
 
+/// Baseline override for a run within a shape label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InlineBaseline {
+    Normal,
+    Subscript,
+    Superscript,
+}
+
 /// Sparse formatting overrides for a contiguous Unicode-scalar range.
-/// `None` inherits the card's whole-title style; `Some(false)` explicitly disables a style.
+/// `None` inherits the whole-text style; `Some(false)` explicitly disables a style.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InlineTextStyle {
@@ -32,6 +41,8 @@ pub struct InlineTextStyle {
     pub font_size: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<InlineBaseline>,
 }
 
 impl InlineTextStyle {
@@ -43,6 +54,7 @@ impl InlineTextStyle {
             && self.font_family.is_none()
             && self.font_size.is_none()
             && self.color.is_none()
+            && self.baseline.is_none()
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -87,7 +99,7 @@ pub struct InlineParagraph {
     pub list: ListKind,
 }
 
-/// Bounded inline formatting and paragraph semantics for a board-card title.
+/// Bounded inline formatting and paragraph semantics for a card title or shape label.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InlineText {
@@ -116,7 +128,7 @@ impl InlineText {
         let char_count = text.chars().count();
         if !self.is_empty() && char_count > MAX_INLINE_TEXT_CHARS {
             return Err(format!(
-                "formatted card title exceeds {MAX_INLINE_TEXT_CHARS} characters"
+                "formatted text exceeds {MAX_INLINE_TEXT_CHARS} characters"
             ));
         }
 
@@ -281,6 +293,105 @@ impl InlineText {
         Ok((updated_text, updated))
     }
 
+    /// Replaces a label range while carrying list formatting across paragraph edits.
+    pub fn replace_label_range(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        replacement: &str,
+    ) -> Result<(String, Self), String> {
+        self.validate(text)?;
+        let char_count = text.chars().count();
+        if range.start > range.end || range.end > char_count {
+            return Err("inline text replacement has an invalid range".into());
+        }
+        let style_position = if range.start == range.end && range.start > 0 {
+            range.start - 1
+        } else {
+            range.start
+        };
+        let replacement_style = self
+            .runs
+            .iter()
+            .find(|run| run.start as usize <= style_position && style_position < run.end as usize)
+            .map_or_else(InlineTextStyle::default, |run| run.style.clone());
+
+        let first = text
+            .chars()
+            .take(range.start)
+            .filter(|ch| *ch == '\n')
+            .count();
+        let last = text
+            .chars()
+            .take(range.end)
+            .filter(|ch| *ch == '\n')
+            .count();
+        let added = replacement.chars().filter(|ch| *ch == '\n').count();
+        let without_paragraphs = Self {
+            runs: self.runs.clone(),
+            paragraphs: Vec::new(),
+        };
+        let (updated_text, mut updated) =
+            without_paragraphs.replace_range(text, range, replacement, &replacement_style)?;
+        let first_list = self
+            .paragraphs
+            .iter()
+            .find(|paragraph| paragraph.index as usize == first)
+            .map(|paragraph| paragraph.list);
+        for paragraph in &self.paragraphs {
+            let index = paragraph.index as usize;
+            if index <= first {
+                updated.paragraphs.push(*paragraph);
+            } else if index > last {
+                let shifted = index - (last - first) + added;
+                let index =
+                    u32::try_from(shifted).map_err(|_| "inline paragraph index is too large")?;
+                updated.paragraphs.push(InlineParagraph {
+                    index,
+                    list: paragraph.list,
+                });
+            }
+        }
+        if let Some(list) = first_list {
+            for offset in 1..=added {
+                let index = u32::try_from(first + offset)
+                    .map_err(|_| "inline paragraph index is too large")?;
+                updated.paragraphs.push(InlineParagraph { index, list });
+            }
+        }
+        updated.paragraphs.sort_unstable_by_key(|item| item.index);
+        updated.validate(&updated_text)?;
+        Ok((updated_text, updated))
+    }
+
+    /// Preserves formatting outside the changed span of a plain label edit.
+    pub fn reconcile_label(&self, before: &str, after: &str) -> Result<Self, String> {
+        self.validate(before)?;
+        if before == after {
+            return Ok(self.clone());
+        }
+        let before_chars: Vec<_> = before.chars().collect();
+        let after_chars: Vec<_> = after.chars().collect();
+        let prefix = before_chars
+            .iter()
+            .zip(&after_chars)
+            .take_while(|(left, right)| left == right)
+            .count();
+        let suffix = before_chars[prefix..]
+            .iter()
+            .rev()
+            .zip(after_chars[prefix..].iter().rev())
+            .take_while(|(left, right)| left == right)
+            .count();
+        let replacement: String = after_chars[prefix..after_chars.len() - suffix]
+            .iter()
+            .collect();
+        let (updated_text, updated) =
+            self.replace_label_range(before, prefix..before_chars.len() - suffix, &replacement)?;
+        debug_assert_eq!(updated_text, after);
+        Ok(updated)
+    }
+
     /// Estimates heap bytes retained with a document-history snapshot.
     pub fn estimated_heap_bytes(&self) -> usize {
         self.runs
@@ -325,6 +436,47 @@ fn push_coalesced_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shape_labels_validate_ranges_and_mask_formatting() {
+        use crate::board::{CanvasObject, CanvasObjectKind, ShapeKind, validate_object};
+        use crate::{Rect, Vec2, Workbook};
+        use std::sync::Arc;
+
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+        );
+        let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+            unreachable!()
+        };
+        *label = "A🙂B".into();
+        let mut rich = InlineText::default();
+        rich.update_range(label, 1..2, |style| {
+            style.bold = Some(true);
+            style.baseline = Some(InlineBaseline::Superscript);
+        })
+        .unwrap();
+        object.label_rich_text = Some(Arc::new(rich.clone()));
+        assert!(validate_object(&object).is_ok());
+
+        rich.runs[0].end = 4;
+        object.label_rich_text = Some(Arc::new(rich));
+        assert!(validate_object(&object).is_err());
+        object.label_rich_text = Some(Arc::new(InlineText::default()));
+        assert!(validate_object(&object).is_err());
+
+        let mut book = Workbook::default();
+        let mut rich = InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        assert!(book.has_rich_labels());
+        let masked = book.masked_copy();
+        assert!(!masked.has_rich_labels());
+        masked.validate().unwrap();
+    }
 
     fn bold() -> InlineTextStyle {
         InlineTextStyle {
@@ -546,6 +698,68 @@ mod tests {
             .unwrap();
         assert_eq!(updated_text, "one\nsecond");
         assert_eq!(updated.paragraphs, rich.paragraphs);
+    }
+
+    #[test]
+    fn label_edits_shift_unicode_runs_and_list_paragraphs() {
+        let text = "one\n🙂two\nlast";
+        let mut rich = InlineText {
+            runs: Vec::new(),
+            paragraphs: vec![
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 2,
+                    list: ListKind::Numbered,
+                },
+            ],
+        };
+        rich.update_range(text, 4..8, |style| style.bold = Some(true))
+            .unwrap();
+        let (split, rich) = rich.replace_label_range(text, 5..5, "\nnew").unwrap();
+        assert_eq!(split, "one\n🙂\nnewtwo\nlast");
+        assert_eq!(
+            rich.paragraphs,
+            vec![
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 2,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 3,
+                    list: ListKind::Numbered,
+                },
+            ]
+        );
+        assert_eq!(rich.runs[0].start, 4);
+        assert_eq!(rich.runs[0].end, 12);
+        let (joined, rich) = rich.replace_label_range(&split, 5..6, "").unwrap();
+        assert_eq!(joined, "one\n🙂newtwo\nlast");
+        assert_eq!(rich.paragraphs[0].index, 1);
+        assert_eq!(rich.paragraphs[1].index, 2);
+        assert_eq!(rich.paragraphs[1].list, ListKind::Numbered);
+        rich.validate(&joined).unwrap();
+    }
+
+    #[test]
+    fn reconciling_a_label_retains_unedited_styles_and_is_atomic_on_limits() {
+        let mut rich = InlineText::default();
+        rich.update_range("A🙂B", 2..3, |style| style.italic = Some(true))
+            .unwrap();
+        let updated = rich.reconcile_label("A🙂B", "A🙂helloB").unwrap();
+        assert_eq!(updated.runs[0].start, 7);
+        assert_eq!(updated.runs[0].end, 8);
+        assert!(
+            rich.reconcile_label("A🙂B", &format!("{}B", "x".repeat(MAX_INLINE_TEXT_CHARS)))
+                .is_err()
+        );
+        assert_eq!(rich.runs[0].start, 2);
     }
 
     #[test]

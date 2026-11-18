@@ -208,6 +208,80 @@ impl Drawing {
             fill(Some(color)), esc(text)));
     }
 
+    fn rich_label_line(
+        &mut self,
+        layout: &thinoda_core::label_style::LabelLayout,
+        line: &thinoda_core::label_style::LabelLine,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+        opacity: f32,
+    ) {
+        use thinoda_core::rich_text::InlineBaseline;
+
+        let id = self.id();
+        let rect = Rect::from_min_size(
+            Vec2::new(layout.frame.min.x, line.rect.min.y),
+            Vec2::new(layout.frame.size.x, line.rect.size.y),
+        );
+        let align = match layout.align {
+            TextAlign::Left => "l",
+            TextAlign::Center => "ctr",
+            TextAlign::Right => "r",
+        };
+        let mut runs = String::new();
+        for run in &line.runs {
+            let size = (thinoda_core::label_style::run_font_size(layout.size, &run.style)
+                * self.scale
+                / 127.0)
+                .round()
+                .clamp(100.0, 400_000.0) as u32;
+            let family = esc(run
+                .style
+                .font_family
+                .as_deref()
+                .or(style.font_family.as_deref())
+                .unwrap_or("Segoe UI")
+                .split(',')
+                .next()
+                .unwrap_or("Segoe UI")
+                .trim()
+                .trim_matches('"'));
+            let baseline = match run.style.baseline {
+                Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
+                Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
+                _ => "",
+            };
+            let color = run.style.color.map_or(color, |value| {
+                Color::rgba(
+                    value.r,
+                    value.g,
+                    value.b,
+                    (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                )
+            });
+            let preserve = if run.text.starts_with(char::is_whitespace)
+                || run.text.ends_with(char::is_whitespace)
+            {
+                r#" xml:space="preserve""#
+            } else {
+                ""
+            };
+            runs.push_str(&format!(
+                r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
+                u8::from(run.style.bold.unwrap_or(style.bold)),
+                u8::from(run.style.italic.unwrap_or(style.italic)),
+                if run.style.underline.unwrap_or(style.underline) { "sng" } else { "none" },
+                if run.style.strikethrough.unwrap_or(style.strikethrough) { "sngStrike" } else { "noStrike" },
+                fill(Some(color)),
+                esc(&run.text),
+            ));
+        }
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Label"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/>{runs}</a:p></p:txBody></p:sp>"#,
+            self.transform(rect),
+        ));
+    }
+
     fn label(&mut self, rect: Rect, value: &str, size: f32, color: Color) {
         self.text(
             "Label",
@@ -514,6 +588,10 @@ impl Drawing {
                     }
                     let family = style.font_family.as_deref().unwrap_or("Segoe UI");
                     for line in &layout.lines {
+                        if !line.runs.is_empty() {
+                            self.rich_label_line(&layout, line, &style, color, opacity);
+                            continue;
+                        }
                         self.text(
                             "Label",
                             Rect::from_min_size(

@@ -278,6 +278,7 @@ fn shape_label_text_style_renders_in_svg_png_pdf_and_powerpoint() {
         if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
             *label = "Styled".into();
         }
+
         shape.style.fill = Some(Color::WHITE);
         shape.style.stroke = Some(Color::BLACK);
         if styled {
@@ -369,4 +370,112 @@ fn shape_label_text_style_renders_in_svg_png_pdf_and_powerpoint() {
     ] {
         assert!(slide.contains(needle), "{needle} in {slide}");
     }
+}
+
+#[test]
+fn rich_shape_runs_flow_together_in_svg_and_editable_powerpoint() {
+    use std::sync::Arc;
+    use thinoda_core::{
+        TextAlign,
+        label_style::LabelStyle,
+        rich_text::{InlineBaseline, InlineText, InlineTextRun, InlineTextStyle},
+    };
+
+    let mut sheet = Sheet::new("Board", "Anchor");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(240.0, 90.0)),
+    );
+    if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+        *label = "WWWWii 2!".into();
+    }
+    shape.label_style = Some(Arc::new(LabelStyle {
+        align: TextAlign::Right,
+        ..Default::default()
+    }));
+    shape.label_rich_text = Some(Arc::new(InlineText {
+        runs: vec![
+            InlineTextRun {
+                start: 0,
+                end: 4,
+                style: InlineTextStyle {
+                    bold: Some(true),
+                    ..Default::default()
+                },
+            },
+            InlineTextRun {
+                start: 4,
+                end: 6,
+                style: InlineTextStyle {
+                    italic: Some(true),
+                    ..Default::default()
+                },
+            },
+            InlineTextRun {
+                start: 7,
+                end: 8,
+                style: InlineTextStyle {
+                    baseline: Some(InlineBaseline::Superscript),
+                    ..Default::default()
+                },
+            },
+        ],
+        ..Default::default()
+    }));
+    sheet.add_canvas_object(shape).unwrap();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(0.0, 200.0),
+            Card::new(CardKind::Text, Vec2::new(100.0, 40.0)),
+        )
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "All",
+            PresentationSource::Branch(card),
+            Rect::from_min_size(Vec2::new(-50.0, -50.0), Vec2::new(400.0, 300.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    let end = svg.find(">WWWW</tspan>").unwrap();
+    let start = svg[..end].rfind("<text ").unwrap();
+    let stop = end + svg[end..].find("</text>").unwrap() + "</text>".len();
+    let label = &svg[start..stop];
+    assert!(label.contains("text-anchor=\"end\""), "{label}");
+    for text in [">WWWW</tspan>", ">ii</tspan>", ">2</tspan>", ">!</tspan>"] {
+        assert!(label.contains(text), "{text}: {label}");
+    }
+    assert!(label.contains("font-weight=\"bold\""));
+    assert!(label.contains("font-style=\"italic\""));
+    for format in [Format::Png, Format::Pdf] {
+        assert!(
+            !export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let end = slide.find("<a:t>WWWW</a:t>").unwrap();
+    let start = slide[..end].rfind("<p:sp>").unwrap();
+    let stop = end + slide[end..].find("</p:sp>").unwrap() + "</p:sp>".len();
+    let label = &slide[start..stop];
+    for text in [
+        "<a:t>WWWW</a:t>",
+        "<a:t>ii</a:t>",
+        "<a:t>2</a:t>",
+        "<a:t>!</a:t>",
+    ] {
+        assert!(label.contains(text), "{text}: {label}");
+    }
+    assert!(label.contains(r#"<a:pPr algn="r"/>"#));
+    assert!(label.contains(r#"baseline="30000""#));
+    assert!(label.contains(r#"<a:t xml:space="preserve"> </a:t>"#));
 }

@@ -52,6 +52,7 @@ const LAYERS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LAYERS-1";
 const TABLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-TABLES-1";
 const SHAPE_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SHAPE-STYLES-1";
 const LABEL_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LABEL-STYLES-1";
+const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -741,7 +742,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_label_styles() {
+    if book.has_rich_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_label_styles() {
         Ok(serde_json::to_string(&(
             LABEL_STYLES_SNAPSHOT_VERSION,
             book,
@@ -941,6 +947,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == TABLES_SNAPSHOT_VERSION
                 || version == SHAPE_STYLES_SNAPSHOT_VERSION
                 || version == LABEL_STYLES_SNAPSHOT_VERSION
+                || version == RICH_LABELS_SNAPSHOT_VERSION
         })
 }
 
@@ -982,6 +989,7 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
             object.get("rounding").is_some()
                 || object.get("data").is_some()
                 || object.get("layer").is_some()
+                || object.get("label_rich_text").is_some()
                 || object.get("rectangle_sides").is_some()
                 || object.get("double_ellipse_margin").is_some()
                 || object.get("stencil").is_some()
@@ -1068,17 +1076,25 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != TABLES_SNAPSHOT_VERSION
             && version != SHAPE_STYLES_SNAPSHOT_VERSION
             && version != LABEL_STYLES_SNAPSHOT_VERSION
+            && version != RICH_LABELS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION;
+        let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION;
+        if workbook.has_rich_labels() != rich_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich labels require a rich-label-aware private XMind snapshot".into(),
+            ));
+        }
+        let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION
+            || rich_labels_envelope && workbook.has_label_styles();
         if workbook.has_label_styles() != label_styles_envelope {
             return Err(IoError::NewerVersion(
                 "label styles require a label-style-aware private XMind snapshot".into(),
             ));
         }
-        let version = if !label_styles_envelope {
+        let version = if !label_styles_envelope && !rich_labels_envelope {
             version
         } else if workbook.has_shape_styles() {
             SHAPE_STYLES_SNAPSHOT_VERSION.to_owned()
@@ -1579,6 +1595,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require a rich-label-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_label_styles() {
             return Err(IoError::NewerVersion(
                 "label styles require a label-style-aware private XMind snapshot".into(),
@@ -3072,6 +3093,49 @@ mod tests {
                     import(&make_archive(&entries)),
                     Err(IoError::NewerVersion(_))
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn rich_labels_require_matching_private_snapshot_envelope() {
+        use thinoda_core::board::{CanvasObject, CanvasObjectKind, ShapeKind};
+        use thinoda_core::{Rect, Vec2};
+
+        for label_style in [false, true] {
+            let mut book = Workbook::default();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+                unreachable!()
+            };
+            *label = "A🙂B".into();
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range(label, 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+            if label_style {
+                object.label_style =
+                    Some(std::sync::Arc::new(thinoda_core::label_style::LabelStyle {
+                        bold: true,
+                        ..Default::default()
+                    }));
+            }
+            book.active_mut().add_canvas_object(object).unwrap();
+            let snapshot = private_snapshot(&book).unwrap();
+            assert!(snapshot.contains(RICH_LABELS_SNAPSHOT_VERSION));
+            assert!(strict_private_snapshot(&snapshot));
+            assert!(snapshot_contains_versioned_fields(&snapshot));
+            assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+            for forged in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(LABEL_STYLES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(RICH_LABELS_SNAPSHOT_VERSION, &Workbook::default()))
+                    .unwrap(),
+            ] {
+                assert!(read_private_snapshot(&forged).is_err());
             }
         }
     }

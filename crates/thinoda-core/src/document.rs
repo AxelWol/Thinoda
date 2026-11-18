@@ -84,6 +84,13 @@ impl Snapshot {
     fn visit_shared_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
         fn visit_sheet(sheet: &Sheet, visit: &mut impl FnMut(usize, usize)) {
             for object in &sheet.canvas.objects {
+                if let Some(rich) = &object.label_rich_text {
+                    visit(
+                        Arc::as_ptr(rich) as usize,
+                        std::mem::size_of::<crate::rich_text::InlineText>()
+                            + rich.estimated_heap_bytes(),
+                    );
+                }
                 match &object.kind {
                     CanvasObjectKind::Ink(ink) => {
                         visit(
@@ -1184,6 +1191,48 @@ impl Document {
         self.edit_sheet(label, |sheet| {
             sheet
                 .update_canvas_object(id, f)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_object_label(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        text: &str,
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            let mut object = sheet
+                .canvas
+                .object(id)
+                .cloned()
+                .ok_or(EditError::NotFound)?;
+            object.set_label(text).map_err(EditError::Invalid)?;
+            sheet
+                .update_canvas_object(id, |current| *current = object)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    /// Changes a canvas label and its inline formatting in one undoable edit.
+    pub fn set_canvas_object_label_with_rich_text(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        text: &str,
+        rich: Option<crate::rich_text::InlineText>,
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            let mut object = sheet
+                .canvas
+                .object(id)
+                .cloned()
+                .ok_or(EditError::NotFound)?;
+            object
+                .set_label_with_rich_text(text, rich)
+                .map_err(EditError::Invalid)?;
+            sheet
+                .update_canvas_object(id, |current| *current = object)
                 .map_err(EditError::Invalid)
         })
     }

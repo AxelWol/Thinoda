@@ -47,7 +47,7 @@ use thinoda_core::{
 mod html;
 mod label_html;
 
-use label_html::strip_html;
+use label_html::{parse_rich_html, strip_html};
 
 /// Largest accepted input and inflated diagram text.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -3911,7 +3911,22 @@ impl<'a> PageImport<'a> {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
-        let label = self.label(cell);
+        let (label, rich_label) =
+            if style.flag("html") && !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
+                let (text, rich) = parse_rich_html(&cell.value, self.warnings);
+                let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
+                let rich = rich.filter(|value| {
+                    if value.validate(&text).is_err() {
+                        self.warnings.insert(ImportWarning::Formatting);
+                        false
+                    } else {
+                        true
+                    }
+                });
+                (text, rich)
+            } else {
+                (self.label(cell), None)
+            };
         if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
             || !label.is_empty()
                 && (style.label_opacity_loss()
@@ -4228,6 +4243,9 @@ impl<'a> PageImport<'a> {
                 return self.card(index, card_kind, rect, label, context, image);
             }
         };
+        if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            object.label_rich_text = rich_label.map(Arc::new);
+        }
         let label_text = maps_label_text(kind, style);
         if label_text && matches!(object.kind, CanvasObjectKind::Shape { .. }) {
             let (label_style, owned, approximate) = label_text_style(style);
@@ -5643,6 +5661,176 @@ fn html(text: &str) -> String {
     out
 }
 
+fn html_rich_label(
+    text: &str,
+    rich: &thinoda_core::InlineText,
+    whole: Option<&thinoda_core::label_style::LabelStyle>,
+) -> String {
+    use thinoda_core::{InlineBaseline, InlineTextStyle, ListKind};
+
+    fn span(
+        text: &str,
+        style: &InlineTextStyle,
+        whole: Option<&LabelStyle>,
+        boundary: bool,
+    ) -> String {
+        let mut css = String::new();
+        if let Some(value) = style.bold {
+            css.push_str(if value {
+                "font-weight:bold;"
+            } else {
+                "font-weight:normal;"
+            });
+        }
+        if let Some(value) = style.italic {
+            css.push_str(if value {
+                "font-style:italic;"
+            } else {
+                "font-style:normal;"
+            });
+        }
+        let mut inherited = String::new();
+        if style.underline.is_some() || style.strikethrough.is_some() {
+            let underline = style
+                .underline
+                .unwrap_or_else(|| whole.is_some_and(|style| style.underline));
+            let strike = style
+                .strikethrough
+                .unwrap_or_else(|| whole.is_some_and(|style| style.strikethrough));
+            let values: Vec<_> = [
+                underline.then_some("underline"),
+                strike.then_some("line-through"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            css.push_str("text-decoration:");
+            if values.is_empty() {
+                css.push_str("none");
+            } else {
+                css.push_str(&values.join(" "));
+            }
+            css.push(';');
+            if style.underline.is_none() {
+                inherited.push_str(" data-thinoda-underline=\"inherit\"");
+            }
+            if style.strikethrough.is_none() {
+                inherited.push_str(" data-thinoda-strike=\"inherit\"");
+            }
+        }
+        if let Some(family) = &style.font_family {
+            let mut quoted = String::new();
+            for ch in family.chars() {
+                if ch.is_alphanumeric() || matches!(ch, ' ' | '-' | '_' | ',' | '.') {
+                    quoted.push(ch);
+                } else {
+                    quoted.push_str(&format!("\\{:x} ", u32::from(ch)));
+                }
+            }
+            css.push_str(&format!("font-family:'{quoted}';"));
+        }
+        if let Some(size) = style.font_size {
+            css.push_str(&format!("font-size:{}px;", num(size)));
+        }
+        if let Some(color) = style.color {
+            css.push_str(&format!(
+                "color:rgba({},{},{},{:.6});",
+                color.r,
+                color.g,
+                color.b,
+                f32::from(color.a) / 255.0
+            ));
+        }
+        if let Some(baseline) = style.baseline {
+            css.push_str(match baseline {
+                InlineBaseline::Normal => "vertical-align:baseline;",
+                InlineBaseline::Subscript => "vertical-align:sub;",
+                InlineBaseline::Superscript => "vertical-align:super;",
+            });
+        }
+        let boundary = if boundary {
+            " data-thinoda-break=\"1\""
+        } else {
+            ""
+        };
+        format!(
+            "<span style=\"{}\"{inherited}{boundary}>{}</span>",
+            html(&css),
+            html(text)
+        )
+    }
+
+    let chars: Vec<_> = text.chars().collect();
+    let mut out = String::new();
+    let mut start = 0usize;
+    let mut run_index = 0usize;
+    let mut active_list = None;
+    for (index, paragraph) in text.split('\n').enumerate() {
+        let end = start + paragraph.chars().count();
+        let list = rich
+            .paragraphs
+            .iter()
+            .find(|item| item.index as usize == index)
+            .map(|item| item.list);
+        if active_list != list {
+            match active_list {
+                Some(ListKind::Bulleted) => out.push_str("</ul>"),
+                Some(ListKind::Numbered) => out.push_str("</ol>"),
+                None => {}
+            }
+            match list {
+                Some(ListKind::Bulleted) => out.push_str("<ul>"),
+                Some(ListKind::Numbered) => out.push_str("<ol>"),
+                None => {}
+            }
+            active_list = list;
+        }
+        out.push_str(if list.is_some() { "<li>" } else { "<div>" });
+        let mut cursor = start;
+        while cursor < end {
+            while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= cursor {
+                run_index += 1;
+            }
+            let run = rich.runs.get(run_index);
+            let styled = run.is_some_and(|run| run.start as usize <= cursor);
+            let next = if styled {
+                end.min(run.map_or(end, |run| run.end as usize))
+            } else {
+                end.min(run.map_or(end, |run| run.start as usize))
+            };
+            let part: String = chars[cursor..next].iter().collect();
+            if let Some(run) = run.filter(|_| styled) {
+                out.push_str(&span(&part, &run.style, whole, false));
+            } else {
+                out.push_str(&html(&part));
+            }
+            cursor = next;
+        }
+        if end < chars.len() {
+            while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= end {
+                run_index += 1;
+            }
+            if let Some(run) = rich
+                .runs
+                .get(run_index)
+                .filter(|run| run.start as usize <= end)
+            {
+                out.push_str(&span("", &run.style, whole, true));
+            } else {
+                out.push_str("<span data-thinoda-break=\"1\"></span>");
+            }
+        }
+        out.push_str(if list.is_some() { "</li>" } else { "</div>" });
+        start = end + 1;
+    }
+    match active_list {
+        Some(ListKind::Bulleted) => out.push_str("</ul>"),
+        Some(ListKind::Numbered) => out.push_str("</ol>"),
+        None => {}
+    }
+    out
+}
+
 fn num(value: f32) -> String {
     if value == 0.0 || !value.is_finite() {
         "0".into()
@@ -6260,7 +6448,7 @@ impl<'a> PageWriter<'a> {
         rect: Rect,
         user: Option<(&str, &str)>,
     ) {
-        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, false, user);
+        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, false, user, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6274,6 +6462,7 @@ impl<'a> PageWriter<'a> {
         alternate_bounds: Option<Rect>,
         collapsed: bool,
         user: Option<(&str, &str)>,
+        rich: Option<(&thinoda_core::InlineText, Option<&LabelStyle>)>,
     ) {
         let collapsed = if collapsed { " collapsed=\"1\"" } else { "" };
         let geometry = match alternate_bounds {
@@ -6303,7 +6492,10 @@ impl<'a> PageWriter<'a> {
                 num(rect.size.y)
             )
         };
-        let label = esc(&html(label));
+        let label = esc(&rich.map_or_else(
+            || html(label),
+            |(rich, style)| html_rich_label(label, rich, style),
+        ));
         let style = esc(style);
         let extra = self.take_attributes();
         let user = user.or_else(|| (!extra.is_empty()).then_some(("", "")));
@@ -6596,6 +6788,7 @@ impl<'a> PageWriter<'a> {
                             Some(Rect::from_min_size(Vec2::ZERO, slot.size)),
                             false,
                             None,
+                            None,
                         );
                         std::mem::swap(&mut out, &mut self.out);
                         self.out.push_str(&out.replacen(
@@ -6840,6 +7033,10 @@ impl<'a> PageWriter<'a> {
                     }),
                     collapsed_bounds.is_some(),
                     user,
+                    object
+                        .label_rich_text
+                        .as_deref()
+                        .map(|rich| (rich, object.label_style.as_deref())),
                 );
                 if table.is_some() {
                     self.table_grid(id, object.rect);

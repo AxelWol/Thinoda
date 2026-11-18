@@ -83,7 +83,10 @@ pub(crate) enum Prim {
 
 /// The styled label of a shape whose default text area is `base`.
 fn styled_label(object: &CanvasObject, base: Rect, label: &str, color: Color) -> Option<Prim> {
-    let style = object.label_style.clone()?;
+    let style = object
+        .label_style
+        .clone()
+        .unwrap_or_else(|| Arc::new(LabelStyle::default()));
     Some(Prim::StyledLabel {
         layout: label_style::layout(object, base, label)?,
         style,
@@ -298,7 +301,7 @@ pub(crate) fn object_prims(
             });
         }
         if let CanvasObjectKind::Shape { label, .. } = &object.kind
-            && !label.trim().is_empty()
+            && (!label.trim().is_empty() || object.has_label_list())
         {
             let rect = thinoda_core::stencil_object::label_rect(object, render);
             out.push(
@@ -443,7 +446,7 @@ pub(crate) fn object_prims(
                 outline,
                 dashed_stroke.map(|(_, width)| width),
             );
-            if !label.trim().is_empty() {
+            if !label.trim().is_empty() || object.has_label_list() {
                 let rect = thinoda_core::board::object_label_rect(object).unwrap_or(object.rect);
                 let under = object.style.fill.map_or(background, |f| f.over(background));
                 let color = faded(
@@ -925,6 +928,35 @@ mod tests {
         scene_layout::{ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide},
         stencil_object::StencilRef,
     };
+
+    #[test]
+    fn export_keeps_the_marker_of_an_empty_list_label() {
+        let mut sheet = Sheet::new("Board", "");
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        object.label_rich_text = Some(Arc::new(thinoda_core::InlineText {
+            paragraphs: vec![thinoda_core::InlineParagraph {
+                index: 0,
+                list: thinoda_core::ListKind::Bulleted,
+            }],
+            ..Default::default()
+        }));
+        let id = sheet.add_canvas_object(object).unwrap();
+        let scene = build_scene(&sheet, &thinoda_core::layout::Layout::default());
+        let primitives = object_prims(
+            scene.item(SceneId::Object(id)).unwrap(),
+            sheet.canvas.object(id).unwrap(),
+            Color::WHITE,
+            false,
+            VisualExportContext::default(),
+        );
+        assert!(primitives.iter().any(|primitive| matches!(
+            primitive,
+            Prim::StyledLabel { layout, .. } if layout.lines[0].text == "• "
+        )));
+    }
 
     #[test]
     fn export_primitives_use_the_stored_header_side_and_extent() {

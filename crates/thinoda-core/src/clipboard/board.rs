@@ -60,6 +60,7 @@ const LAYERS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-38\n";
 const TABLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-39\n";
 const SHAPE_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-40\n";
 const LABEL_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-41\n";
+const RICH_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-42\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -78,7 +79,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_label_styles() {
+        if self.fragment.has_rich_labels() {
+            RICH_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_label_styles() {
             LABEL_STYLES_BOARD_PREFIX
         } else if self.fragment.has_shape_styles() {
             SHAPE_STYLES_BOARD_PREFIX
@@ -362,9 +365,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(LABEL_STYLES_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-41\r\n"))
-        .map(|json| (41, json))
+        .strip_prefix(RICH_LABELS_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-42\r\n"))
+        .map(|json| (42, json))
+        .or_else(|| {
+            text.strip_prefix(LABEL_STYLES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-41\r\n"))
+                .map(|json| (41, json))
+        })
         .or_else(|| {
             text.strip_prefix(SHAPE_STYLES_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-40\r\n"))
@@ -571,6 +579,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         serde_json::from_str(json).map_err(|error| error.to_string())?;
     if version < 30 && payload.fragment.has_drawio_passthrough() {
         return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
+    if version < 42 && payload.fragment.has_rich_labels() {
+        return Err("rich labels require board clipboard version 42".into());
     }
     if version < 41 && payload.fragment.has_label_styles() {
         return Err("label styles require board clipboard version 41".into());

@@ -1,4 +1,4 @@
-use egui::{Key, Modifiers, PointerButton, Pos2, vec2};
+use egui::{Key, Modifiers, PointerButton, Pos2, Role, vec2};
 use egui_kittest::{
     Harness,
     kittest::{NodeT, Queryable},
@@ -70,6 +70,375 @@ fn double_click_shape(h: &mut Harness<'_, State>) {
     click(h, center);
     h.run_steps(3);
     assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
+}
+
+#[test]
+fn rich_label_toolbar_keeps_the_draft_and_commits_one_undoable_change() {
+    let mut h = harness("Formatted label");
+    let before = h.state().doc.state_id();
+    double_click_shape(&mut h);
+    let bold = h
+        .get_by_role_and_label(Role::Button, "Bold")
+        .rect()
+        .center();
+    click(&mut h, bold);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
+    assert!(h.state().view.has_board_label_changes());
+    assert_eq!(h.state().doc.state_id(), before);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "Formatted label");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 15));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let shape = h.state().shape;
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(shape)
+            .unwrap()
+            .label_rich_text
+            .as_deref(),
+        Some(&rich)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(shape)
+            .unwrap()
+            .label_rich_text
+            .is_none()
+    );
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(shape)
+            .unwrap()
+            .label_rich_text
+            .as_deref(),
+        Some(&rich)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_selection_expands_graphemes_and_rejects_source_conflicts() {
+    let mut h = harness("a\u{301}bc");
+    double_click_shape(&mut h);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(1),
+            egui::text::CCursor::new(2),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+
+    let shape = h.state().shape;
+    let mut competing = thinoda_core::rich_text::InlineText::default();
+    competing
+        .update_range("a\u{301}bc", 2..4, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Concurrent formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(competing));
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(
+            state
+                .view
+                .validated_board_rich_label_draft(&state.doc)
+                .is_err()
+        );
+        assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+        assert!(state.view.has_board_label_changes());
+        assert!(state.doc.undo());
+        assert!(state.view.try_commit_board_label(&mut state.doc).unwrap());
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .canvas
+                .object(shape)
+                .unwrap()
+                .label_rich_text
+                .as_deref(),
+            Some(&rich)
+        );
+    }
+}
+
+#[test]
+fn keyboard_can_reach_rich_label_controls_and_apply_a_list() {
+    let mut h = harness("one\ntwo");
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Italic").is_focused());
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+    let bullet = h
+        .get_by_role_and_label(Role::Button, "Bulleted list")
+        .rect()
+        .center();
+    click(&mut h, bullet);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert_eq!(
+        rich.paragraphs
+            .iter()
+            .map(|paragraph| paragraph.index)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn shortcut_before_a_batched_outside_click_is_committed() {
+    let mut h = harness("Before");
+    double_click_shape(&mut h);
+    let empty = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::PointerMoved(empty),
+        egui::Event::PointerButton {
+            pos: empty,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: empty,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(h.state().shape)
+        .unwrap();
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+        Some(true)
+    );
+    assert_eq!(h.state().view.editing_board_object(), None);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn batched_format_shortcuts_are_applied_in_order() {
+    let mut h = harness("Text");
+    double_click_shape(&mut h);
+    for key in [Key::B, Key::I, Key::B] {
+        h.input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        });
+    }
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert_ne!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn formatting_shortcuts_and_text_follow_their_batched_event_order() {
+    let mut h = harness("Text");
+    double_click_shape(&mut h);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Text("x".into()),
+        egui::Event::Key {
+            key: Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Key {
+            key: Key::I,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "x");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn formatted_text_before_a_batched_outside_click_is_committed() {
+    let mut h = harness("Text");
+    double_click_shape(&mut h);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Text("x".into()),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(h.state().shape)
+        .unwrap();
+    assert_eq!(object.label(), "x");
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+        Some(true)
+    );
+    assert_eq!(h.state().view.editing_board_object(), None);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn disjoint_text_edits_in_one_frame_preserve_intervening_formatting() {
+    let mut h = harness("AémiddleB");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("AémiddleB", 1..8, |style| style.italic = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Initial formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(0),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.input_mut().events.extend([
+        egui::Event::Text("x".into()),
+        egui::Event::Key {
+            key: Key::End,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("y".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "xAémiddleBy");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 9));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
 #[test]
@@ -938,6 +1307,33 @@ fn compact_canvas_keeps_the_editor_description_without_covering_the_shape() {
     h.key_press(Key::Escape);
     h.run_steps(3);
     assert!(h.query_by_label("Editing label").is_none());
+}
+
+#[test]
+fn compact_formatting_toolbar_leaves_the_label_visible_and_operable() {
+    let mut h = harness_with_size("Compact label", vec2(260.0, 180.0));
+    double_click_shape(&mut h);
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    let editor = h.get_by_label("Board object label").rect();
+    assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
+    assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    let bold = h
+        .get_by_role_and_label(Role::Button, "Bold")
+        .rect()
+        .center();
+    click(&mut h, bold);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
 #[test]

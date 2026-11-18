@@ -472,13 +472,31 @@ pub fn replace_in_canvas(
                 count += values;
             }
         }
-        let label = match &mut object.kind {
-            CanvasObjectKind::Shape { label, .. } => Some(label),
-            CanvasObjectKind::Connector(connector) => Some(&mut connector.label),
-            CanvasObjectKind::Ink(_) => None,
-        };
-        if let Some(label) = label {
-            count += replace_text(label, needle, replacement, opts);
+        let matches = find_in(object.label(), needle, opts);
+        if !matches.is_empty()
+            && let Some(rich) = &object.label_rich_text
+        {
+            let mut text = object.label().to_owned();
+            let mut rich = (**rich).clone();
+            for range in matches.iter().rev() {
+                let start = text[..range.start].chars().count();
+                let end = text[..range.end].chars().count();
+                (text, rich) = rich.replace_label_range(&text, start..end, replacement)?;
+            }
+            if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                *label = text;
+            }
+            object.label_rich_text = (!rich.is_empty()).then(|| std::sync::Arc::new(rich));
+            count += matches.len();
+        } else {
+            let label = match &mut object.kind {
+                CanvasObjectKind::Shape { label, .. } => Some(label),
+                CanvasObjectKind::Connector(connector) => Some(&mut connector.label),
+                CanvasObjectKind::Ink(_) => None,
+            };
+            if let Some(label) = label {
+                count += replace_text(label, needle, replacement, opts);
+            }
         }
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             for label in &mut connector.extra_labels {
@@ -820,6 +838,34 @@ mod tests {
             .is_err()
         );
         assert_eq!(invalid, before);
+    }
+
+    #[test]
+    fn canvas_replacement_preserves_rich_styles_between_matches() {
+        use crate::{CanvasObject, InlineText, Rect, ShapeKind, Vec2};
+        use std::sync::Arc;
+
+        let mut sheet = Sheet::new("Board", "");
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+        );
+        shape.set_label("x 🙂 middle x").unwrap();
+        let mut rich = InlineText::default();
+        rich.update_range(shape.label(), 4..10, |style| style.bold = Some(true))
+            .unwrap();
+        shape.label_rich_text = Some(Arc::new(rich));
+        let id = sheet.add_canvas_object(shape).unwrap();
+        assert_eq!(
+            replace_in_canvas(&mut sheet, &[id], "x", "long", &SearchOptions::default()).unwrap(),
+            2
+        );
+        let shape = sheet.canvas.object(id).unwrap();
+        assert_eq!(shape.label(), "long 🙂 middle long");
+        let run = &shape.label_rich_text.as_ref().unwrap().runs[0];
+        assert_eq!((run.start, run.end), (7, 13));
+        assert_eq!(run.style.bold, Some(true));
+        sheet.validate().unwrap();
     }
 
     #[test]

@@ -727,6 +727,18 @@ draw.io while the canvas uses the closest loaded font. draw.io export writes
 v48, sheet clipboard v37, board clipboard v41, XMind
 `THINODA-XMIND-LABEL-STYLES-1`, recovery `THINODA-RECOVERY-LABEL-STYLES-1`.
 
+*As implemented in D9 (rich shape-label subset):* shapes may carry bounded
+`InlineText` runs and list paragraphs alongside their label. Editing uses a
+draft and an accessible selection-formatting toolbar; text and formatting
+commit as one history entry. Canvas, SVG/PNG/PDF and editable PowerPoint render
+the supported styles, and draw.io HTML is converted inertly to and from the
+supported subset. Native v49, sheet clipboard v38, board clipboard v42, XMind
+`THINODA-XMIND-RICH-LABELS-1`, recovery `THINODA-RECOVERY-RICH-LABELS-1` and
+`THINODA-RECOVERY-INK-RICH-LABELS-1` gate the data. This does not yet satisfy
+the full table above: other label kinds are not covered, and unsupported source
+HTML is warned about but discarded, not preserved; source preservation remains
+an explicit D10 requirement.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

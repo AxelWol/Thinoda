@@ -2467,6 +2467,38 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn rich_label_board_clipboard_requires_version_forty_two() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    let CanvasObjectKind::Shape { label, .. } = &mut object.kind else {
+        unreachable!()
+    };
+    *label = "A🙂B".into();
+    let mut rich = crate::InlineText::default();
+    rich.update_range(label, 1..2, |style| style.italic = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(std::sync::Arc::new(rich));
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RICH_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let downgraded = encoded.replacen(RICH_LABELS_BOARD_PREFIX, LABEL_STYLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("rich labels require board clipboard version 42")
+    );
+}
+
+#[test]
 fn label_style_board_clipboard_requires_version_forty_one() {
     let mut source = Sheet::new("Source", "Root");
     let mut object = CanvasObject::shape(

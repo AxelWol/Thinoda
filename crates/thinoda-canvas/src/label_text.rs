@@ -10,7 +10,7 @@ use egui::{
 };
 use thinoda_core::{
     geometry::Vec2,
-    label_style::{LabelLayout, LabelStyle},
+    label_style::{LabelLayout, LabelStyle, run_baseline_shift, run_font_size},
     model::TextAlign,
 };
 
@@ -67,6 +67,78 @@ pub(crate) fn paint(
         if line.text.is_empty() {
             continue;
         }
+        if !line.runs.is_empty() {
+            let mut runs = Vec::with_capacity(line.runs.len());
+            for run in &line.runs {
+                let run_color = run
+                    .style
+                    .color
+                    .map_or(color, |value| opacity_color(color32(value), opacity));
+                let run_size = run_font_size(layout.size, &run.style);
+                let family = run
+                    .style
+                    .font_family
+                    .as_deref()
+                    .or(style.font_family.as_deref());
+                let decoration = Stroke::new((run_size * z / 14.0).max(0.6), run_color);
+                let mut job = LayoutJob::default();
+                job.append(
+                    &run.text,
+                    0.0,
+                    TextFormat {
+                        font_id: FontId::new(
+                            crate::measure::render_font_size(run_size * z),
+                            crate::measure::font_family(painter.ctx(), family),
+                        ),
+                        color: run_color,
+                        italics: run.style.italic.unwrap_or(style.italic),
+                        underline: if run.style.underline.unwrap_or(style.underline) {
+                            decoration
+                        } else {
+                            Stroke::NONE
+                        },
+                        strikethrough: if run.style.strikethrough.unwrap_or(style.strikethrough) {
+                            decoration
+                        } else {
+                            Stroke::NONE
+                        },
+                        ..Default::default()
+                    },
+                );
+                runs.push((run, painter.layout_job(job), run_color));
+            }
+            let rect = xf.rect(line.rect);
+            let width = runs
+                .iter()
+                .map(|(_, galley, _)| galley.size().x)
+                .sum::<f32>();
+            let mut x = match layout.align {
+                TextAlign::Left => rect.left(),
+                TextAlign::Center => rect.center().x - width / 2.0,
+                TextAlign::Right => rect.right() - width,
+            };
+            for (run, galley, run_color) in runs {
+                let unrotated = Pos2::new(
+                    x,
+                    rect.center().y - galley.size().y / 2.0
+                        + run_baseline_shift(layout.size, &run.style) * z,
+                );
+                let origin = pivot + rotation * (unrotated - pivot);
+                if run.style.bold.unwrap_or(style.bold) {
+                    painter.add(
+                        TextShape::new(
+                            origin + rotation * vec2(0.45 * z, 0.0),
+                            galley.clone(),
+                            run_color,
+                        )
+                        .with_angle(angle),
+                    );
+                }
+                x += galley.size().x;
+                painter.add(TextShape::new(origin, galley, run_color).with_angle(angle));
+            }
+            continue;
+        }
         let mut job = LayoutJob::default();
         job.append(
             &line.text,
@@ -109,5 +181,87 @@ pub(crate) fn paint(
             );
         }
         painter.add(TextShape::new(origin, galley, color).with_angle(angle));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use thinoda_core::{
+        CanvasObject, Rect, ShapeKind,
+        label_style::LabelStyle,
+        rich_text::{InlineText, InlineTextRun, InlineTextStyle},
+    };
+
+    #[test]
+    fn rich_runs_use_measured_advances_and_preserve_alignment() {
+        let text = "WWWWiiiiWWWW";
+        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 100.0)),
+            );
+            object.label_style = Some(Arc::new(LabelStyle {
+                font_size: Some(20.0),
+                align,
+                ..Default::default()
+            }));
+            object.label_rich_text = Some(Arc::new(InlineText {
+                runs: vec![InlineTextRun {
+                    start: 4,
+                    end: 8,
+                    style: InlineTextStyle {
+                        italic: Some(true),
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            }));
+            let layout = thinoda_core::label_style::layout(&object, object.rect, text).unwrap();
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &layout,
+                        object.label_style.as_deref().unwrap(),
+                        Color32::BLACK,
+                        1.0,
+                        Xf {
+                            origin: Pos2::ZERO,
+                            zoom: 1.0,
+                        },
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let runs: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(runs.len(), 3);
+            for pair in runs.windows(2) {
+                let end = pair[0].pos.x + pair[0].galley.size().x;
+                assert!((end - pair[1].pos.x).abs() < 0.01, "{align:?}");
+            }
+            let start = runs[0].pos.x;
+            let end = runs[2].pos.x + runs[2].galley.size().x;
+            let rect = layout.lines[0].rect;
+            let expected = match align {
+                TextAlign::Left => (start, rect.min.x),
+                TextAlign::Center => ((start + end) / 2.0, rect.center().x),
+                TextAlign::Right => (end, rect.max().x),
+            };
+            assert!((expected.0 - expected.1).abs() < 0.01, "{align:?}");
+        }
     }
 }

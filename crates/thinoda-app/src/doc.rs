@@ -5,7 +5,7 @@ use thinoda_platform::fs as pfs;
 use web_time::Instant;
 
 use thinoda_canvas::MapView;
-use thinoda_core::{CanvasObjectId, CanvasObjectKind, Document, TopicId, Workbook};
+use thinoda_core::{CanvasObjectId, Document, TopicId, Workbook};
 pub(crate) use thinoda_io::import_read_limit;
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
@@ -753,7 +753,7 @@ impl OpenDoc {
     fn document_with_drafts_for_recovery(&self) -> Result<Document, String> {
         let board_label = if self.view.has_board_label_changes() {
             self.view
-                .validated_board_label_draft(&self.doc)
+                .validated_board_rich_label_draft(&self.doc)
                 .map_err(|error| error.to_string())?
         } else {
             None
@@ -776,13 +776,9 @@ impl OpenDoc {
                 })
                 .map_err(|error| error.to_string())?;
         }
-        if let Some((id, _, text)) = board_label {
+        if let Some((id, text, rich)) = board_label {
             document
-                .update_canvas_object("Pending board label", id, |object| match &mut object.kind {
-                    CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
-                    CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
-                    CanvasObjectKind::Ink(_) => {}
-                })
+                .set_canvas_object_label_with_rich_text("Pending board label", id, &text, rich)
                 .map_err(|error| error.to_string())?;
         }
         if let Some(edit) = &self.inspector_edit {
@@ -1487,7 +1483,9 @@ mod tests {
     }
 
     fn pending_board_label() -> (Harness<'static, OpenDoc>, CanvasObjectId) {
-        use thinoda_core::{CanvasObject, Rect, ShapeKind, Sheet, SheetRootMode, Vec2};
+        use thinoda_core::{
+            CanvasObject, CanvasObjectKind, Rect, ShapeKind, Sheet, SheetRootMode, Vec2,
+        };
 
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = SheetRootMode::Hidden;
@@ -1595,6 +1593,74 @@ mod tests {
                 .label(),
             "Original"
         );
+    }
+
+    #[test]
+    fn formatting_only_board_label_draft_is_saved_and_recovered() {
+        let (mut harness, id) = pending_board_label();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_label("Board object label")
+            .type_text("Original");
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run_steps(2);
+        let doc = harness.state_mut();
+        assert_eq!(doc.view.board_label_draft().unwrap().2, "Original");
+        assert!(doc.view.has_board_label_changes());
+        assert!(doc.has_pending_drafts());
+        assert!(
+            doc.doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .is_none()
+        );
+        let draft = doc.document_with_drafts().unwrap();
+        assert_eq!(
+            draft
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .bold,
+            Some(true)
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = thinoda_platform::Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        doc.snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(
+            orphans[0].docs[0]
+                .load()
+                .unwrap()
+                .active()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .bold,
+            Some(true)
+        );
+        drop(orphans);
+        recovery.resume().unwrap();
+        recovery.finish().unwrap();
     }
 
     #[test]

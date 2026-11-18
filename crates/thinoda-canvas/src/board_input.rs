@@ -1,5 +1,7 @@
 //! View-only board gestures. Document edits happen once, on release.
 
+mod label_format;
+
 use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -10,6 +12,7 @@ use thinoda_core::{
         BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
         rotate_around, rotated_corners, shape_geometry_with_style,
     },
+    rich_text::InlineText,
     scene::{SceneGeometry, SceneItem},
     scene_hierarchy::{MAX_SCENE_DEPTH, SceneHierarchy, SceneNavigation},
 };
@@ -320,6 +323,13 @@ pub(super) struct LabelEdit {
     pub(super) id: CanvasObjectId,
     text: String,
     original: String,
+    original_rich_text: Option<std::sync::Arc<InlineText>>,
+    rich_text: Option<InlineText>,
+    rich_source_text: String,
+    original_label_style: Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
+    selection: Option<std::ops::Range<usize>>,
+    toolbar_rect: Option<Rect>,
+    toolbar_buttons: Vec<Id>,
     sheet: usize,
     sheet_identity: SheetIdentity,
     focus_requested: bool,
@@ -434,6 +444,19 @@ impl MapView {
         Ok(Some((edit.id, edit.original.as_str(), edit.text.as_str())))
     }
 
+    /// Returns a conflict-checked text and formatting snapshot for save or recovery.
+    pub fn validated_board_rich_label_draft(
+        &self,
+        doc: &Document,
+    ) -> EditResult<Option<(CanvasObjectId, String, Option<InlineText>)>> {
+        let Some(edit) = self.board_input.label.as_ref() else {
+            return Ok(None);
+        };
+        validate_label_source(edit, doc)?;
+        let rich = reconciled_label_rich_text(edit)?;
+        Ok(Some((edit.id, edit.text.clone(), rich)))
+    }
+
     /// Whether the active shape or connector label differs from its original text.
     /// Inserts a default-size `kind` shape into free space as one undoable
     /// edit: right of the selection, else near the viewport centre. The new
@@ -482,11 +505,27 @@ impl MapView {
     }
 
     pub fn has_board_label_changes(&self) -> bool {
-        self.board_input
-            .label
-            .as_ref()
-            .is_some_and(|edit| edit.text != edit.original)
+        self.board_input.label.as_ref().is_some_and(|edit| {
+            edit.text != edit.original
+                || edit.rich_text.as_ref() != edit.original_rich_text.as_deref()
+        })
     }
+}
+
+fn reconciled_label_rich_text(edit: &LabelEdit) -> EditResult<Option<InlineText>> {
+    let Some(rich) = &edit.rich_text else {
+        return Ok(None);
+    };
+    let updated = rich
+        .reconcile_label(&edit.rich_source_text, &edit.text)
+        .map_err(EditError::Invalid)?;
+    Ok((!updated.is_empty()).then_some(updated))
+}
+
+fn sync_label_rich_text(edit: &mut LabelEdit) -> EditResult<()> {
+    edit.rich_text = reconciled_label_rich_text(edit)?;
+    edit.rich_source_text.clone_from(&edit.text);
+    Ok(())
 }
 
 fn validate_label_source(edit: &LabelEdit, doc: &Document) -> EditResult<()> {
@@ -501,6 +540,8 @@ fn validate_label_source(edit: &LabelEdit, doc: &Document) -> EditResult<()> {
     if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(edit.id))
         || matches!(object.kind, CanvasObjectKind::Ink(_))
         || object.label() != edit.original
+        || object.label_rich_text != edit.original_rich_text
+        || object.label_style != edit.original_label_style
     {
         return Err(EditError::Invalid(
             "Label source changed or was locked; draft retained".into(),
@@ -526,6 +567,13 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         id,
         text: object.label().to_owned(),
         original: object.label().to_owned(),
+        original_rich_text: object.label_rich_text.clone(),
+        rich_text: object.label_rich_text.as_deref().cloned(),
+        rich_source_text: object.label().to_owned(),
+        original_label_style: object.label_style.clone(),
+        selection: None,
+        toolbar_rect: None,
+        toolbar_buttons: Vec::new(),
         sheet: doc.active_index(),
         sheet_identity: sheet_identity(doc),
         focus_requested: false,
@@ -540,18 +588,15 @@ pub(super) fn commit_label(view: &mut MapView, doc: &mut Document) -> EditResult
     let Some(edit) = view.board_input.label.as_ref() else {
         return Ok(false);
     };
-    if edit.text == edit.original {
+    if edit.text == edit.original && edit.rich_text.as_ref() == edit.original_rich_text.as_deref() {
         view.board_input.label = None;
         return Ok(false);
     }
     validate_label_source(edit, doc)?;
     let id = edit.id;
     let text = edit.text.clone();
-    doc.update_canvas_object("Edit board label", id, |object| match &mut object.kind {
-        CanvasObjectKind::Shape { label, .. } => *label = text,
-        CanvasObjectKind::Connector(connector) => connector.label = text,
-        CanvasObjectKind::Ink(_) => {}
-    })?;
+    let rich = reconciled_label_rich_text(edit)?;
+    doc.set_canvas_object_label_with_rich_text("Edit board label", id, &text, rich)?;
     view.board_input.label = None;
     Ok(true)
 }
@@ -2412,6 +2457,7 @@ fn arrow_clone(source: &CanvasObject, center: Vec2) -> CanvasObject {
     clone.alt_text.clear();
     if let CanvasObjectKind::Shape { label, .. } = &mut clone.kind {
         label.clear();
+        clone.label_rich_text = None;
     }
     clone
 }
@@ -5886,6 +5932,174 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
     }
 }
 
+struct LabelEditorLayout<'a> {
+    ctx: &'a egui::Context,
+    base: &'a thinoda_core::label_style::LabelStyle,
+    font: &'a FontId,
+    zoom: f32,
+    color: Color32,
+    background: Color32,
+    wrap_width: f32,
+    align: egui::Align,
+}
+
+struct LabelListMarker {
+    start: usize,
+    text: String,
+    indent: f32,
+}
+
+fn label_editor_layout_job(
+    text: &str,
+    rich: Option<&InlineText>,
+    layout: &LabelEditorLayout<'_>,
+) -> (egui::text::LayoutJob, Vec<bool>, Vec<LabelListMarker>) {
+    use thinoda_core::rich_text::{InlineBaseline, InlineTextStyle, ListKind};
+
+    let mut offsets: Vec<_> = text.char_indices().map(|(index, _)| index).collect();
+    offsets.push(text.len());
+    let count = offsets.len() - 1;
+    let mut boundaries = vec![0, count];
+    let mut markers = Vec::new();
+    if let Some(rich) = rich {
+        for run in &rich.runs {
+            boundaries.extend([run.start as usize, run.end as usize]);
+        }
+        let mut starts = vec![0];
+        starts.extend(
+            text.chars()
+                .enumerate()
+                .filter_map(|(index, ch)| (ch == '\n').then_some(index + 1)),
+        );
+        let mut paragraphs = rich.paragraphs.iter().peekable();
+        let mut numbered = 0;
+        for (index, start) in starts.into_iter().enumerate() {
+            let list = if paragraphs
+                .peek()
+                .is_some_and(|paragraph| paragraph.index as usize == index)
+            {
+                paragraphs.next().map(|paragraph| paragraph.list)
+            } else {
+                None
+            };
+            let prefix = match list {
+                Some(ListKind::Bulleted) => {
+                    numbered = 0;
+                    Some("•".to_owned())
+                }
+                Some(ListKind::Numbered) => {
+                    numbered += 1;
+                    Some(format!("{numbered}."))
+                }
+                None => {
+                    numbered = 0;
+                    None
+                }
+            };
+            if let Some(text) = prefix {
+                let indent = (text.chars().count() + 1) as f32 * layout.font.size * 0.6;
+                markers.push(LabelListMarker {
+                    start,
+                    text,
+                    indent,
+                });
+                boundaries.push(start);
+            }
+        }
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    if boundaries.len() == 1 {
+        boundaries.push(0);
+    }
+    let mut job = egui::text::LayoutJob {
+        text: text.to_owned(),
+        ..Default::default()
+    };
+    let mut bold = Vec::new();
+    let default_style = InlineTextStyle::default();
+    let mut run_index = 0;
+    let mut marker_index = 0;
+    for pair in boundaries.windows(2) {
+        let start = pair[0];
+        let end = pair[1];
+        while markers
+            .get(marker_index)
+            .is_some_and(|marker| marker.start < start)
+        {
+            marker_index += 1;
+        }
+        let indent = markers
+            .get(marker_index)
+            .filter(|marker| marker.start == start)
+            .map_or(0.0, |marker| marker.indent);
+        let style = rich
+            .and_then(|rich| {
+                while rich
+                    .runs
+                    .get(run_index)
+                    .is_some_and(|run| run.end as usize <= start)
+                {
+                    run_index += 1;
+                }
+                rich.runs
+                    .get(run_index)
+                    .filter(|run| run.start as usize <= start && end <= run.end as usize)
+            })
+            .map_or(&default_style, |run| &run.style);
+        let mut size = style
+            .font_size
+            .map_or(layout.font.size, |size| size * layout.zoom);
+        let valign = match style.baseline {
+            Some(InlineBaseline::Subscript) => {
+                size *= 0.75;
+                egui::Align::Max
+            }
+            Some(InlineBaseline::Superscript) => {
+                size *= 0.75;
+                egui::Align::Min
+            }
+            _ => egui::Align::Max,
+        };
+        let run_color = style.color.map_or(layout.color, |value| {
+            label_editor_text_color(crate::render::color32(value), layout.background)
+        });
+        let decoration = Stroke::new((size / 14.0).max(0.6), run_color);
+        job.sections.push(egui::text::LayoutSection {
+            leading_space: indent,
+            byte_range: egui::text::ByteIndex(offsets[start])..egui::text::ByteIndex(offsets[end]),
+            format: egui::text::TextFormat {
+                font_id: FontId::new(
+                    size.max(1.0),
+                    style.font_family.as_deref().map_or_else(
+                        || layout.font.family.clone(),
+                        |family| crate::measure::font_family(layout.ctx, Some(family)),
+                    ),
+                ),
+                color: run_color,
+                italics: style.italic.unwrap_or(layout.base.italic),
+                underline: if style.underline.unwrap_or(layout.base.underline) {
+                    decoration
+                } else {
+                    Stroke::NONE
+                },
+                strikethrough: if style.strikethrough.unwrap_or(layout.base.strikethrough) {
+                    decoration
+                } else {
+                    Stroke::NONE
+                },
+                valign,
+                ..Default::default()
+            },
+        });
+        bold.push(style.bold.unwrap_or(layout.base.bold));
+    }
+    job.wrap.max_width = layout.wrap_width;
+    job.halign = layout.align;
+    job.keep_trailing_whitespace = true;
+    (job, bold, markers)
+}
+
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { .. } => {
@@ -5928,6 +6142,131 @@ fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) ->
     Some(view.xf().rect(rect).expand(2.0))
 }
 
+struct LabelToolbar {
+    rect: Rect,
+    buttons: Vec<Id>,
+    first_enabled: Option<Id>,
+    action: Option<label_format::Format>,
+}
+
+fn show_label_format_toolbar(
+    ui: &Ui,
+    canvas: Rect,
+    editor: Rect,
+    labels: &BoardLabels,
+    edit: &LabelEdit,
+) -> LabelToolbar {
+    use label_format::Format;
+
+    let compact = canvas.width() < 360.0 || canvas.height() < 180.0;
+    let width = (canvas.width() - 16.0).clamp(1.0, 300.0);
+    let columns = ((width - 14.0) / 28.0).floor().max(1.0) as usize;
+    let rows = 8_usize.div_ceil(columns) as f32;
+    let height = if compact {
+        16.0 + 28.0 * rows
+    } else {
+        34.0 + 28.0 * rows
+    };
+    let x = (editor.center().x - width / 2.0).clamp(
+        canvas.left() + 4.0,
+        (canvas.right() - width - 4.0).max(canvas.left() + 4.0),
+    );
+    let y = if editor.bottom() + height + 8.0 <= canvas.bottom() {
+        editor.bottom() + 4.0
+    } else if editor.top() - height - 8.0 >= canvas.top() {
+        editor.top() - height - 4.0
+    } else {
+        let top = canvas.top() + 4.0;
+        let bottom = (canvas.bottom() - height - 4.0).max(top);
+        if (top + height / 2.0 - editor.center().y).abs()
+            >= (bottom + height / 2.0 - editor.center().y).abs()
+        {
+            top
+        } else {
+            bottom
+        }
+    };
+    let selection = edit
+        .selection
+        .clone()
+        .unwrap_or_else(|| edit.text.chars().count()..edit.text.chars().count());
+    let default_rich = InlineText::default();
+    let rich = edit.rich_text.as_ref().unwrap_or(&default_rich);
+    let default_style = thinoda_core::label_style::LabelStyle::default();
+    let base = edit
+        .original_label_style
+        .as_deref()
+        .unwrap_or(&default_style);
+    let controls = [
+        (Format::Bold, "B", &labels.label_bold),
+        (Format::Italic, "I", &labels.label_italic),
+        (Format::Underline, "U", &labels.label_underline),
+        (Format::Strike, "S", &labels.label_strikethrough),
+        (Format::Subscript, "x₂", &labels.label_subscript),
+        (Format::Superscript, "x²", &labels.label_superscript),
+        (Format::Bulleted, "•", &labels.label_bulleted_list),
+        (Format::Numbered, "1.", &labels.label_numbered_list),
+    ];
+    let mut buttons = Vec::new();
+    let mut first_enabled = None;
+    let mut action = None;
+    let area = egui::Area::new(MapCanvas::id().with("board-label-formatting"))
+        .order(egui::Order::Foreground)
+        .default_size(vec2(width, height))
+        .fixed_pos(egui::pos2(x, y))
+        .constrain_to(canvas)
+        .movable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width((width - 16.0).max(1.0));
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.spacing_mut().button_padding.x = 3.0;
+                if !compact {
+                    ui.label(egui::RichText::new(&labels.label_formatting).small());
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for (format, glyph, label) in controls {
+                        let enabled = !edit.ime_composing
+                            && (!selection.is_empty()
+                                || matches!(format, Format::Bulleted | Format::Numbered));
+                        let selected =
+                            label_format::active(rich, &edit.text, selection.clone(), base, format);
+                        let glyph = match format {
+                            Format::Bold => egui::RichText::new(glyph).strong(),
+                            Format::Italic => egui::RichText::new(glyph).italics(),
+                            Format::Underline => egui::RichText::new(glyph).underline(),
+                            Format::Strike => egui::RichText::new(glyph).strikethrough(),
+                            _ => egui::RichText::new(glyph),
+                        };
+                        let response = ui
+                            .add_enabled(
+                                enabled,
+                                egui::Button::selectable(selected, glyph)
+                                    .min_size(vec2(26.0, 24.0)),
+                            )
+                            .on_hover_text(label);
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, label)
+                        });
+                        buttons.push(response.id);
+                        if enabled && first_enabled.is_none() {
+                            first_enabled = Some(response.id);
+                        }
+                        if response.clicked() {
+                            action = Some(format);
+                        }
+                    }
+                });
+            });
+        });
+    LabelToolbar {
+        rect: area.response.rect,
+        buttons,
+        first_enabled,
+        action,
+    }
+}
+
 pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
     matches!(
         event,
@@ -5952,6 +6291,27 @@ fn plain_key_press(event: &egui::Event, expected: Key) -> bool {
     )
 }
 
+fn label_format_shortcut(event: &egui::Event) -> Option<label_format::Format> {
+    let egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !modifiers.matches_exact(Modifiers::COMMAND) {
+        return None;
+    }
+    match key {
+        Key::B => Some(label_format::Format::Bold),
+        Key::I => Some(label_format::Format::Italic),
+        Key::U => Some(label_format::Format::Underline),
+        _ => None,
+    }
+}
+
 /// Finish a draft after applying input that preceded an outside pointer press.
 pub(super) fn finish_label_before_pointer_press(
     ui: &mut Ui,
@@ -5971,12 +6331,17 @@ pub(super) fn finish_label_before_pointer_press(
     let Some(edit) = &view.board_input.label else {
         return;
     };
+    let toolbar_focused = ui.memory(|memory| {
+        memory
+            .focused()
+            .is_some_and(|id| edit.toolbar_buttons.contains(&id))
+    });
     let retry_pending = edit.focus_retry_after.is_some_and(|(viewport, frame)| {
         viewport == ui.ctx().viewport_id()
             && frame < ui.ctx().cumulative_frame_nr()
             && ui.memory(|memory| memory.focused().is_none())
     });
-    if !editor_focused && !editor_lost_focus && !retry_pending {
+    if !editor_focused && !editor_lost_focus && !retry_pending && !toolbar_focused {
         return;
     }
     let Some(object) = doc.sheet().canvas.object(edit.id) else {
@@ -6004,7 +6369,10 @@ pub(super) fn finish_label_before_pointer_press(
                     _ => None,
                 })?;
         if view.canvas_rect().contains(position)
-            && rect.contains(position)
+            && (rect.contains(position)
+                || edit
+                    .toolbar_rect
+                    .is_some_and(|bounds| bounds.contains(position)))
             && !overlay_rect.is_some_and(|r| r.contains(position))
         {
             return None;
@@ -6039,7 +6407,9 @@ pub(super) fn finish_label_before_pointer_press(
     let Some(input_end) = split else {
         return;
     };
-    if ui.input(|input| input.events[..input_end].iter().any(label_keyboard_event)) {
+    if !toolbar_focused
+        && ui.input(|input| input.events[..input_end].iter().any(label_keyboard_event))
+    {
         // Keep the pointer and later input for their actual owners.
         let (events, pointer) = ui.input_mut(|input| {
             let events = std::mem::take(&mut input.events);
@@ -6089,6 +6459,115 @@ pub(super) fn show_label_editor(
     edit_error: &mut Option<thinoda_core::EditError>,
     input_only: bool,
 ) {
+    let edit_id = MapCanvas::board_label_editor_id();
+    let split_shortcuts = !minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && view.board_input.label.as_ref().is_some_and(|edit| {
+            !edit.ime_composing
+                && doc
+                    .sheet()
+                    .canvas
+                    .object(edit.id)
+                    .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        })
+        && ui.input(|input| {
+            input.focused
+                && input
+                    .events
+                    .iter()
+                    .any(|event| label_format_shortcut(event).is_some())
+                && input
+                    .events
+                    .iter()
+                    .filter(|event| label_keyboard_event(event))
+                    .count()
+                    > 1
+                && !input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerButton { .. } | egui::Event::Ime(_)
+                    ) || plain_key_press(event, Key::F6)
+                })
+        });
+    if split_shortcuts {
+        // TextEdit reports only the final selection, so process formatting keys
+        // between surrounding text events instead of applying them afterward.
+        let (events, pointer) = ui.input_mut(|input| {
+            (
+                std::mem::take(&mut input.events),
+                std::mem::take(&mut input.pointer),
+            )
+        });
+        let mut batches: Vec<Vec<usize>> = Vec::new();
+        let mut pending = Vec::new();
+        for (index, event) in events.iter().enumerate() {
+            if !label_keyboard_event(event) {
+                continue;
+            }
+            if label_format_shortcut(event).is_some() {
+                if !pending.is_empty() {
+                    batches.push(std::mem::take(&mut pending));
+                }
+                batches.push(vec![index]);
+            } else {
+                pending.push(index);
+            }
+        }
+        if !pending.is_empty() {
+            batches.push(pending);
+        }
+        let mut processed = vec![false; events.len()];
+        for (batch_index, batch) in batches.into_iter().enumerate() {
+            ui.input_mut(|input| {
+                input.events = batch.iter().map(|&index| events[index].clone()).collect();
+            });
+            let mut child = Ui::new(
+                ui.ctx().clone(),
+                edit_id.with(("format-input", batch_index)),
+                egui::UiBuilder::new()
+                    .layer_id(ui.layer_id())
+                    .max_rect(ui.max_rect())
+                    .layout(*ui.layout())
+                    .style(ui.style().clone()),
+            );
+            child.set_clip_rect(Rect::NOTHING);
+            show_label_editor_pass(&mut child, doc, view, scene, false, edit_error, true);
+            for index in batch {
+                processed[index] = true;
+            }
+            if view.board_input.label.is_none() {
+                break;
+            }
+        }
+        ui.input_mut(|input| {
+            input.pointer = pointer;
+            input.events = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, event)| (!processed[index]).then_some(event))
+                .collect();
+        });
+    }
+    show_label_editor_pass(
+        ui,
+        doc,
+        view,
+        scene,
+        minimap_blocks_keyboard,
+        edit_error,
+        input_only,
+    );
+}
+
+fn show_label_editor_pass(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    minimap_blocks_keyboard: bool,
+    edit_error: &mut Option<thinoda_core::EditError>,
+    input_only: bool,
+) {
     let Some(edit) = view.board_input.label.as_ref() else {
         return;
     };
@@ -6119,6 +6598,13 @@ pub(super) fn show_label_editor(
         }
     }
     let editor_focused = ui.memory(|memory| memory.has_focus(edit_id));
+    let toolbar_focused = view.board_input.label.as_ref().is_some_and(|edit| {
+        ui.memory(|memory| {
+            memory
+                .focused()
+                .is_some_and(|id| edit.toolbar_buttons.contains(&id))
+        })
+    });
     // On the first focused frame egui can surrender focus to an Escape key
     // before TextEdit has installed its focus filter.
     let escape_released_editor = !editor_focused
@@ -6139,8 +6625,14 @@ pub(super) fn show_label_editor(
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
     }
-    let (commit, cancel) = if minimap_blocks_keyboard || !editor_owns_keyboard {
+    let (commit, cancel) = if minimap_blocks_keyboard || (!editor_owns_keyboard && !toolbar_focused)
+    {
         (false, false)
+    } else if toolbar_focused {
+        (
+            false,
+            ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)),
+        )
     } else {
         ui.input_mut(|input| {
             let mut enter = false;
@@ -6212,9 +6704,90 @@ pub(super) fn show_label_editor(
             ])
         });
     let is_shape = matches!(object.kind, CanvasObjectKind::Shape { .. });
+    let formatting_focus = is_shape
+        && !input_only
+        && !minimap_blocks_keyboard
+        && (editor_owns_keyboard || toolbar_focused)
+        && !view
+            .board_input
+            .label
+            .as_ref()
+            .is_some_and(|edit| edit.ime_composing)
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::F6));
+    let formatting_shortcuts = if is_shape
+        && editor_owns_keyboard
+        && !minimap_blocks_keyboard
+        && !view
+            .board_input
+            .label
+            .as_ref()
+            .is_some_and(|edit| edit.ime_composing)
+    {
+        ui.input_mut(|input| {
+            let mut formats = Vec::new();
+            input.events.retain(|event| {
+                if let Some(format) = label_format_shortcut(event) {
+                    formats.push(format);
+                    return false;
+                }
+                true
+            });
+            formats
+        })
+    } else {
+        Vec::new()
+    };
+    let canvas = view.canvas_rect();
+    let labels = view.board_labels.clone();
+    let zoom = view.zoom;
     let edit = view.board_input.label.as_mut().unwrap();
     let empty = edit.text.is_empty();
-    let text_edit = TextEdit::multiline(&mut edit.text)
+    let use_rich_layout = is_shape && (edit.rich_text.is_some() || label_style.is_some());
+    let mut layout_rich = edit.rich_text.clone();
+    let mut layout_source = edit.rich_source_text.clone();
+    let base = edit
+        .original_label_style
+        .as_deref()
+        .cloned()
+        .unwrap_or_default();
+    let mut bold_sections = Vec::new();
+    let mut list_markers = Vec::new();
+    let mut layout_error = None;
+    let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+        let text = buffer.as_str();
+        layout_error = None;
+        if let Some(rich) = &mut layout_rich
+            && layout_source != text
+        {
+            match rich.reconcile_label(&layout_source, text) {
+                Ok(updated) => {
+                    *rich = updated;
+                    layout_source = text.to_owned();
+                }
+                Err(error) => layout_error = Some(error),
+            }
+        }
+        let (job, bold, markers) = label_editor_layout_job(
+            text,
+            (layout_source == text)
+                .then_some(layout_rich.as_ref())
+                .flatten(),
+            &LabelEditorLayout {
+                ctx: ui.ctx(),
+                base: &base,
+                font: &font,
+                zoom,
+                color: text_color,
+                background: contrast_background,
+                wrap_width,
+                align: align.x(),
+            },
+        );
+        bold_sections = bold;
+        list_markers = markers;
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+    let mut text_edit = TextEdit::multiline(&mut edit.text)
         .id(edit_id)
         .font(font.clone())
         .text_color(text_color)
@@ -6233,14 +6806,26 @@ pub(super) fn show_label_editor(
             vertical_arrows: true,
             escape: true,
         });
+    if use_rich_layout {
+        text_edit = text_edit.layouter(&mut layouter);
+    }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-    if !input_only && empty {
+    if !input_only
+        && empty
+        && edit
+            .rich_text
+            .as_ref()
+            .is_none_or(|rich| rich.paragraphs.is_empty())
+    {
         let painter = child
             .painter()
             .with_clip_rect(rect.intersect(ui.clip_rect()));
         let color = text_color.gamma_multiply(0.7);
-        let galley =
-            painter.layout_no_wrap(view.board_labels.label_placeholder.clone(), font, color);
+        let galley = painter.layout_no_wrap(
+            view.board_labels.label_placeholder.clone(),
+            font.clone(),
+            color,
+        );
         let position = rect.center() - galley.size() / 2.0;
         if is_shape {
             painter.add(label_text_halo(position, galley.clone(), color));
@@ -6249,8 +6834,28 @@ pub(super) fn show_label_editor(
     }
     // Contrast around the glyphs avoids masking a transparent shape or its outline.
     let halo = (!input_only && is_shape && !empty).then(|| child.painter().add(egui::Shape::Noop));
+    let bold_underlay =
+        (!input_only && use_rich_layout && !empty).then(|| child.painter().add(egui::Shape::Noop));
     // Text queued with a finish key must reach the editor before the commit.
     let output = text_edit.show(&mut child);
+    drop(layouter);
+    if let Some(error) = layout_error {
+        *edit_error = Some(EditError::Invalid(error));
+    }
+    if output.response.changed() {
+        if use_rich_layout && edit.rich_text.is_some() {
+            edit.rich_text = layout_rich.filter(|rich| !rich.is_empty());
+            edit.rich_source_text = layout_source;
+        } else if let Err(error) = sync_label_rich_text(edit) {
+            *edit_error = Some(error);
+        }
+    }
+    if output.response.has_focus()
+        && let Some(range) = output.state.cursor.char_range()
+    {
+        let range = range.as_sorted_char_range();
+        edit.selection = Some(range.start.0..range.end.0);
+    }
     if let Some(index) = halo {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
         let position = output.galley_pos - vec2(galley.rect.left(), 0.0);
@@ -6258,6 +6863,42 @@ pub(super) fn show_label_editor(
             .painter()
             .with_clip_rect(output.text_clip_rect)
             .set(index, label_text_halo(position, galley, text_color));
+    }
+    if let Some(index) = bold_underlay
+        && bold_sections.iter().any(|bold| *bold)
+        && bold_sections.len() == output.galley.job.sections.len()
+    {
+        let mut job = (*output.galley.job).clone();
+        for (section, bold) in job.sections.iter_mut().zip(bold_sections) {
+            if !bold {
+                section.format.color = Color32::TRANSPARENT;
+            }
+            section.format.underline = Stroke::NONE;
+            section.format.strikethrough = Stroke::NONE;
+            section.format.background = Color32::TRANSPARENT;
+        }
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let position = output.galley_pos - vec2(galley.rect.left(), 0.0) + vec2(0.45 * zoom, 0.0);
+        child
+            .painter()
+            .with_clip_rect(output.text_clip_rect)
+            .set(index, egui::Shape::galley(position, galley, text_color));
+    }
+    if !input_only {
+        let painter = child.painter().with_clip_rect(output.text_clip_rect);
+        let origin = output.galley_pos - vec2(output.galley.rect.left(), 0.0);
+        for marker in list_markers {
+            let cursor = output
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(marker.start));
+            let galley = painter.layout_no_wrap(marker.text, font.clone(), text_color);
+            let position = origin
+                + vec2(
+                    cursor.left() - marker.indent,
+                    cursor.bottom() - galley.size().y,
+                );
+            painter.galley(position, galley, text_color);
+        }
     }
     if !input_only {
         output.response.widget_info(|| {
@@ -6270,6 +6911,77 @@ pub(super) fn show_label_editor(
         ui.ctx().accesskit_node_builder(output.response.id, |node| {
             node.set_description(hint.as_str());
         });
+    }
+    let mut toolbar_pointer = false;
+    let mut toolbar_now_focused = false;
+    let mut toolbar_lost_focus = false;
+    let mut format_actions = formatting_shortcuts;
+    if !input_only && is_shape {
+        let toolbar = show_label_format_toolbar(ui, canvas, rect, &labels, edit);
+        toolbar_pointer = ui.input(|input| {
+            (input.pointer.any_down()
+                || input.pointer.any_pressed()
+                || input.pointer.any_released())
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| toolbar.rect.contains(position))
+        });
+        toolbar_lost_focus = ui.memory(|memory| {
+            edit.toolbar_buttons
+                .iter()
+                .any(|id| memory.had_focus_last_frame(*id))
+        });
+        edit.toolbar_rect = Some(toolbar.rect);
+        edit.toolbar_buttons = toolbar.buttons;
+        if formatting_focus {
+            if toolbar_focused {
+                ui.memory_mut(|memory| memory.request_focus(edit_id));
+            } else if let Some(id) = toolbar.first_enabled {
+                ui.memory_mut(|memory| memory.request_focus(id));
+            }
+        }
+        format_actions.extend(toolbar.action);
+        toolbar_now_focused = ui.memory(|memory| {
+            memory
+                .focused()
+                .is_some_and(|id| edit.toolbar_buttons.contains(&id))
+        });
+    }
+    if !format_actions.is_empty() {
+        let selection = edit
+            .selection
+            .clone()
+            .unwrap_or_else(|| edit.text.chars().count()..edit.text.chars().count());
+        for format in format_actions {
+            let result = sync_label_rich_text(edit).and_then(|()| {
+                let mut rich = edit.rich_text.clone().unwrap_or_default();
+                let base = edit
+                    .original_label_style
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_default();
+                label_format::apply(&mut rich, &edit.text, selection.clone(), &base, format)
+                    .map_err(EditError::Invalid)?;
+                edit.rich_text = (!rich.is_empty()).then_some(rich);
+                Ok(())
+            });
+            if let Err(error) = result {
+                *edit_error = Some(error);
+                break;
+            }
+        }
+        let mut state = TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(selection.start),
+                egui::text::CCursor::new(selection.end),
+            )));
+        state.store(ui.ctx(), edit_id);
+        ui.memory_mut(|memory| memory.request_focus(edit_id));
+        ui.ctx().request_repaint();
+        toolbar_now_focused = false;
     }
     if commit {
         match view.try_commit_board_label(doc) {
@@ -6299,7 +7011,10 @@ pub(super) fn show_label_editor(
             .cursor
             .set_char_range(Some(egui::text::CCursorRange::two(start, end)));
         state.store(ui.ctx(), edit_id);
-    } else if output.response.lost_focus()
+        edit.selection = Some(start.index.0..end.index.0);
+    } else if (output.response.lost_focus() || (toolbar_lost_focus && !output.response.has_focus()))
+        && !toolbar_pointer
+        && !toolbar_now_focused
         && let Err(error) = view.try_commit_board_label(doc)
     {
         *edit_error = Some(error);
@@ -6312,6 +7027,91 @@ pub(super) fn show_label_editor(
 #[cfg(test)]
 mod label_editor_color_tests {
     use super::*;
+
+    #[test]
+    fn editor_layout_uses_each_runs_style_and_baseline() {
+        let mut rich = InlineText::default();
+        rich.update_range("abc", 1..2, |style| {
+            style.bold = Some(true);
+            style.italic = Some(true);
+            style.underline = Some(true);
+            style.baseline = Some(thinoda_core::rich_text::InlineBaseline::Superscript);
+        })
+        .unwrap();
+        let (job, bold, _) = label_editor_layout_job(
+            "abc",
+            Some(&rich),
+            &LabelEditorLayout {
+                ctx: &egui::Context::default(),
+                base: &thinoda_core::label_style::LabelStyle::default(),
+                font: &FontId::proportional(16.0),
+                zoom: 1.0,
+                color: Color32::BLACK,
+                background: Color32::WHITE,
+                wrap_width: 200.0,
+                align: egui::Align::Min,
+            },
+        );
+        assert_eq!(job.text, "abc");
+        assert_eq!(bold, vec![false, true, false]);
+        let format = &job.sections[1].format;
+        assert!(format.italics);
+        assert_ne!(format.underline, Stroke::NONE);
+        assert_eq!(format.valign, egui::Align::Min);
+        assert_eq!(format.font_id.size, 12.0);
+    }
+
+    #[test]
+    fn editor_layout_keeps_bold_boundaries_and_displays_list_markers_without_changing_text() {
+        use thinoda_core::rich_text::{InlineParagraph, ListKind};
+
+        let text = "a\nb\nc\nd";
+        let mut rich = InlineText {
+            paragraphs: vec![
+                InlineParagraph {
+                    index: 0,
+                    list: ListKind::Numbered,
+                },
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Numbered,
+                },
+                InlineParagraph {
+                    index: 3,
+                    list: ListKind::Numbered,
+                },
+            ],
+            ..Default::default()
+        };
+        rich.update_range(text, 0..1, |style| style.bold = Some(true))
+            .unwrap();
+        let (job, bold, markers) = label_editor_layout_job(
+            text,
+            Some(&rich),
+            &LabelEditorLayout {
+                ctx: &egui::Context::default(),
+                base: &thinoda_core::label_style::LabelStyle::default(),
+                font: &FontId::proportional(16.0),
+                zoom: 1.0,
+                color: Color32::BLACK,
+                background: Color32::WHITE,
+                wrap_width: 200.0,
+                align: egui::Align::Min,
+            },
+        );
+        assert_eq!(job.text, text);
+        assert_eq!(job.sections.len(), bold.len());
+        assert!(bold[0]);
+        assert!(!bold[1]);
+        assert!(job.sections[0].leading_space > 0.0);
+        assert_eq!(
+            markers
+                .iter()
+                .map(|marker| (marker.start, marker.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, "1."), (2, "2."), (6, "1.")]
+        );
+    }
 
     #[test]
     fn editor_contrasts_transparent_and_low_contrast_text_without_changing_readable_colors() {

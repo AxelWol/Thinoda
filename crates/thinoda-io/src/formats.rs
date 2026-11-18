@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 49 && book.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require native format version 49".into(),
+            ));
+        }
         if version < 48 && book.has_label_styles() {
             return Err(IoError::NewerVersion(
                 "label styles require native format version 48".into(),
@@ -301,6 +306,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_rich_labels() {
+            return Err(IoError::NewerVersion(
+                "rich labels require native format version 49".into(),
+            ));
+        }
         if book.has_label_styles() {
             return Err(IoError::NewerVersion(
                 "label styles require native format version 48".into(),

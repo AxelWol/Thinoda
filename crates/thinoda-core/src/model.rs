@@ -855,6 +855,11 @@ impl Sheet {
         self.canvas.has_label_styles()
     }
 
+    /// Whether any shape needs inline-label-aware persistence.
+    pub fn has_rich_labels(&self) -> bool {
+        self.canvas.has_rich_labels()
+    }
+
     /// Whether the sheet needs layer-aware persistence.
     pub fn has_layers(&self) -> bool {
         self.canvas.has_layers()
@@ -1623,6 +1628,15 @@ impl Sheet {
                 t.inline_text
                     .validate(&t.title)
                     .map_err(|error| format!("topic {id}: {error}"))?;
+                if t.inline_text
+                    .runs
+                    .iter()
+                    .any(|run| run.style.baseline.is_some())
+                {
+                    return Err(format!(
+                        "topic {id} has a baseline override reserved for shape labels"
+                    ));
+                }
             }
             if t.marker_colors
                 .keys()
@@ -2691,6 +2705,11 @@ impl Workbook {
 
     pub fn has_label_styles(&self) -> bool {
         self.sheets.iter().any(Sheet::has_label_styles)
+    }
+
+    /// Whether any sheet needs inline-label-aware persistence.
+    pub fn has_rich_labels(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rich_labels)
     }
 
     /// Whether any sheet needs layer-aware persistence.

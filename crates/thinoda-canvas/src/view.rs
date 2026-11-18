@@ -161,6 +161,15 @@ pub struct BoardLabels {
     pub label_edit_hint: String,
     pub label_edit_armed_hint: String,
     pub label_placeholder: String,
+    pub label_formatting: String,
+    pub label_bold: String,
+    pub label_italic: String,
+    pub label_underline: String,
+    pub label_strikethrough: String,
+    pub label_subscript: String,
+    pub label_superscript: String,
+    pub label_bulleted_list: String,
+    pub label_numbered_list: String,
 }
 
 impl Default for BoardLabels {
@@ -215,6 +224,15 @@ impl Default for BoardLabels {
             label_edit_hint: "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel".into(),
             label_edit_armed_hint: "Clicking or tapping empty canvas also adds the armed shape.".into(),
             label_placeholder: "Type a label".into(),
+            label_formatting: "Label formatting (F6)".into(),
+            label_bold: "Bold".into(),
+            label_italic: "Italic".into(),
+            label_underline: "Underline".into(),
+            label_strikethrough: "Strikethrough".into(),
+            label_subscript: "Subscript".into(),
+            label_superscript: "Superscript".into(),
+            label_bulleted_list: "Bulleted list".into(),
+            label_numbered_list: "Numbered list".into(),
         }
     }
 }

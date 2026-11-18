@@ -1616,6 +1616,81 @@ fn html_label_text_retains_visible_entities_and_block_boundaries() {
 }
 
 #[test]
+fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
+    use thinoda_core::{InlineBaseline, InlineParagraph, InlineText, ListKind};
+
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="rich" value="{}" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="120" height="80" as="geometry"/></mxCell>"##,
+        esc(markup),
+    ))
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    let object = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(object.label(), "A🙂\ntwo");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 49);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = shapes(&restored.sheets[0])[0];
+    assert_eq!(restored.label(), object.label());
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+
+    let mut sheet = Sheet::new("P", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 120.0, 80.0));
+    object.set_label("Hi🙂\n\nend").unwrap();
+    let mut rich = InlineText {
+        paragraphs: vec![
+            InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 1,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 2,
+                list: ListKind::Numbered,
+            },
+        ],
+        ..Default::default()
+    };
+    rich.update_range(object.label(), 0..5, |style| {
+        style.bold = Some(true);
+        style.strikethrough = Some(true);
+        style.font_family = Some("Example';url(https://example.invalid/x)".into());
+        style.color = Some(Color::rgba(30, 40, 50, 128));
+    })
+    .unwrap();
+    object.label_style = Some(Arc::new(LabelStyle {
+        underline: true,
+        ..Default::default()
+    }));
+    object.label_rich_text = Some(Arc::new(rich.clone()));
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    let exported = export(&book).unwrap();
+    assert!(!String::from_utf8_lossy(&exported).contains("url(https:"));
+    let restored = import(&exported).unwrap().workbook;
+    let object = shapes(&restored.sheets[0])[0];
+    assert_eq!(object.label(), "Hi🙂\n\nend");
+    assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+}
+
+#[test]
 fn html_whitespace_loss_is_reported_through_file_link_and_clipboard() {
     let source = "A<span> </span><span> B</span>";
     let xml = page(&format!(

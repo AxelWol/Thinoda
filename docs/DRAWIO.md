@@ -90,7 +90,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Approx. (plain text) | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shape labels, with inert draw.io HTML import/export; connector, card, zone and container-specific labels remain plain or use their existing text model; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -239,6 +239,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
+  - [x] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export
+  - [ ] Complete rich-label coverage for other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
 ### D10 — Save back to `.drawio`
@@ -278,6 +280,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 rich shape labels (partial) | Shape labels reuse bounded Unicode-scalar inline runs and list paragraphs; selection toolbar and Ctrl/Command+B/I/U edit the draft without changing the document until one undoable commit; drafts and formatting-only changes recover; native v49, sheet clipboard v38, board clipboard v42, XMind `THINODA-XMIND-RICH-LABELS-1`, recovery `THINODA-RECOVERY-RICH-LABELS-1` and `THINODA-RECOVERY-INK-RICH-LABELS-1`; supported draw.io HTML imports as inert text and exports escaped HTML; canvas and SVG/PNG/PDF/editable PowerPoint display the runs and list markers. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-17 | D9 label text | Shape labels carry an optional `LabelStyle`: font family and size, bold/italic/underline/strikethrough, horizontal and vertical alignment, label position outside the shape on either axis, overall and per-side spacing, wrap on/off, label background and border colours and vertical (`horizontal=0`) text; one core layout wraps and places the text for canvas, label editor, hit testing, scene bounds and SVG/PNG/PDF/PPTX; Label text style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back (`whiteSpace=nowrap` for unwrapped labels); native v48, sheet clipboard v37, board clipboard v41, XMind `THINODA-XMIND-LABEL-STYLES-1`, recovery `THINODA-RECOVERY-LABEL-STYLES-1` and `THINODA-RECOVERY-INK-LABEL-STYLES-1` |
 | 2026-11-17 | D9 shape style | Native shape style effects on `ObjectStyle`: dash pattern with fixed-length option, linear (north/south/east/west) and radial gradients, drop shadow, glass highlight, fill patterns (hatch, cross-hatch, dots, dashed, zigzag) and horizontal/vertical flip that mirrors built-in, polygon and stencil geometry plus fixed ports about the frame centre (labels stay upright); canvas and SVG/PNG/PDF/PPTX paint them identically (stencil dashes now export too); Shape style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back; native v47, sheet clipboard v36, board clipboard v40, XMind `THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1` and `THINODA-RECOVERY-INK-SHAPE-STYLES-1` |
 | 2026-11-17 | D8 tables | Native 2-D tables on the scene container engine: a table container owns row heights, column widths, cell slots with row/column spans and row/column stripe colours, and the shared layout pass places its cell containers (content never grows a cell); undoable insert row above/below and column left/right, delete row/column, merge/unmerge, stripes and track resize; Insert table (board toolbar, rows × columns) and a Table inspector section; canvas and SVG/PNG/PDF/PPTX paint stripes; draw.io `tableLayout` tables import natively with rowspan/colspan, stripes, grid lines and cell content and export as table/tableRow/partialRectangle cells; native v46, sheet clipboard v35, board clipboard v39, new XMind and recovery table envelopes; D8 complete |
@@ -667,8 +670,7 @@ bounds and select their shape. Known approximations:
   fallback list), PowerPoint and draw.io. The canvas uses the closest family
   Thinoda has loaded (otherwise the proportional UI font), and PNG/PDF render
   from the SVG with the installed fonts. The canvas simulates bold with a
-  double paint (italic, underline and strikethrough use egui's text format);
-  the label editor shows size, family and alignment only.
+  double paint (italic, underline and strikethrough use egui's text format).
 - Labels without a style keep their previous rendering (12 px unwrapped on the
   canvas, 14 px wrapped in exports); draw.io files imported without the
   default stylesheet get an explicit 11 px label.
@@ -679,6 +681,29 @@ bounds and select their shape. Known approximations:
   still omit outside label positions from their insert styles.
 - The inspector shows the first shape's values for a multi-selection and
   edits only the changed field on every shape.
+
+**D9 rich shape labels (partial).** The editor applies bold, italic, underline,
+strikethrough and sub/superscript to selected graphemes, and bullet or numbered
+formatting to selected paragraphs. F6 reaches the toolbar; Ctrl/Command+B/I/U
+work in the editor. Text and formatting commit together and conflict detection
+keeps a stale draft available. Canvas runs use measured advances, SVG spans
+flow in one text element, and PowerPoint keeps each line as an editable text
+box with multiple runs. Known limitations:
+
+- The core line-break and bounds estimates still use approximate glyph widths;
+  wrapping, backgrounds, hit bounds and mixed-font baselines need visual parity
+  work. The editor approximates bold and baseline offsets.
+- Inline font family, size and colour can be imported and retained but do not
+  yet have per-selection editor controls. Formatting at an empty selection is
+  not a typing-style toggle; select text first.
+- Connector labels, cards, zones and container/table-specific title import paths
+  are not covered by this shape-label implementation.
+- HTML is parsed inertly and bounded; unsupported tags, attributes, nested
+  lists, whitespace and resource-limit overflows produce formatting warnings.
+  Unsupported source HTML is **not** retained for a later save. Thinoda's
+  markers for styled line breaks, empty list items and inherited decorations
+  can be discarded by other editors. D10 must preserve unsupported source
+  rather than treating this conversion as lossless.
 
 ## 5. Rubber-duck findings
 

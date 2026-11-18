@@ -1343,3 +1343,64 @@ fn shape_context_visual_previews() {
         }
     }
 }
+
+#[cfg(feature = "gpu-tests")]
+#[test]
+fn rich_shape_label_visual_previews() {
+    let Some(directory) = std::env::var_os("THINODA_SHAPE_VISUAL_DIR") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    for dark in [false, true] {
+        for (size, width) in [
+            (vec2(1200.0, 700.0), "wide"),
+            (vec2(320.0, 240.0), "compact"),
+        ] {
+            let (mut app, id) = app_with_shape();
+            app.settings.theme = if dark {
+                thinoda_platform::settings::ThemeMode::Dark
+            } else {
+                thinoda_platform::settings::ThemeMode::Light
+            };
+            let text = "Wide WWWW narrow iiii\nsecond line";
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range(text, 5..9, |style| style.bold = Some(true))
+                .unwrap();
+            rich.update_range(text, 17..21, |style| style.italic = Some(true))
+                .unwrap();
+            rich.paragraphs.push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Bulleted,
+            });
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .update_canvas_object("Rich label", id, |object| {
+                    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                        *label = text.into();
+                    }
+                    object.label_rich_text = Some(std::sync::Arc::new(rich));
+                })
+                .unwrap();
+            let mut h = Harness::builder()
+                .wgpu()
+                .with_size(size)
+                .with_step_dt(1.0 / 60.0)
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(6);
+            let theme = if dark { "dark" } else { "light" };
+            h.render()
+                .expect("rich shape render")
+                .save(directory.join(format!("rich-shape-{theme}-{width}.png")))
+                .unwrap();
+            let doc = h.state_mut().doc_mut().unwrap();
+            assert!(doc.view.begin_board_label(&doc.doc, id));
+            h.run_steps(6);
+            h.render()
+                .expect("rich label editor render")
+                .save(directory.join(format!("rich-editor-{theme}-{width}.png")))
+                .unwrap();
+        }
+    }
+}

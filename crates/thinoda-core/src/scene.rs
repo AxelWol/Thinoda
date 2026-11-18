@@ -1529,7 +1529,7 @@ fn object_item(
     }
     let outside_label = match &object.kind {
         CanvasObjectKind::Shape { label, .. }
-            if !label.is_empty()
+            if (!label.is_empty() || object.has_label_list())
                 && object
                     .label_style
                     .as_ref()

@@ -7,6 +7,7 @@
 use crate::board::{CANVAS_LABEL_FONT_SIZE, CanvasObject, rotate_around};
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::TextAlign;
+use crate::rich_text::{InlineBaseline, InlineText, InlineTextStyle, ListKind};
 use serde::{Deserialize, Serialize};
 
 pub const MIN_LABEL_FONT_SIZE: f32 = 1.0;
@@ -243,6 +244,38 @@ pub fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
 pub struct LabelLine {
     pub text: String,
     pub rect: Rect,
+    /// Positioned runs; empty for the existing whole-label rendering path.
+    pub runs: Vec<LabelRun>,
+}
+
+/// One contiguous, approximately measured part of a rich label line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelRun {
+    pub text: String,
+    pub rect: Rect,
+    pub style: InlineTextStyle,
+}
+
+/// Font size after applying a run's baseline and size overrides.
+pub fn run_font_size(base: f32, style: &InlineTextStyle) -> f32 {
+    let size = style.font_size.unwrap_or(base);
+    if matches!(
+        style.baseline,
+        Some(InlineBaseline::Subscript | InlineBaseline::Superscript)
+    ) {
+        size * 0.75
+    } else {
+        size
+    }
+}
+
+/// Vertical shift in text-space coordinates for a subscript or superscript.
+pub fn run_baseline_shift(base: f32, style: &InlineTextStyle) -> f32 {
+    match style.baseline {
+        Some(InlineBaseline::Subscript) => base * 0.22,
+        Some(InlineBaseline::Superscript) => -base * 0.32,
+        _ => 0.0,
+    }
 }
 
 /// A styled label in text space: unrotated coordinates turned by `rotation`
@@ -312,8 +345,21 @@ fn union(a: Rect, b: Rect) -> Rect {
 
 /// Layout of `text` for a styled shape label whose default text area is `base`.
 pub fn layout(object: &CanvasObject, base: Rect, text: &str) -> Option<LabelLayout> {
-    let style = object.label_style.as_deref()?;
-    Some(layout_with(style, object.rect, object.rotation, base, text))
+    if let Some(rich) = object.label_rich_text.as_deref() {
+        let default = LabelStyle::default();
+        let style = object.label_style.as_deref().unwrap_or(&default);
+        Some(layout_rich(
+            style,
+            object.rect,
+            object.rotation,
+            base,
+            text,
+            rich,
+        ))
+    } else {
+        let style = object.label_style.as_deref()?;
+        Some(layout_with(style, object.rect, object.rotation, base, text))
+    }
 }
 
 /// Layout of `text` in `base` for a shape frame `rect` turned by `rotation`.
@@ -378,6 +424,7 @@ pub fn layout_with(
                     Vec2::new(left, top + index as f32 * line_height),
                     Vec2::new(width, line_height),
                 ),
+                runs: Vec::new(),
             }
         })
         .collect();
@@ -396,6 +443,190 @@ pub fn layout_with(
         pivot,
         rotation: crate::board::normalize_rotation(rotation + local),
     }
+}
+
+#[derive(Clone, Copy)]
+struct RichGlyph {
+    ch: char,
+    style: usize,
+    width: f32,
+}
+
+fn rich_lines(glyphs: &[RichGlyph], width: f32, wrap: bool, indent: usize) -> Vec<Vec<RichGlyph>> {
+    if glyphs.is_empty() {
+        return vec![Vec::new()];
+    }
+    if !wrap {
+        return vec![glyphs.to_vec()];
+    }
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < glyphs.len() {
+        let continuation = !lines.is_empty();
+        let padding: Vec<_> = if continuation {
+            glyphs[..indent.min(glyphs.len())]
+                .iter()
+                .map(|glyph| RichGlyph { ch: ' ', ..*glyph })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut used = padding.iter().map(|glyph| glyph.width).sum::<f32>();
+        let mut end = start;
+        let mut last_space = None;
+        while end < glyphs.len() && (used + glyphs[end].width <= width || end == start) {
+            used += glyphs[end].width;
+            if glyphs[end].ch.is_whitespace() {
+                last_space = Some(end);
+            }
+            end += 1;
+        }
+        let mut next = end;
+        if end < glyphs.len()
+            && let Some(space) = last_space
+            && space > start
+        {
+            end = space;
+            next = space + 1;
+            while next < glyphs.len() && glyphs[next].ch.is_whitespace() {
+                next += 1;
+            }
+        }
+        let mut line = padding;
+        line.extend_from_slice(&glyphs[start..end]);
+        lines.push(line);
+        start = next;
+    }
+    lines
+}
+
+fn layout_rich(
+    style: &LabelStyle,
+    rect: Rect,
+    rotation: f32,
+    base: Rect,
+    text: &str,
+    rich: &InlineText,
+) -> LabelLayout {
+    let mut layout = layout_with(style, rect, rotation, base, "");
+    if text.is_empty() && rich.paragraphs.is_empty() {
+        return layout;
+    }
+    let mut styles = vec![InlineTextStyle::default()];
+    styles.extend(rich.runs.iter().map(|run| run.style.clone()));
+    let mut lines = Vec::new();
+    let mut scalar = 0usize;
+    let mut run_index = 0usize;
+    let mut numbered = 0usize;
+    for (paragraph_index, paragraph) in text.split('\n').enumerate() {
+        let list = rich
+            .paragraphs
+            .iter()
+            .find(|item| item.index as usize == paragraph_index)
+            .map(|item| item.list);
+        let prefix = match list {
+            Some(ListKind::Bulleted) => {
+                numbered = 0;
+                "\u{2022} ".to_owned()
+            }
+            Some(ListKind::Numbered) => {
+                numbered += 1;
+                format!("{numbered}. ")
+            }
+            None => {
+                numbered = 0;
+                String::new()
+            }
+        };
+        let mut glyphs: Vec<_> = prefix
+            .chars()
+            .map(|ch| RichGlyph {
+                ch,
+                style: 0,
+                width: style.size() * GLYPH_WIDTH,
+            })
+            .collect();
+        let indent = glyphs.len();
+        for ch in paragraph.chars() {
+            while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= scalar {
+                run_index += 1;
+            }
+            let run_style = if rich
+                .runs
+                .get(run_index)
+                .is_some_and(|run| run.start as usize <= scalar && scalar < run.end as usize)
+            {
+                run_index + 1
+            } else {
+                0
+            };
+            glyphs.push(RichGlyph {
+                ch,
+                style: run_style,
+                width: run_font_size(style.size(), &styles[run_style]) * GLYPH_WIDTH,
+            });
+            scalar += 1;
+        }
+        scalar += 1;
+        lines.extend(rich_lines(&glyphs, layout.frame.size.x, style.wrap, indent));
+    }
+    let max_size = styles
+        .iter()
+        .map(|run| run_font_size(style.size(), run))
+        .fold(style.size(), f32::max);
+    layout.line_height = max_size * LINE_HEIGHT;
+    let height = lines.len() as f32 * layout.line_height;
+    let top = match style.vertical_align {
+        LabelVAlign::Top => layout.frame.min.y,
+        LabelVAlign::Middle => layout.frame.center().y - height / 2.0,
+        LabelVAlign::Bottom => layout.frame.max().y - height,
+    };
+    layout.lines = lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, glyphs)| {
+            let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
+            let left = match style.align {
+                TextAlign::Left => layout.frame.min.x,
+                TextAlign::Center => layout.frame.center().x - width / 2.0,
+                TextAlign::Right => layout.frame.max().x - width,
+            };
+            let y = top + index as f32 * layout.line_height;
+            let mut runs: Vec<LabelRun> = Vec::new();
+            let mut x = left;
+            for glyph in &glyphs {
+                let run_style = &styles[glyph.style];
+                if let Some(previous) = runs.last_mut()
+                    && previous.style == *run_style
+                {
+                    previous.text.push(glyph.ch);
+                    previous.rect.size.x += glyph.width;
+                } else {
+                    runs.push(LabelRun {
+                        text: glyph.ch.to_string(),
+                        rect: Rect::from_min_size(
+                            Vec2::new(x, y),
+                            Vec2::new(glyph.width, layout.line_height),
+                        ),
+                        style: run_style.clone(),
+                    });
+                }
+                x += glyph.width;
+            }
+            LabelLine {
+                text: glyphs.iter().map(|glyph| glyph.ch).collect(),
+                rect: Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, layout.line_height)),
+                runs,
+            }
+        })
+        .collect();
+    layout.block = layout
+        .lines
+        .iter()
+        .map(|line| line.rect)
+        .reduce(union)
+        .unwrap_or(Rect::from_center_size(layout.frame.center(), Vec2::ZERO));
+    layout
 }
 
 #[cfg(test)]
@@ -514,5 +745,59 @@ mod tests {
         assert_eq!(placed.rotation, 270.0);
         assert_eq!(placed.frame.size, Vec2::new(36.0, 96.0));
         assert_eq!(placed.pivot, Vec2::new(50.0, 20.0));
+    }
+
+    #[test]
+    fn rich_layout_retains_runs_and_list_indentation_when_wrapped() {
+        use crate::{InlineParagraph, InlineText, ListKind};
+        use std::sync::Arc;
+
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(54.0, 100.0)),
+        );
+        object.set_label("A🙂 bold words\nlast").unwrap();
+        let mut rich = InlineText {
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        };
+        rich.update_range(object.label(), 3..7, |style| {
+            style.bold = Some(true);
+            style.font_size = Some(18.0);
+            style.baseline = Some(InlineBaseline::Superscript);
+        })
+        .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        let layout = super::layout(&object, object.rect, object.label()).unwrap();
+        assert!(layout.lines.len() >= 3);
+        assert!(layout.lines[0].text.starts_with("\u{2022} "));
+        assert!(layout.lines[1].text.starts_with("  "));
+        assert!(layout.lines.iter().flat_map(|line| &line.runs).any(|run| {
+            run.text.contains("bold")
+                && run.style.bold == Some(true)
+                && run.style.baseline == Some(InlineBaseline::Superscript)
+        }));
+        assert_eq!(layout.lines.last().unwrap().text, "last");
+    }
+
+    #[test]
+    fn empty_list_paragraph_has_a_visible_marker() {
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 40.0)),
+        );
+        object.label_rich_text = Some(std::sync::Arc::new(crate::InlineText {
+            paragraphs: vec![crate::InlineParagraph {
+                index: 0,
+                list: crate::ListKind::Bulleted,
+            }],
+            ..Default::default()
+        }));
+        let layout = super::layout(&object, object.rect, object.label()).unwrap();
+        assert_eq!(layout.lines[0].text, "• ");
+        assert!(layout.block.size.x > 0.0);
     }
 }

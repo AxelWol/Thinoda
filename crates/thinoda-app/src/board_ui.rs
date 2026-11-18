@@ -924,6 +924,15 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.label_edit_armed_hint =
         t("Clicking or tapping empty canvas also adds the armed shape.").into();
     labels.label_placeholder = t("Type a label").into();
+    labels.label_formatting = t("Label formatting (F6)").into();
+    labels.label_bold = t("Bold").into();
+    labels.label_italic = t("Italic").into();
+    labels.label_underline = t("Underline").into();
+    labels.label_strikethrough = t("Strikethrough").into();
+    labels.label_subscript = t("Subscript").into();
+    labels.label_superscript = t("Superscript").into();
+    labels.label_bulleted_list = t("Bulleted list").into();
+    labels.label_numbered_list = t("Numbered list").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
     )

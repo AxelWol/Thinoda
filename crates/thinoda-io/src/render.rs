@@ -1478,6 +1478,71 @@ fn styled_label_svg(
         TextAlign::Right => r.max().x,
     };
     for line in &layout.lines {
+        if !line.runs.is_empty() {
+            out.push_str(&format!(
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" xml:space=\"preserve\">",
+                x(line.rect),
+                line.rect.center().y,
+            ));
+            let mut previous_shift = 0.0;
+            for run in &line.runs {
+                let family = run
+                    .style
+                    .font_family
+                    .as_deref()
+                    .or(style.font_family.as_deref())
+                    .map_or_else(
+                        || "Segoe UI, Helvetica, Arial, sans-serif".to_owned(),
+                        |name| {
+                            format!(
+                                "'{}', Segoe UI, Helvetica, Arial, sans-serif",
+                                esc(&name.replace(['\'', '"'], ""))
+                            )
+                        },
+                    );
+                let bold = run.style.bold.unwrap_or(style.bold);
+                let italic = run.style.italic.unwrap_or(style.italic);
+                let decoration: Vec<_> = [
+                    run.style
+                        .underline
+                        .unwrap_or(style.underline)
+                        .then_some("underline"),
+                    run.style
+                        .strikethrough
+                        .unwrap_or(style.strikethrough)
+                        .then_some("line-through"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let decoration = if decoration.is_empty() {
+                    String::new()
+                } else {
+                    format!(" text-decoration=\"{}\"", decoration.join(" "))
+                };
+                let run_color = run.style.color.map_or(color, |value| {
+                    Color::rgba(
+                        value.r,
+                        value.g,
+                        value.b,
+                        (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                    )
+                });
+                let shift = thinoda_core::label_style::run_baseline_shift(layout.size, &run.style);
+                out.push_str(&format!(
+                    "<tspan dy=\"{:.2}\" font-family=\"{family}\" font-size=\"{:.2}\" font-weight=\"{}\" font-style=\"{}\"{decoration} fill=\"{}\">{}</tspan>",
+                    shift - previous_shift,
+                    thinoda_core::label_style::run_font_size(layout.size, &run.style),
+                    if bold { "bold" } else { "normal" },
+                    if italic { "italic" } else { "normal" },
+                    col(run_color),
+                    esc(&run.text),
+                ));
+                previous_shift = shift;
+            }
+            out.push_str("</text>");
+            continue;
+        }
         out.push_str(&format!(
             "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" font-family=\"{family}\" font-size=\"{:.2}\"{attributes} fill=\"{}\" xml:space=\"preserve\">{}</text>",
             x(line.rect),
