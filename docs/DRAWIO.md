@@ -273,7 +273,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Delete whole grapheme clusters with unmodified Backspace/Delete in label editors
   - [x] Preserve graphemes for eligible text/paste replacement and cut; snap an interior insertion caret to the cluster end
   - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
-  - [x] Expand partial grapheme selections for Ctrl, Alt and Command Backspace/Delete
+  - [x] Expand partial grapheme selections for eligible Ctrl, Alt and Command Backspace/Delete
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -316,6 +316,8 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 modified selection deletion (partial) | Eligible modified Backspace/Delete expand partial grapheme selections; shape and connector regressions cover deletion and undo. Collapsed modified deletion and platform input remain open. |
+| 2026-11-18 | D9 grapheme-safe line breaks and IME (partial) | Eligible Shift+Enter and initial IME input expand partial selections or snap insertion carets; synthetic tests cover typing styles, empty events and active preedit updates. Physical IME and mixed pointer input remain open. |
 | 2026-11-18 | D9 rich-label line breaks (partial) | Eligible Shift+Enter edits use the actual buffer range, preserving rich runs and list paragraph inheritance even for repeated newlines and selected replacements. |
 | 2026-11-18 | D9 rich-label cut (partial) | An eligible cut uses the actual selected buffer range to retain formatting on remaining shape and connector label text; egui still emits plain-text clipboard content. Real-host clipboard behavior and rich external clipboard interoperability remain open. |
 | 2026-11-18 | D9 rich-label keyboard batching (partial) | Pointer-free, non-IME keyboard events in a rich shape or connector label are processed in order, so eligible insertions and deletions retain their actual ranges even when they share a frame with a finish key. Pointer/IME batches and rich undo still require a complete ordered transaction model. |
@@ -932,11 +934,12 @@ Duck check: egui can reverse selection direction on an empty initial event;
 modified deletion, active IME surrounding ranges, mixed pointer/input batches
 and physical input remain separate policy and acceptance work.
 
-**D9 modified selection deletion (partial).** Ctrl, Alt and Command
-Backspace/Delete expand a partial selected grapheme before egui deletes it;
-local undo restores the original text and formatting. Collapsed word-deletion
-behavior is unchanged. Duck check: grapheme safety for collapsed modified
-deletion, other modifier combinations and platform input remains unverified.
+**D9 modified selection deletion (partial).** Eligible isolated Ctrl, Alt and
+Command Backspace/Delete expand a partial selected grapheme before egui deletes
+it; local undo restores the original text and formatting. Collapsed
+word-deletion behavior is unchanged. Duck check: grapheme safety for collapsed
+modified deletion, other modifier combinations, pointer batches and platform
+input remains unverified.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

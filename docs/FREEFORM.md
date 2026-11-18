@@ -2044,9 +2044,10 @@ partial selections to grapheme boundaries, with synthetic shape/connector
 coverage for combining marks, flags, ZWJ emoji and local undo. Isolated
 text/paste replacement, cut, Shift+Enter and the start of an IME composition
 expand partial grapheme selections; a caret inside a grapheme snaps to its end
-before insertion, preserving its pending typing style. Ctrl, Alt and Command
-Backspace/Delete also expand partial selections; collapsed modified deletion
-and active IME surrounding ranges need separate grapheme-policy work.
+before insertion, preserving its pending typing style. Eligible isolated Ctrl,
+Alt and Command Backspace/Delete also expand partial selections; collapsed
+modified deletion and active IME surrounding ranges need separate
+grapheme-policy work.
 Synthetic tests also cover empty initial IME events and active preedit updates
 that join adjacent graphemes. An empty initial event can reverse the selection
 direction in egui even though its selected range is preserved.
