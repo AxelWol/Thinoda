@@ -2,9 +2,11 @@ _Last updated: 2026-11-17 09:13:00 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
-Status: 🟡 in progress (D0 complete). Binding contracts that shipped code already
-follows (user decisions, ownership/passthrough, JSON stencil DSL, model, UX,
-security, guardrails, licensing) are in
+Status: 🟡 in progress. D0–D3 and D6–D8 are complete; D4 and D5 have
+deferred work, and D9 is partially complete. D10–D15 remain open. Binding
+contracts that shipped code already follows (user decisions,
+ownership/passthrough, JSON stencil DSL, model, UX, security, guardrails,
+licensing) are in
 [DRAWIO-ARCHITECTURE.md](DRAWIO-ARCHITECTURE.md). This document replaces the
 previous 15-phase plan and its progress log, retired on 2026-11-17; git history
 keeps them. Tracked in [PLAN](PLAN.md#drawio-diagram-support-2026-11-05) and
@@ -72,12 +74,12 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
-| Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 66 JSON definitions; others approximate as rectangles | D5 ✅ |
+| Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 66 JSON definitions; others approximate as rectangles | D5 (partial) |
 | Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
 | Shapes | 717 JS library shapes | 35 frequent corpus shapes defined (floorplan, mockup, BPMN, C4, lean mapping); icon-table shapes and the rest fall back to rectangles | D5 (partial) |
 | Shapes | Edit Shape (stencil XML), inline `stencil(...)` | Native import of inline stencils; no editor | D12 |
-| Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, a "draw.io" group of the 17 bundled families (opt-in under More shapes, searchable), imported packages, scratchpad, `.mxlibrary` import; no vendor libraries | D4 |
-| Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
+| Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, a "draw.io" group of the 17 bundled families (opt-in under More shapes, searchable), imported packages, scratchpad, `.mxlibrary` import; vendor families are not bundled | D4 |
+| Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | User-supplied stencil XML can be installed; optional pinned downloads are deferred | D4 |
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
 | Connectors | elbow (horizontal/vertical), entityRelation, sideToSide, topToBottom | Native (draw.io routers, first-waypoint hint) | D7 |
 | Connectors | segment, isometric, self-loop | Native (draw.io routers; loops automatic, custom loop direction/size warn) | D7 |
@@ -205,7 +207,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Split stencil files that exceed package limits (aws4) into several packages
 - [ ] Optional user-triggered download of a pinned family (desktop) with SHA-256 verification and display of the applicable terms — deferred (see the D4 critique)
 
-### D5 — JS-coded draw.io shapes as JSON definitions ✅
+### D5 — JS-coded draw.io shapes as JSON definitions
 
 - [x] Corpus-ranked definitions (34 new, 35 draw.io names): floorplan wall, wall corner, window, doors (left, right, double) and stairs; mockup margin rects, buttons, scroll bar, checkbox, curly brace and browser window; bpmn event, shape, gateway2 and task/task2 (outlines, symbols, markers, loops); c4 person and person2; stylised arrow, shaded pyramid, circular callout, bar callout; lean_mapping inventory, push and pull arrows, data box, supermarket, outside sources, manufacturing process (plain and shared), FIFO lane
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
@@ -216,7 +218,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Source ids, unknown style keys and attributes kept per object and sheet (architecture §3.1.1), with copy/delete semantics and diagnostics
 - [x] Round-trip tests for unknown data through native save, clipboard and draw.io export
 
-### D7 — Connectors, links and data
+### D7 — Connectors, links and data ✅
 
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [x] Line jumps (arc, gap, sharp, line)
@@ -229,7 +231,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
   - [x] Page links (`data:page/id,`) navigate to the matching sheet
 
-### D8 — Layers and tables
+### D8 — Layers and tables ✅
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
