@@ -591,6 +591,97 @@ fn rich_label_modified_delete_keeps_word_deletion_at_collapsed_caret() {
 }
 
 #[test]
+fn rich_label_modified_delete_at_interior_caret_keeps_graphemes_intact() {
+    for (key, expected) in [(Key::Backspace, "b"), (Key::Delete, "a")] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::CTRL, key);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            expected,
+            "{key:?}"
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!((range.primary.index.0, range.secondary.index.0), (2, 2));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_at_interior_caret_keeps_typing_style() {
+    for key in [Key::Backspace, Key::Delete] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::CTRL, key);
+        h.run_steps(2);
+        h.event(egui::Event::Text("x".into()));
+        h.run_steps(2);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, if key == Key::Backspace { "xb" } else { "ax" });
+        let rich = rich.unwrap();
+        let start = if key == Key::Backspace { 0 } else { 1 };
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (start, start + 1));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_snaps_interior_caret_in_both_directions() {
+    for (text, interior, start, end) in [
+        ("p a\u{301} z", 3, 2, 4),
+        ("a🇩🇪b", 2, 1, 3),
+        ("a👩\u{200d}💻b", 2, 1, 4),
+    ] {
+        for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::COMMAND] {
+            for key in [Key::Backspace, Key::Delete] {
+                let run = |cursor| {
+                    let mut h = harness(text);
+                    h.ctx
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    double_click_shape(&mut h);
+                    set_label_cursor(&mut h, cursor);
+                    h.key_press_modifiers(modifiers, key);
+                    h.run_steps(2);
+                    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                    h.state().view.board_label_draft().unwrap().2.to_owned()
+                };
+                let boundary = if key == Key::Backspace { end } else { start };
+                assert_eq!(
+                    run(interior),
+                    run(boundary),
+                    "{text:?} {modifiers:?} {key:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn connector_label_deletes_whole_graphemes_and_undoes() {
     let mut h = harness("Shape");
     h.ctx
