@@ -1963,7 +1963,9 @@ Implementation contract and remaining work:
    sticky/text-card titles.
    PowerPoint branch/zone slides now carry styled editable runs, but split
    lines and flatten list structure with a warning. Run-level card editing and
-   editable PowerPoint paragraph semantics remain open.
+   editable PowerPoint paragraph semantics remain open. A validated, locked-
+   aware title-and-inline mutation now supplies an atomic undoable commit for
+   a future editor; it does not yet expose editing controls or drafts.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,

@@ -899,6 +899,93 @@ mod tests {
     }
 
     #[test]
+    fn card_title_and_rich_text_commit_atomically_and_respect_locks() {
+        let mut sheet = crate::Sheet::new("Board", "Root");
+        let card = sheet
+            .add_card(
+                "Old",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Sticky, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let image = sheet
+            .add_card(
+                "Image",
+                crate::Vec2::new(200.0, 0.0),
+                crate::Card::new(crate::CardKind::Image, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let text_card = sheet
+            .add_card(
+                "Text",
+                crate::Vec2::new(400.0, 0.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let root = sheet.root;
+        let mut doc = crate::Document::new(crate::Workbook::new(sheet));
+        let original = doc.workbook().clone();
+        let mut rich = InlineText::default();
+        rich.update_range("A🙂\nB", 1..2, |style| {
+            style.bold = Some(true);
+            style.baseline = Some(InlineBaseline::Superscript);
+        })
+        .unwrap();
+        rich.paragraphs.push(InlineParagraph {
+            index: 1,
+            list: ListKind::Bulleted,
+        });
+
+        let mut candidate = original.active().clone();
+        assert!(
+            candidate
+                .set_card_title_with_rich_text(card, "A", rich.clone())
+                .is_err()
+        );
+        assert_eq!(&candidate, original.active());
+        assert!(
+            doc.set_card_title_with_rich_text(card, "A", rich.clone())
+                .is_err()
+        );
+        assert!(
+            doc.set_card_title_with_rich_text(image, "A🙂\nB", rich.clone())
+                .is_err()
+        );
+        assert!(
+            doc.set_card_title_with_rich_text(root, "A🙂\nB", rich.clone())
+                .is_err()
+        );
+        assert_eq!(doc.workbook(), &original);
+        assert!(!doc.undo());
+        doc.set_card_title_with_rich_text(card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert_eq!(doc.sheet().topic(card).unwrap().title, "A🙂\nB");
+        assert_eq!(doc.sheet().topic(card).unwrap().inline_text, rich);
+        doc.workbook().validate().unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &original);
+        assert!(doc.redo());
+        assert_eq!(doc.sheet().topic(card).unwrap().inline_text, rich);
+        doc.set_card_title_with_rich_text(card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &original);
+        assert!(doc.redo());
+
+        doc.set_board_members_locked(&[crate::board::BoardMember::Card(card)], true)
+            .unwrap();
+        let locked = doc.workbook().clone();
+        assert!(
+            doc.set_card_title_with_rich_text(card, "Changed", InlineText::default())
+                .is_err()
+        );
+        assert_eq!(doc.workbook(), &locked);
+        doc.set_card_title_with_rich_text(text_card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert_eq!(doc.sheet().topic(text_card).unwrap().inline_text, rich);
+    }
+
+    #[test]
     fn formatted_card_reparenting_conversion_and_mixed_paste_are_atomic() {
         let mut sheet = crate::Sheet::new("Board", "Root");
         let root = sheet.root;

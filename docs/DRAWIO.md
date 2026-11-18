@@ -253,6 +253,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
+  - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
   - [ ] Complete rich-card run editing and PowerPoint paragraph/list semantics; cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -294,6 +295,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
 | 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
 | 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides export styled runs and visible list markers in line shapes, including card rotation. List structure and whole-paragraph editability are not preserved, so preflight retains a localized flattening warning. Viewport slides remain rasterized. |
 | 2026-11-18 | D9 formatted-card visual export (partial) | SVG, PNG, JPEG and PDF use the same rich-card layout as the canvas, including inline styles and list markers, and no longer report inline-text loss. Rewrapping caused by coordinate rounding is bounded. PowerPoint line-run output is a separate partial slice. Corrected draw.io import to warn and remove unsupported card baseline overrides rather than producing an invalid native document. |
@@ -834,6 +836,13 @@ Duck check: a new field value changes validation compatibility even though the
 JSON schema already contained it, so native files, clipboard payloads, XMind
 snapshots and recovery use newer gates; downgraded payloads are rejected.
 Canvas run editing and real PowerPoint paragraph semantics remain open.
+
+**D9 card editing foundation (partial).** The sheet and document expose one
+validated mutation for title text and inline data, with locks and one undo
+step. Duck check: this is not an editor; selection, IME, draft recovery,
+concurrent edits and ordered operations must be handled before wiring it to
+the canvas. Plain title editing continues to reject destructive changes to
+formatted cards.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

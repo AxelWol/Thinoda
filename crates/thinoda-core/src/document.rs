@@ -1232,6 +1232,18 @@ impl Document {
         })
     }
 
+    /// Changes a card title and its inline formatting in one undoable edit.
+    pub fn set_card_title_with_rich_text(
+        &mut self,
+        id: TopicId,
+        title: &str,
+        rich: crate::rich_text::InlineText,
+    ) -> EditResult<()> {
+        self.edit_sheet("Edit card title", |sheet| {
+            sheet.set_card_title_with_rich_text(id, title, rich)
+        })
+    }
+
     /// Changes a canvas label and its inline formatting in one undoable edit.
     pub fn set_canvas_object_label_with_rich_text(
         &mut self,
