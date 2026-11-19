@@ -274,7 +274,7 @@ branch for per-phase critiques.
 | X2 | Done. Public projection 2 imports/exports style aliases and approximations, summary ranges, control points, numbering, custom widths, unbalanced branch sides, map background/tapering, and opaque topic attachments. Projection 1 still validates pre-X2 private snapshots; round-trip tests also remove Thinoda metadata to exercise public content. Attachments share bytes with image resources when deduplicated and are never decoded or opened. |
 | X3 | Done. Added generator marker groups and variants with localized names in all ten languages; `week-web` imports as `week-wed`; task pause has a distinct glyph in vector/SVG rendering. |
 | X4 | Done. The bounded XML importer reads multiple sheets, attached/detached/summary collections, positions, relationships, boundaries, numbering, topic widths, styles/theme defaults, notes and safe local image/attachment members. Recoverable losses are reported. |
-| X5 | Planned |
+| X5 | Done. The public projection is checked against an explicit XMind key allowlist; projection-2 fields round-trip with the Thinoda snapshot removed, while projection-1 snapshots remain covered by a checked-in fixture. |
 | X6 | Planned |
 | X7 | Planned |
 
@@ -324,3 +324,21 @@ branch for per-phase critiques.
   sheets, style/theme resolution, numbering, width, notes, images, attachments,
   boundaries, summaries, relationships and detached positions. XMind desktop
   itself has not been used to verify re-exported legacy packages.
+
+### 4.4 X5 review critique
+
+- **Snapshot trust:** A Thinoda snapshot is restored only when its saved public
+  projection and content digest match the package. Projection 1 remains
+  reproducible for pre-X2 files; a future projection must be versioned rather
+  than changing the old serializer in place.
+- **Interoperability boundary:** Tests now enforce the reviewed public key set
+  and reopen projection-2 output with the private snapshot removed. This catches
+  both accidental Thinoda-only public fields and regressions hidden by exact
+  same-app restoration.
+- **Deliberate privacy/loss:** Private-only model data remains in Thinoda's
+  snapshot and is not represented as invented XMind fields. Other applications
+  receive only the documented XMind projection; third-party edits invalidate
+  the private snapshot and are read from their public content.
+- **Evidence limit:** The checked-in projection-1 file, generated projection-2
+  maps, and supplied desktop packages are exercised locally. No claim is made
+  that a particular installed XMind release accepts every generated field.

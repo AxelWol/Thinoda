@@ -7111,6 +7111,140 @@ mod tests {
     }
 
     #[test]
+    fn public_projection_contains_only_reviewed_xmind_fields() {
+        fn assert_keys(value: &Value, allowed: &[&str]) {
+            let object = value.as_object().unwrap();
+            assert!(
+                object.keys().all(|key| allowed.contains(&key.as_str())),
+                "unexpected keys: {:?}",
+                object
+                    .keys()
+                    .filter(|key| !allowed.contains(&key.as_str()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        fn check_topic(topic: &Value) {
+            assert_keys(
+                topic,
+                &[
+                    "id",
+                    "class",
+                    "title",
+                    "children",
+                    "markers",
+                    "labels",
+                    "branch",
+                    "style",
+                    "image",
+                    "notes",
+                    "href",
+                    "structureClass",
+                    "customWidth",
+                    "numbering",
+                    "extensions",
+                    "boundaries",
+                    "summaries",
+                    "position",
+                ],
+            );
+            assert_keys(&topic["style"], &["properties"]);
+            for property in topic["style"]["properties"]
+                .as_object()
+                .into_iter()
+                .flat_map(|properties| properties.keys())
+            {
+                assert!(
+                    [
+                        "svg:fill",
+                        "fo:color",
+                        "fo:font-size",
+                        "fo:font-weight",
+                        "fo:font-style",
+                        "border-line-color",
+                        "border-line-width",
+                        "line-color",
+                        "line-width",
+                        "shape-class",
+                        "line-class",
+                        "fo:font-family",
+                        "fo:text-align",
+                        "fo:text-decoration",
+                    ]
+                    .contains(&property.as_str()),
+                    "unexpected style property {property}"
+                );
+            }
+            if let Some(markers) = topic["markers"].as_array() {
+                for marker in markers {
+                    assert_keys(marker, &["markerId"]);
+                }
+            }
+            if !topic["image"].is_null() {
+                assert_keys(&topic["image"], &["src", "width", "height", "align"]);
+            }
+            if !topic["position"].is_null() {
+                assert_keys(&topic["position"], &["x", "y"]);
+            }
+            for child_topics in topic["children"]
+                .as_object()
+                .into_iter()
+                .flat_map(|children| children.iter())
+            {
+                assert!(["attached", "detached", "summary"].contains(&child_topics.0.as_str()));
+                for child in child_topics.1.as_array().unwrap() {
+                    check_topic(child);
+                }
+            }
+            for boundary in topic["boundaries"].as_array().into_iter().flatten() {
+                assert_keys(boundary, &["id", "class", "range", "title", "style"]);
+                assert_keys(&boundary["style"], &["properties"]);
+            }
+            for summary in topic["summaries"].as_array().into_iter().flatten() {
+                assert_keys(summary, &["id", "class", "range", "topicId"]);
+            }
+        }
+
+        let entries = archive_entries(&export(&pre_x2_workbook()).unwrap());
+        let content: Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|(name, _)| name == "content.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        for sheet in content.as_array().unwrap() {
+            assert_keys(
+                sheet,
+                &[
+                    "id",
+                    "class",
+                    "title",
+                    "rootTopic",
+                    "relationships",
+                    "theme",
+                ],
+            );
+            check_topic(&sheet["rootTopic"]);
+            for relationship in sheet["relationships"].as_array().unwrap() {
+                assert_keys(
+                    relationship,
+                    &[
+                        "id",
+                        "class",
+                        "end1Id",
+                        "end2Id",
+                        "title",
+                        "style",
+                        "controlPoints",
+                    ],
+                );
+                assert_keys(&relationship["style"], &["properties"]);
+            }
+        }
+    }
+
+    #[test]
     fn projection_2_fields_survive_without_the_private_snapshot() {
         let book = pre_x2_workbook();
         let entries = archive_entries(&export(&book).unwrap());
