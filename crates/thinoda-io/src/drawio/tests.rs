@@ -10769,8 +10769,8 @@ fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     assert!(!out.contains("fillColor=#ff0000"), "{out}");
     assert!(out.contains("dashed=1;dashPattern=1 4;"), "{out}");
     assert!(!out.contains("id=\"gone\""), "{out}");
-    // `t1` is reserved for topics, so the shape falls back to its own id.
-    assert!(!out.contains("id=\"t1\""), "{out}");
+    // The hidden root no longer steals the shape's source id.
+    assert!(out.contains("id=\"t1\""), "{out}");
     let masked = book.masked_copy();
     assert!(!masked.has_drawio_passthrough());
 }
@@ -10907,6 +10907,106 @@ fn drawio_generated_map_cells_avoid_source_ids() {
     }
     let restored = load(&xml);
     assert!(connectors(restored.workbook.active()).len() >= layout.connectors.len());
+}
+
+#[test]
+fn drawio_generated_topic_ids_avoid_sources_and_keep_connector_targets() {
+    let mut sheet = Sheet::new("Page", "Root");
+    let root = sheet.root;
+    let child = sheet.add_child(root, None, "Child");
+    let original_root = format!("t{}", root.0);
+    let original_child = format!("t{}", child.0);
+    let object = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 400.0, 80.0, 60.0),
+            "Source object",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(original_root.clone()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![original_child.clone()],
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(xml.contains(&format!(r#"id="{original_root}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{original_root}-1""#)), "{xml}");
+    assert!(!xml.contains(&format!(r#"id="{original_child}""#)), "{xml}");
+    assert!(
+        xml.contains(&format!(r#"id="{original_child}-1""#)),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(r#"source="{original_root}-1""#)),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(r#"target="{original_child}-1""#)),
+        "{xml}"
+    );
+    let restored = load(&xml);
+    assert_eq!(connectors(restored.workbook.active()).len(), 1);
+}
+
+#[test]
+fn drawio_refuses_sankey_source_id_collisions() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let node = *thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .next()
+        .unwrap();
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![format!("t{}", node.0)],
+        ..Default::default()
+    }));
+    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
+
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let edge = book
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()))
+        .unwrap()
+        .id;
+    let id = format!("o{}", edge.0);
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![id.clone()],
+        ..Default::default()
+    }));
+    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
+    book.active_mut().canvas.object_mut(edge).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(id),
+        ..Default::default()
+    }));
+    let bytes = export(&book).unwrap();
+    assert!(import(&bytes).unwrap().workbook.has_sankey());
+
+    let duplicate = book
+        .active_mut()
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(800.0, 800.0, 80.0, 60.0),
+            "Conflicting source",
+        ))
+        .unwrap();
+    book.active_mut()
+        .canvas
+        .object_mut(duplicate)
+        .unwrap()
+        .drawio = Some(Arc::new(Passthrough {
+        source_id: Some(format!("o{}", edge.0)),
+        ..Default::default()
+    }));
+    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
 }
 
 #[test]

@@ -6370,6 +6370,7 @@ struct PageWriter<'a> {
     /// Generated draw.io cell IDs for zones and groups.
     zone_cells: HashMap<ZoneId, String>,
     group_cells: HashMap<CanvasGroupId, String>,
+    topic_cells: HashMap<TopicId, String>,
     /// Generated IDs for mind-map boundaries, links, relationships and summaries.
     map_cells: HashMap<String, String>,
     /// Row cell ids and absolute row origins of each written table.
@@ -6550,11 +6551,11 @@ impl<'a> PageWriter<'a> {
             layer_cells: HashMap::new(),
             zone_cells: HashMap::new(),
             group_cells: HashMap::new(),
+            topic_cells: HashMap::new(),
             map_cells: HashMap::new(),
             table_rows: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
-        reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
         let mut unavailable: HashSet<String> = sheet
             .drawio
             .iter()
@@ -6574,6 +6575,55 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .filter_map(|layer| layer.source_id.clone()),
         );
+        for id in &writer.flows.nodes {
+            let cell = format!("t{}", id.0);
+            if unavailable.contains(&cell) {
+                return Err(invalid(
+                    "Cannot export Sankey: a node cell ID conflicts with retained draw.io source data",
+                ));
+            }
+            reserved.insert(cell);
+        }
+        let mut object_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+        {
+            *object_sources.entry(source).or_default() += 1;
+        }
+        let layer_sources: HashSet<&str> = sheet
+            .canvas
+            .layers
+            .iter()
+            .filter_map(|layer| layer.source_id.as_deref())
+            .collect();
+        let tombstones: HashSet<&str> = sheet
+            .drawio
+            .iter()
+            .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+            .collect();
+        for object in &sheet.canvas.objects {
+            if !matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()) {
+                continue;
+            }
+            let cell = format!("o{}", object.id.0);
+            let own_source = object
+                .drawio
+                .as_ref()
+                .and_then(|passthrough| passthrough.source_id.as_deref())
+                == Some(cell.as_str());
+            let other_owner = layer_sources.contains(cell.as_str())
+                || object_sources.get(cell.as_str()).copied().unwrap_or(0)
+                    > usize::from(own_source);
+            let remembered = tombstones.contains(cell.as_str());
+            if other_owner || (remembered && !own_source) {
+                return Err(invalid(
+                    "Cannot export Sankey: an edge cell ID conflicts with retained draw.io source data",
+                ));
+            }
+        }
         let mut generated_id = |base: String| {
             let mut id = base.clone();
             let mut suffix = 1;
@@ -6584,6 +6634,15 @@ impl<'a> PageWriter<'a> {
             reserved.insert(id.clone());
             id
         };
+        for id in sheet.topics.keys() {
+            let base = format!("t{}", id.0);
+            let cell = if writer.flows.nodes.contains(id) {
+                base
+            } else {
+                generated_id(base)
+            };
+            writer.topic_cells.insert(*id, cell);
+        }
         let map_ids = writer
             .layout
             .boundaries
@@ -6971,7 +7030,7 @@ impl<'a> PageWriter<'a> {
                 None => Terminal::Point(Vec2::ZERO),
             },
             Endpoint::Topic(id) if self.topics.contains(&id) => {
-                Terminal::Cell(format!("t{}", id.0))
+                Terminal::Cell(self.topic_cells[&id].clone())
             }
             Endpoint::Topic(id) => Terminal::Point(
                 self.layout
@@ -7675,8 +7734,9 @@ impl<'a> PageWriter<'a> {
             Band::Above,
         );
         let link = topic.hyperlink.as_deref().unwrap_or_default();
+        let cell = self.topic_cells[&id].clone();
         self.vertex_with_alternate_bounds(
-            &format!("t{}", id.0),
+            &cell,
             &topic.title,
             &style,
             &parent,
@@ -7761,8 +7821,9 @@ impl<'a> PageWriter<'a> {
                     .clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH))
             ));
             let link = topic.hyperlink.clone().unwrap_or_default();
+            let cell = self.topic_cells[&id].clone();
             self.vertex(
-                &format!("t{}", id.0),
+                &cell,
                 &topic.title,
                 &style,
                 "1",
@@ -7814,7 +7875,7 @@ impl<'a> PageWriter<'a> {
 
     fn topic_terminal(&self, id: TopicId, fallback: Vec2) -> Terminal {
         if self.topics.contains(&id) {
-            Terminal::Cell(format!("t{}", id.0))
+            Terminal::Cell(self.topic_cells[&id].clone())
         } else {
             Terminal::Point(fallback)
         }

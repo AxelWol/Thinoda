@@ -305,6 +305,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
+- [x] Generate non-Sankey topic IDs without source collisions; refuse conflicting fixed Sankey node and edge IDs
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -340,6 +341,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 generated topic IDs | Non-Sankey topics avoid retained and live source IDs while maintaining connector references; conflicting fixed Sankey IDs refuse export. |
 | 2026-11-19 | D10 generated map-decoration IDs | Boundary, branch-edge, relationship and summary cells avoid retained tombstones and live source IDs. |
 | 2026-11-19 | D10 generated zone/group IDs | Zone and group IDs avoid retained tombstones and live source IDs, with remapped parent links preserving nested geometry. |
 | 2026-11-19 | D10 layer tombstones | Imported named-layer source IDs survive as bounded page tombstones, including native save/reopen; dropped IDs warn. |
@@ -1174,8 +1176,8 @@ exhaustive semantic audit. Complete layer and source fidelity remain open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot
-silently inherit a deleted imported object's ID. Duck check: fixed topic and
-Sankey IDs still need a complete ownership and collision policy;
+silently inherit a deleted imported object's ID. Duck check: fixed Sankey IDs
+refuse collisions rather than being remapped;
 topic and zone tombstones are not yet retained. This is not sufficient
 to enable in-place save.
 
@@ -1183,20 +1185,27 @@ to enable in-place save.
 participate in the bounded page tombstone set, which survives native save and
 undo snapshots. A budget omission warns instead of claiming retention. Duck
 check: tombstones do not survive a draw.io export as deleted cells, and fixed
-generated IDs can still collide; neither source overwrite nor complete ID
+Sankey IDs cannot yet be remapped; neither source overwrite nor complete ID
 fidelity is enabled.
 
 **D10 zone/group ID allocation (partial).** Generated zone and group IDs avoid
 retained tombstones and live source IDs, including when a page budget dropped
 the corresponding tombstone. Parent references use the allocated IDs and nested
 geometry remains relative to the correct parent. Duck check: source IDs for
-zones and groups themselves are still regenerated, and other fixed generated
-IDs, including Sankey IDs, need their own collision policy.
+zones and groups themselves are still regenerated; fixed Sankey IDs refuse
+conflicts rather than being remapped.
 
 **D10 map-decoration IDs (partial).** Generated boundaries, branch edges,
 relationships and summaries now avoid retained tombstones and live source IDs.
-Duck check: their own source IDs are not retained, and topic and Sankey cell
-IDs still require a collision policy before source overwrite is safe.
+Duck check: their own source IDs are not retained; fixed Sankey IDs refuse
+conflicts rather than being remapped.
+
+**D10 topic ID allocation (partial).** Generated non-Sankey topic IDs avoid
+retained and live source IDs, and connector terminals use the allocated IDs.
+Fixed Sankey node and edge collisions produce an explicit export error rather
+than retargeting another cell. Duck check: Sankey collisions still require a
+non-destructive remapping strategy; imported topic and zone source IDs are not
+retained, so in-place save remains disabled.
 
 ## 5. Rubber-duck findings
 
