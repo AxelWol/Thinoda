@@ -1611,6 +1611,7 @@ struct Cell {
     source: Option<String>,
     target: Option<String>,
     visible: bool,
+    has_geometry: bool,
     geometry: Geometry,
     link: Option<String>,
     tooltip: Option<String>,
@@ -1853,11 +1854,29 @@ fn read_cell(
         source: owned(inner.attr("source")),
         target: owned(inner.attr("target")),
         visible: inner.attr("visible") != Some("0"),
+        has_geometry: inner.child("mxGeometry").is_some(),
         geometry: read_geometry(inner.child("mxGeometry"), warnings),
         link: owned(user.and_then(|u| u.attr("link"))),
         tooltip: owned(user.and_then(|u| u.attr("tooltip"))),
         attributes: Vec::new(),
     }
+}
+
+fn structural_cell_has_unrepresented_data(cell: &Cell, layer: bool) -> bool {
+    cell.has_geometry
+        || cell.collapsed
+        || cell.source.is_some()
+        || cell.target.is_some()
+        || cell.link.is_some()
+        || cell.tooltip.is_some()
+        || !cell.attributes.is_empty()
+        || !cell.style.tokens.is_empty()
+        || cell.style.suppress_defaults
+        || cell
+            .style
+            .map
+            .iter()
+            .any(|(key, value)| !layer || key != "locked" || !matches!(value.as_str(), "0" | "1"))
 }
 
 /// Moves link, tags, placeholders and custom properties of a `UserObject` into
@@ -3271,6 +3290,13 @@ impl<'a> PageImport<'a> {
                 self.visit(root, Context::default(), 0);
                 continue;
             }
+            if self.cells[root].id != "0"
+                || !self.cells[root].value.is_empty()
+                || !self.cells[root].visible
+                || structural_cell_has_unrepresented_data(&self.cells[root], false)
+            {
+                self.warn(ImportWarning::Other);
+            }
             self.visited[root] = true;
             for (position, layer) in self.children[root].clone().into_iter().enumerate() {
                 self.visited[layer] = true;
@@ -3315,6 +3341,9 @@ impl<'a> PageImport<'a> {
     /// The board layer for a draw.io layer cell. An unnamed (or "Background"),
     /// visible and unlocked first layer is the base layer.
     fn board_layer(&mut self, index: usize, position: usize) -> Option<thinoda_core::BoardLayerId> {
+        if structural_cell_has_unrepresented_data(&self.cells[index], true) {
+            self.warn(ImportWarning::Other);
+        }
         let cell = &self.cells[index];
         let locked = cell.style.flag("locked");
         let value: String = cell
@@ -3325,8 +3354,15 @@ impl<'a> PageImport<'a> {
             .take(thinoda_core::board_layers::MAX_BOARD_LAYER_NAME_CHARS)
             .collect();
         if position == 0 && cell.visible && !locked && (value.is_empty() || value == "Background") {
+            if cell.id != "1" || !cell.value.is_empty() {
+                self.warn(ImportWarning::Other);
+            }
             return None;
         }
+        if cell.value != value || value.trim() != value {
+            self.warn(ImportWarning::Other);
+        }
+        let cell = &self.cells[index];
         if self.sheet.canvas.layers.len() >= thinoda_core::board_layers::MAX_BOARD_LAYERS {
             self.warn(ImportWarning::DrawioLayerContentFlattened);
             return None;
@@ -3350,6 +3386,9 @@ impl<'a> PageImport<'a> {
                 .any(|layer| layer.source_id.as_deref() == Some(cell.id.as_str())))
         .then(|| cell.id.clone());
         let visible = cell.visible;
+        if source_id.is_none() {
+            self.warn(ImportWarning::Other);
+        }
         let layer = self
             .sheet
             .canvas

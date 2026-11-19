@@ -300,6 +300,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
 - [x] Report ignored cell and geometry attributes, children, duplicate geometry parts and unsupported flags rather than silently discarding them
 - [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
+- [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
@@ -336,6 +337,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 structural-cell diagnostics | Unrepresented root/layer geometry, data and styles, regenerated structural IDs and normalized layer names now produce import warnings; supported layer visibility and locking remain warning-free. |
 | 2026-11-19 | D10 generated-cell ID reservation | Deleted imported object IDs are reserved against newly generated connector-label and table-cell IDs. |
 | 2026-11-19 | D10 nonstandard cell roots | Parentless vertices and edges are imported with a warning instead of being silently discarded; missing cell IDs also warn before a temporary ID is assigned. |
 | 2026-11-19 | D10 editable-image document metadata | Editable draw.io SVG and PNG retain validated workbook attributes as well as the selected page; masked copies omit those attributes. |
@@ -1156,6 +1158,12 @@ enter the ordinary object importer and produce a loss warning; missing cell
 IDs also warn. Duck check: this repairs a silent omission, not the source
 hierarchy; malformed or unsupported structural cells and their metadata still
 need complete representation and diagnostics before in-place save.
+
+**D10 structural-cell diagnostics (partial).** Root and layer properties that
+the current model discards, including geometry, custom styles and regenerated
+IDs, now produce import warnings; normalized names are disclosed as well.
+Duck check: these warnings do not preserve structural data and are not an
+exhaustive semantic audit. Layer tombstones and source fidelity remain open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object tombstones, so these new cells cannot

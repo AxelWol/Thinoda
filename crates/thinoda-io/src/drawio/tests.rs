@@ -10713,6 +10713,38 @@ fn drawio_import_reports_missing_cell_ids() {
 }
 
 #[test]
+fn drawio_import_reports_unrepresented_root_and_layer_data() {
+    let root = r#"<mxCell id="0"/><mxCell id="1" parent="0"/>"#;
+    let wrap = |cells: &str| {
+        format!(
+            "<mxfile><diagram><mxGraphModel><root>{cells}</root></mxGraphModel></diagram></mxfile>"
+        )
+    };
+    assert!(load(&wrap(root)).warnings.is_empty());
+    let cases = [
+        root.replace(r#"id="0"/>"#, r#"id="0" value="root data"/>"#),
+        root.replace(r#"id="0"/>"#, r#"id="0" visible="0"/>"#),
+        root.replace(
+            r#"id="0"/>"#,
+            r#"id="0"><mxGeometry as="geometry"/></mxCell>"#,
+        ),
+        root.replace(r#"id="1""#, r#"id="base""#),
+        root.replace(r#"id="1""#, r#"id="1" style="custom=1;""#),
+        root.replace(r#"id="1""#, r#"id="1" value="Background""#),
+        format!(r#"{root}<mxCell id="l" value="  Layer  " parent="0"/>"#),
+        format!(r#"{root}<mxCell id="l" value="Layer" style="custom=1;" parent="0"/>"#),
+        r#"<mxCell id="0"/><mxCell id="1" value="Named" parent="0"/>"#.into(),
+    ];
+    for cells in cases {
+        let report = load(&wrap(&cells));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{cells}");
+    }
+    let supported =
+        format!(r#"{root}<mxCell id="l" value="Locked" style="locked=1;" parent="0"/>"#);
+    assert!(load(&wrap(&supported)).warnings.is_empty());
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
