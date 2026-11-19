@@ -3544,6 +3544,32 @@ fn formatted_card_toolbar_applies_inline_run_and_list_formats_to_selection() {
 }
 
 #[test]
+fn formatted_card_toolbar_sets_typing_style_at_caret() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(3);
+    assert!(!MapCanvas::title_has_selection(&h.ctx));
+    scroll_and_click(&mut h, Role::Button, "Inline bold");
+    h.event(egui::Event::Text("!".into()));
+    run_input_hook_steps(&mut h, 3);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.view.editing_text(), Some("Card title!"));
+    let draft = doc.view.title_rich_formatting_draft().unwrap();
+    assert_eq!(draft.runs.len(), 1);
+    assert_eq!((draft.runs[0].start, draft.runs[0].end), (10, 11));
+    assert_eq!(draft.runs[0].style.bold, Some(true));
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let topic = h.state().doc().unwrap().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.inline_text, draft);
+}
+
+#[test]
 fn last_title_keystroke_and_window_close_in_one_frame_preserve_the_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fast-window-close.thinoda");

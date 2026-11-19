@@ -21,7 +21,7 @@ pub(in crate::view) enum Format {
 }
 
 impl Format {
-    pub(super) fn list(self) -> Option<ListKind> {
+    pub(in crate::view) fn list(self) -> Option<ListKind> {
         match self {
             Self::Bulleted => Some(ListKind::Bulleted),
             Self::Numbered => Some(ListKind::Numbered),
@@ -353,7 +353,7 @@ pub(super) fn reconcile_tracked_edit(
     Ok(Some((updated, next_typing)))
 }
 
-pub(super) fn style_at_caret(rich: &InlineText, position: usize) -> InlineTextStyle {
+pub(in crate::view) fn style_at_caret(rich: &InlineText, position: usize) -> InlineTextStyle {
     style_at(rich, position.saturating_sub(1))
 }
 
@@ -394,11 +394,19 @@ pub(super) fn selection_value<T: PartialEq>(
     (cursor >= range.end || inherited == first).then_some(first)
 }
 
-pub(super) fn active_at_caret(style: &InlineTextStyle, base: &LabelStyle, format: Format) -> bool {
+pub(in crate::view) fn active_at_caret(
+    style: &InlineTextStyle,
+    base: &LabelStyle,
+    format: Format,
+) -> bool {
     format.enabled(style, base)
 }
 
-pub(super) fn toggle_at_caret(style: &mut InlineTextStyle, base: &LabelStyle, format: Format) {
+pub(in crate::view) fn toggle_at_caret(
+    style: &mut InlineTextStyle,
+    base: &LabelStyle,
+    format: Format,
+) {
     let enabled = !format.enabled(style, base);
     format.set(style, base, enabled);
 }
@@ -447,7 +455,7 @@ pub(super) fn grapheme_deletion_range(
     grapheme_range(text, range)
 }
 
-pub(super) fn grapheme_replacement_range(
+pub(in crate::view) fn grapheme_replacement_range(
     text: &str,
     selection: Range<usize>,
     snap_caret: bool,

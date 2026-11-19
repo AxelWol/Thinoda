@@ -3631,7 +3631,6 @@ impl ThinodaApp {
         }
         let doc = self.doc().unwrap();
         let title_active = doc.view.editing_topic() == Some(target.topic);
-        let title_selection = title_active && MapCanvas::title_has_selection(&ctx);
         let inline_formats = [
             ("Inline bold", icons::BOLD, CardTitleFormat::Bold),
             ("Inline italic", icons::ITALIC, CardTitleFormat::Italic),
@@ -3650,7 +3649,7 @@ impl ThinodaApp {
             ("Inline bulleted list", "•", CardTitleFormat::Bulleted),
             ("Inline numbered list", "1.", CardTitleFormat::Numbered),
         ];
-        let inline_format_active = if title_selection {
+        let inline_format_active = if title_active {
             inline_formats.map(|(_, _, format)| {
                 MapCanvas::title_format_is_active(&ctx, &doc.doc, &doc.view, format)
             })
@@ -3842,7 +3841,7 @@ impl ThinodaApp {
                                                     RichText::new(t("Inline formatting")).small(),
                                                 );
                                                 ui.add_enabled_ui(
-                                                    title_selection && !ime_active,
+                                                    title_active && !ime_active,
                                                     |ui| {
                                                         for (index, (label, icon, format)) in
                                                             inline_formats.into_iter().enumerate()

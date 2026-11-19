@@ -285,6 +285,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Retain a dirty formatted card-title draft when its source disappears; allow cancellation or restoration and reject recovery against the missing source
   - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
   - [x] Add selection toolbar controls for strikethrough, subscript, superscript, bullets and numbering on card titles, with grapheme-safe ranges and local undo
+  - [x] Apply card-title inline formatting at the caret for subsequent typing, including toolbar and keyboard shortcuts, ordered IME input, cursor changes and accessibility whole-value replacement
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -352,6 +353,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D9 card typing styles | Card-title inline toolbar and shortcuts now set caret typing styles; cursor changes and whole-value accessibility replacement clear them. |
 | 2026-11-19 | D10 default zone folding | draw.io swimlanes are foldable by default; their conversion to nonfoldable frames now warns. |
 | 2026-11-19 | D10 default zone header | The draw.io default header size of 40 is disclosed when conversion uses Thinoda's 24-unit frame header. |
 | 2026-11-19 | D10 zone style diagnostics | Explicit unsupported zone styling requires import consent instead of being silently dropped. |
@@ -1302,6 +1304,13 @@ a foldable container unless `collapsible=0`; Thinoda zones are not foldable.
 That lost interaction now triggers consent even when the source omits the
 style. Duck check: this diagnoses rather than implements folding, and does not
 cover every implicit style or interaction.
+
+**D9 card typing styles (partial).** Inline card-title controls and keyboard
+shortcuts can set a typing style at the caret; input, IME composition, grapheme
+joins and draft/document undo retain the appropriate runs. Moving the caret or
+an accessibility whole-value replacement clears the pending style. Duck check:
+the existing plain-editor history guard still requires reopening after untracked
+plain edits, and font family, size and color run controls for cards remain open.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene
