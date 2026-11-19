@@ -1916,13 +1916,14 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   selection deletion/insertion is a single replacement so it inherits the
   selected style; committed continuations rebase formatting and check the
   document owner. Snapshot round-trip and foreign-owner/stale-format tests
-  cover recovery. Keyboard batches and title-targeted accessible text-value
-  actions now process each event in order, including undo/redo and a following
-  commit key; separate text events create separate local undo steps. Batches
-  with pointer, other accessibility or IME input still need ordering parity
-  against the shape-label editor. Single-event typing, deletion, cut, accessible selected-text
+  cover recovery. Pointer-free keyboard, IME and title-targeted accessible
+  text-value actions process each event in order. IME candidate keys stay in
+  composition and undo/redo during composition is refused; separate ordinary
+  text events create separate local undo steps. Batches with pointer or other
+  accessibility input still need ordering parity against the shape-label
+  editor. Single-event typing, deletion, cut, accessible selected-text
   replacement and initial IME input share its grapheme-boundary rules;
-  mixed-input and other accessibility cases remain open.
+  mixed-pointer and other accessibility cases remain open.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

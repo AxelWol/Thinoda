@@ -3188,11 +3188,10 @@ fn show_editor(
     out: &mut CanvasOutput,
 ) {
     let edit_id = MapCanvas::title_editor_id();
-    let split_keyboard = !out.minimap_blocks_keyboard
+    let split_input = !out.minimap_blocks_keyboard
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.editing.as_ref().is_some_and(|edit| {
-            !edit.ime_composing
-                && (edit.rich_history.is_some() || !edit.original_inline_text.is_empty())
+            edit.rich_history.is_some() || !edit.original_inline_text.is_empty()
         })
         && ui.input(|input| {
             input.focused
@@ -3206,14 +3205,22 @@ fn show_editor(
                     .count()
                     > 1
                 && !input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::PointerButton { .. } | egui::Event::Ime(_)
-                    ) || (matches!(event, egui::Event::AccessKitActionRequest(_))
-                        && card_title_accessible_value(event, edit_id).is_none())
+                    matches!(event, egui::Event::PointerButton { .. })
+                        || (matches!(event, egui::Event::AccessKitActionRequest(_))
+                            && card_title_accessible_value(event, edit_id).is_none())
                 })
         });
-    if split_keyboard {
+    if split_input {
+        if view.editing.as_ref().is_some_and(|edit| edit.ime_composing)
+            || ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Ime(_)))
+            })
+        {
+            consume_ime_candidate_keys(ui.ctx(), edit_id);
+        }
         let (events, pointer) = ui.input_mut(|input| {
             (
                 std::mem::take(&mut input.events),
@@ -3598,7 +3605,7 @@ fn show_editor_pass(
             .map(|state| (edit.text.clone(), state.cursor.char_range()));
     }
     let mut history_cursor = None;
-    if edit.rich_history.is_some() && !ime_active && ui.memory(|memory| memory.has_focus(edit_id)) {
+    if edit.rich_history.is_some() && ui.memory(|memory| memory.has_focus(edit_id)) {
         let redo = ui.input_mut(|input| {
             input.consume_key(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z)
                 || input.consume_key(Modifiers::COMMAND, Key::Y)
@@ -3607,7 +3614,13 @@ fn show_editor_pass(
         if (undo || redo)
             && let Some(history) = &mut edit.rich_history
         {
-            let result = if undo { history.undo() } else { history.redo() };
+            let result = if ime_active || edit.rich_history_composing {
+                Err("cannot undo or redo during rich-text composition".into())
+            } else if undo {
+                history.undo()
+            } else {
+                history.redo()
+            };
             match result {
                 Ok(true) => {
                     edit.text = history.text().to_owned();
@@ -4513,6 +4526,60 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .rich_history_composing
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abx"));
+        h.input_mut().events.extend([
+            egui::Event::Text("q".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "n".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "ni".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Commit("y".into())),
+        ]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abxqy"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abxq"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abx"));
+        h.input_mut().events.extend([
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "n".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Key {
+                key: Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            },
+            egui::Event::Ime(egui::ImeEvent::Commit("y".into())),
+        ]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abxy"));
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "ab");
+        assert!(
+            h.state_mut()
+                .view
+                .take_title_error()
+                .unwrap()
+                .contains("composition")
         );
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         h.run_steps(1);
