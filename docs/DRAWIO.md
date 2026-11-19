@@ -302,6 +302,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
+- [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -337,6 +338,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 layer tombstones | Imported named-layer source IDs survive as bounded page tombstones, including native save/reopen; dropped IDs warn. |
 | 2026-11-19 | D10 structural-cell diagnostics | Unrepresented root/layer geometry, data and styles, regenerated structural IDs and normalized layer names now produce import warnings; supported layer visibility and locking remain warning-free. |
 | 2026-11-19 | D10 generated-cell ID reservation | Deleted imported object IDs are reserved against newly generated connector-label and table-cell IDs. |
 | 2026-11-19 | D10 nonstandard cell roots | Parentless vertices and edges are imported with a warning instead of being silently discarded; missing cell IDs also warn before a temporary ID is assigned. |
@@ -510,13 +512,14 @@ that would be safe to keep are dropped. Keys that depend on an owned key
 (`dashPattern` on `dashed`, `gradientDirection` on `gradientColor`, ...) are
 dropped when the owner is missing or off, so a cleared gradient never comes
 back. Only canvas objects carry passthrough; cards, topics and zones are
-regenerated, so their ids and unknown keys are lost, as before. Tombstones
-cover only cells that became objects, because topic and zone ids change on
-every import. Export gives a source id priority over a generated `o{id}`
+regenerated, so their ids and unknown keys are lost, as before. At D6,
+tombstones covered only cells that became objects; D10 later added named-layer
+IDs, while topic and zone ids still change on every import. Export gives a
+source id priority over a generated `o{id}`
 (except for Sankey connectors, whose extension addresses `o{id}`), so a
 renumbered re-import is idempotent. Unmappable cells are still dropped with a
-warning; storing them as opaque objects belongs to D10, as do workbook-level
-`mxfile` metadata and cut-once provenance. Named style tokens are not kept.
+warning; storing them as opaque objects and cut-once provenance belong to D10.
+D10 later added bounded workbook-level `mxfile` attributes. Named style tokens are not kept.
 Because almost every imported cell has an id, a file saved after a draw.io
 import needs native v37, so older Thinoda versions cannot open it. A shape
 `link` is preserved but still warns until D7 makes links editable.
@@ -1163,14 +1166,21 @@ need complete representation and diagnostics before in-place save.
 the current model discards, including geometry, custom styles and regenerated
 IDs, now produce import warnings; normalized names are disclosed as well.
 Duck check: these warnings do not preserve structural data and are not an
-exhaustive semantic audit. Layer tombstones and source fidelity remain open.
+exhaustive semantic audit. Complete layer and source fidelity remain open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
-and table IDs now avoid retained object tombstones, so these new cells cannot
+and table IDs now avoid retained object and layer tombstones, so these new cells cannot
 silently inherit a deleted imported object's ID. Duck check: fixed topic, zone,
 group and Sankey IDs still need a complete ownership and collision policy;
-layer, topic and zone tombstones are not yet retained. This is not sufficient
+topic and zone tombstones are not yet retained. This is not sufficient
 to enable in-place save.
+
+**D10 layer tombstones (partial).** Named layers with retained source IDs now
+participate in the bounded page tombstone set, which survives native save and
+undo snapshots. A budget omission warns instead of claiming retention. Duck
+check: tombstones do not survive a draw.io export as deleted cells, and fixed
+generated IDs can still collide; neither source overwrite nor complete ID
+fidelity is enabled.
 
 ## 5. Rubber-duck findings
 

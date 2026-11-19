@@ -11375,6 +11375,70 @@ fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip()
 }
 
 #[test]
+fn drawio_deleted_layer_ids_are_not_reused_by_new_layers() {
+    let document = |id: &str| {
+        format!(
+            r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="{id}" value="Old" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+        )
+    };
+    let mut probe = load(&document("old")).workbook;
+    let old = probe.active().canvas.layers[0].id;
+    probe.active_mut().remove_board_layer(old).unwrap();
+    let new = probe.active_mut().add_board_layer("New").unwrap();
+    let source_id = format!("l{}", new.0);
+
+    let report = load(&document(&source_id));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(
+        report
+            .workbook
+            .active()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .contains(&source_id)
+    );
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut book = crate::formats::native_import(&native).unwrap();
+    let old = book.active().canvas.layers[0].id;
+    book.active_mut().remove_board_layer(old).unwrap();
+    let new = book.active_mut().add_board_layer("New").unwrap();
+    assert_eq!(format!("l{}", new.0), source_id);
+
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source_id}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{source_id}-1""#)), "{xml}");
+    let reopened = load(&xml);
+    assert_eq!(reopened.workbook.active().canvas.layers[0].name, "New");
+}
+
+#[test]
+fn drawio_layer_tombstones_obey_the_page_budget_and_warn_when_dropped() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="layer-source" value="Layer" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert_eq!(
+        sheet.canvas.layers[0].source_id.as_deref(),
+        Some("layer-source")
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .contains(&"layer-source".to_owned())
+    );
+    assert!(report.workbook.validate().is_ok());
+}
+
+#[test]
 fn drawio_named_first_layer_and_layered_cards_stay_explicit() {
     let xml = concat!(
         r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,

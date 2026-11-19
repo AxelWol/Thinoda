@@ -5534,7 +5534,19 @@ fn import_page(
         .filter(|(_, item)| matches!(item, Item::Object(_)))
         .map(|(index, _)| *index)
         .collect();
-    let (drawio, dropped) = page_passthrough(page, &cells, &object_cells);
+    let layer_cells: HashSet<usize> = import
+        .sheet
+        .canvas
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            layer
+                .source_id
+                .as_deref()
+                .and_then(|id| import.index.get(id).copied())
+        })
+        .collect();
+    let (drawio, dropped) = page_passthrough(page, &cells, &object_cells, &layer_cells);
     if dropped {
         import.warn(ImportWarning::Other);
     }
@@ -5543,12 +5555,13 @@ fn import_page(
     Ok(sheet)
 }
 
-/// Page-level passthrough. `cell_ids` records the cells that became canvas
-/// objects, so the exporter never hands a deleted object's id to another cell.
+/// Page-level passthrough. Record source IDs for represented objects and layers
+/// so generated object, layer and auxiliary cell IDs can avoid deleted ones.
 fn page_passthrough(
     page: &Page,
     cells: &[Cell],
     object_cells: &HashSet<usize>,
+    layer_cells: &HashSet<usize>,
 ) -> (Option<Arc<DrawioPagePassthrough>>, bool) {
     let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
     let mut drawio = DrawioPagePassthrough {
@@ -5578,7 +5591,9 @@ fn page_passthrough(
     }
     for (index, cell) in cells.iter().enumerate() {
         let id = &cell.id;
-        if !object_cells.contains(&index) || id.starts_with('\u{0}') {
+        if !(object_cells.contains(&index) || layer_cells.contains(&index))
+            || id.starts_with('\u{0}')
+        {
             continue;
         }
         if matches!(id.as_str(), "0" | "1")

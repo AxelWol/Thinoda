@@ -173,8 +173,9 @@ pub struct DrawioPagePassthrough {
     /// `mxGraphModel` attributes without a Thinoda field, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_attributes: Vec<(String, String)>,
-    /// Every cell id of the source page. New objects never reuse one, so external
-    /// references to deleted cells cannot silently retarget.
+    /// Retained source IDs for imported objects and named layers. Generated
+    /// object, layer and auxiliary cell IDs avoid these, including after deletion.
+    /// Other generated cell types do not yet have a complete collision policy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cell_ids: Vec<String>,
 }
