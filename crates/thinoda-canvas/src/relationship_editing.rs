@@ -378,11 +378,7 @@ mod tests {
         sheet
             .set_relationship_color(id, Some(Color::rgb(9, 18, 27)))
             .unwrap();
-        let doc = Document::new(Workbook {
-            sheets: vec![sheet],
-            active_sheet: 0,
-            metadata: Default::default(),
-        });
+        let doc = Document::new(Workbook::new(sheet));
         let mut view = MapView::default();
         view.select_object(ObjectSelection::Relationship(id));
         let mut h = Harness::builder()

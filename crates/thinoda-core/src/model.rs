@@ -490,6 +490,9 @@ pub struct Zone {
     pub id: ZoneId,
     pub name: String,
     pub frame: Rect,
+    /// Source draw.io cell ID; copied zones must receive a fresh identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<TopicId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -922,7 +925,15 @@ impl Sheet {
     }
 
     pub fn has_drawio_passthrough(&self) -> bool {
-        self.drawio.is_some() || self.canvas.has_drawio_passthrough()
+        self.drawio.is_some()
+            || self.canvas.has_drawio_passthrough()
+            || self.has_drawio_zone_source_ids()
+    }
+
+    pub fn has_drawio_zone_source_ids(&self) -> bool {
+        self.zones
+            .iter()
+            .any(|zone| zone.drawio_source_id.is_some())
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -1733,6 +1744,12 @@ impl Sheet {
             if !zone_ids.insert(zone.id) {
                 return Err(format!("duplicate zone id {}", zone.id));
             }
+            if let Some(id) = &zone.drawio_source_id {
+                crate::drawio_passthrough::valid_id(id, "draw.io zone id")?;
+                if matches!(id.as_str(), "0" | "1") {
+                    return Err("draw.io zone id is reserved".into());
+                }
+            }
             if zone.roots.is_empty() && zone.objects.is_empty() && !zone.keep_empty {
                 return Err(format!("zone {} has no floating topics", zone.id));
             }
@@ -1948,6 +1965,7 @@ impl Sheet {
             id,
             name: name.trim().to_string(),
             frame,
+            drawio_source_id: None,
             roots,
             objects: Vec::new(),
             keep_empty,
@@ -2798,6 +2816,10 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_drawio_passthrough)
     }
 
+    pub fn has_drawio_zone_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_zone_source_ids)
+    }
+
     pub fn has_scene_hierarchy(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_hierarchy)
     }
@@ -2919,6 +2941,7 @@ impl Workbook {
             }
             for (index, zone) in sheet.zones.iter_mut().enumerate() {
                 zone.name = format!("Frame {}", index + 1);
+                zone.drawio_source_id = None;
             }
             for (index, slide) in sheet.presentation.slides.iter_mut().enumerate() {
                 slide.title = format!("Slide {}", index + 1);

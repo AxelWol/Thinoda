@@ -832,6 +832,9 @@ impl Document {
         self.edit_book("Duplicate sheet", |wb| {
             let mut s = wb.sheets.get(index).cloned().ok_or(EditError::NotFound)?;
             s.title = format!("{} (copy)", s.title);
+            for zone in &mut s.zones {
+                zone.drawio_source_id = None;
+            }
             wb.sheets.insert(index + 1, s);
             wb.active_sheet = index + 1;
             Ok(index + 1)
@@ -1632,6 +1635,42 @@ mod tests {
         assert!(d.can_redo());
         d.edit_sheet("B", |s| s.insert_child(root, "B")).unwrap();
         assert!(!d.can_redo());
+    }
+
+    #[test]
+    fn duplicate_sheet_clears_zone_source_ownership_and_undo_restores_it() {
+        let mut sheet = Sheet::new("Board", "Root");
+        sheet
+            .create_board_frame(
+                "Lane",
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(300.0, 200.0)),
+            )
+            .unwrap();
+        sheet.zones[0].drawio_source_id = Some("source-zone".into());
+        let mut document = Document::new(Workbook::new(sheet));
+        document.duplicate_sheet(0).unwrap();
+        assert_eq!(
+            document.workbook().sheets[0].zones[0]
+                .drawio_source_id
+                .as_deref(),
+            Some("source-zone")
+        );
+        assert!(
+            document.workbook().sheets[1].zones[0]
+                .drawio_source_id
+                .is_none()
+        );
+        assert!(document.undo());
+        assert_eq!(
+            document.sheet().zones[0].drawio_source_id.as_deref(),
+            Some("source-zone")
+        );
+        assert!(document.redo());
+        assert!(
+            document.workbook().sheets[1].zones[0]
+                .drawio_source_id
+                .is_none()
+        );
     }
 
     #[test]

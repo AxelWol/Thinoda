@@ -2876,6 +2876,13 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let mut total_points = 0usize;
     let mut total_waypoints = 0usize;
     let mut drawio_bytes = sheet.drawio.as_ref().map_or(0, |page| page.byte_len());
+    for zone in &sheet.zones {
+        drawio_bytes =
+            drawio_bytes.saturating_add(zone.drawio_source_id.as_ref().map_or(0, String::len));
+    }
+    if drawio_bytes > crate::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES {
+        return Err("draw.io passthrough of the sheet is too large".into());
+    }
     if let Some(page) = &sheet.drawio {
         if page.is_empty() {
             return Err("sheet has empty draw.io data".into());

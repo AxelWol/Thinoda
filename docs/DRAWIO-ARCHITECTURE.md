@@ -177,7 +177,7 @@ Rules (each backed by a test):
    fresh ids and default envelope.
 
 **As implemented through D10 groundwork** (`thinoda_core::drawio_passthrough`, native
-v37 for cells/pages, v53 for document attributes, board clipboard v30): objects carry
+v37 for cells/pages, v53 for document attributes, v54 for zone source IDs, board clipboard v30): objects carry
 `DrawioCellPassthrough { source_id, style, attributes }`, sheets carry
 `DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`, and workbooks carry
 bounded safe unknown `<mxfile>` attributes in `DrawioDocumentPassthrough`. Other
@@ -188,9 +188,11 @@ workbook-level attributes; use a masked copy when source metadata must be remove
 Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
 `THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
 recovery envelopes; older envelopes are rejected if they contain these attributes.
-Tombstones (`cell_ids`) cover represented canvas objects, including scene containers
-and represented table cells, and named layers with retained source IDs; topic, zone
-and group source IDs are still regenerated. Generated object, layer,
+Zones own their bounded source IDs; native v54, private XMind snapshots and recovery
+preserve them, while sheet copying and duplication clear ownership. Tombstones
+(`cell_ids`) cover represented canvas objects, including scene containers and
+represented table cells, named layers and zones with retained source IDs; topic and
+group source IDs are still regenerated. Generated object, layer,
 zone, group, topic, map-decoration and auxiliary cell IDs avoid retained tombstones.
 Zone, group, topic and map-decoration IDs also avoid live source IDs even when the
 tombstone budget omitted them. Sankey cell IDs use collision-free numeric IDs remapped

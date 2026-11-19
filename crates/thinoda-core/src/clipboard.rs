@@ -60,9 +60,19 @@ const RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-40\n";
 const CARD_BASELINE_SHEET_PREFIX: &str = "THINODA-SHEET-41\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
-/// A versioned OS text payload retaining every persisted sheet field.
+/// A versioned OS text payload retaining sheet content but not zone source ownership.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
+    let mut copied;
+    let sheet = if sheet.has_drawio_zone_source_ids() {
+        copied = sheet.clone();
+        for zone in &mut copied.zones {
+            zone.drawio_source_id = None;
+        }
+        &copied
+    } else {
+        sheet
+    };
     let prefix = if sheet.has_card_baseline_overrides() {
         CARD_BASELINE_SHEET_PREFIX
     } else if sheet.has_rich_extra_connector_labels() {
@@ -369,6 +379,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if sheet.has_drawio_zone_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io zone source IDs".into());
+    }
     if version < 41 && sheet.has_card_baseline_overrides() {
         return Err("card baseline overrides require sheet clipboard version 41".into());
     }
@@ -1714,6 +1727,30 @@ mod tests {
                 .unwrap_err()
                 .contains("rich extra connector labels require sheet clipboard version 40")
         );
+    }
+
+    #[test]
+    fn sheet_clipboard_clears_zone_source_ownership_and_rejects_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        sheet
+            .create_board_frame(
+                "Lane",
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(300.0, 200.0)),
+            )
+            .unwrap();
+        sheet.zones[0].drawio_source_id = Some("source-zone".into());
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(
+            decode_sheet(&encoded).unwrap().zones[0]
+                .drawio_source_id
+                .is_none()
+        );
+        assert_eq!(
+            sheet.zones[0].drawio_source_id.as_deref(),
+            Some("source-zone")
+        );
+        let forged = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged).is_err());
     }
 
     #[test]

@@ -7343,6 +7343,7 @@ mod tests {
         sheet.zones = vec![
             thinoda_core::Zone {
                 id: thinoda_core::ZoneId(1),
+                drawio_source_id: None,
                 name: "Root clip".into(),
                 frame: small_frame(boundary_point),
                 roots: vec![root],
@@ -7354,6 +7355,7 @@ mod tests {
             },
             thinoda_core::Zone {
                 id: thinoda_core::ZoneId(2),
+                drawio_source_id: None,
                 name: "A clip".into(),
                 frame: small_frame(same_point),
                 roots: vec![a],
@@ -7365,6 +7367,7 @@ mod tests {
             },
             thinoda_core::Zone {
                 id: thinoda_core::ZoneId(3),
+                drawio_source_id: None,
                 name: "B clip".into(),
                 frame: small_frame(cross_point + Vec2::new(200.0, 200.0)),
                 roots: vec![b],
@@ -7376,6 +7379,7 @@ mod tests {
             },
             thinoda_core::Zone {
                 id: thinoda_core::ZoneId(4),
+                drawio_source_id: None,
                 name: "Summary clip".into(),
                 frame: small_frame(summary_layout.tip),
                 roots: vec![summary_topic],

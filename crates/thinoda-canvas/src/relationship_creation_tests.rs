@@ -9,11 +9,7 @@ struct State {
 }
 
 fn harness(zoom: f32) -> Harness<'static, State> {
-    let mut doc = Document::new(Workbook {
-        sheets: vec![Sheet::new("Relationships", "Source")],
-        active_sheet: 0,
-        metadata: Default::default(),
-    });
+    let mut doc = Document::new(Workbook::new(Sheet::new("Relationships", "Source")));
     doc.mark_saved();
     let mut view = MapView::default();
     view.select_only(doc.sheet().root);

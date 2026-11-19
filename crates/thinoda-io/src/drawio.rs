@@ -4096,6 +4096,20 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         let id = self.sheet.create_board_frame(&name, rect).ok()?;
+        let source_id = if !cell.id.is_empty()
+            && !cell.id.starts_with('\u{0}')
+            && !matches!(cell.id.as_str(), "0" | "1")
+            && cell.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !cell.id.chars().any(char::is_control)
+            && self.passthrough_bytes.saturating_add(cell.id.len())
+                <= thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.passthrough_bytes += cell.id.len();
+            Some(cell.id.clone())
+        } else {
+            self.warn(ImportWarning::Other);
+            None
+        };
         let swimlane = cell.style.shape() == "swimlane";
         if !swimlane {
             self.warn(ImportWarning::Formatting);
@@ -4114,6 +4128,7 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         if let Some(zone) = self.sheet.zones.iter_mut().find(|z| z.id == id) {
+            zone.drawio_source_id = source_id;
             zone.color = stroke.filter(|c| c.a > 0);
             zone.background_color = background;
             zone.clip = cell.style.flag("thinodaClip");
@@ -5528,12 +5543,19 @@ fn import_page(
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
     }
-    let represented_cells: HashSet<usize> = import
+    let mut represented_cells: HashSet<usize> = import
         .items
         .iter()
         .filter(|(_, item)| matches!(item, Item::Object(_) | Item::Container(_)))
         .map(|(index, _)| *index)
         .collect();
+    represented_cells.extend(
+        import
+            .sheet
+            .zones
+            .iter()
+            .filter_map(|zone| import.index.get(zone.drawio_source_id.as_deref()?).copied()),
+    );
     let layer_cells: HashSet<usize> = import
         .sheet
         .canvas
@@ -6641,6 +6663,42 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .filter_map(|layer| layer.source_id.clone()),
         );
+        unavailable.extend(
+            sheet
+                .zones
+                .iter()
+                .filter_map(|zone| zone.drawio_source_id.clone()),
+        );
+        let mut zone_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .zones
+            .iter()
+            .filter_map(|zone| zone.drawio_source_id.as_deref())
+        {
+            *zone_sources.entry(source).or_default() += 1;
+        }
+        let other_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .collect();
+        for zone in &sheet.zones {
+            if let Some(source) = zone.drawio_source_id.as_deref()
+                && zone_sources.get(source) == Some(&1)
+                && !other_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer.zone_cells.insert(zone.id, source.to_owned());
+            }
+        }
         let mut sankey_nodes = writer.flows.nodes.clone();
         if let Some(settings) = &sheet.sankey {
             sankey_nodes.extend(settings.sources.keys().copied());
@@ -6771,7 +6829,8 @@ impl<'a> PageWriter<'a> {
         for zone in &sheet.zones {
             writer
                 .zone_cells
-                .insert(zone.id, generated_id(format!("z{}", zone.id.0)));
+                .entry(zone.id)
+                .or_insert_with(|| generated_id(format!("z{}", zone.id.0)));
         }
         for group in &sheet.canvas.groups {
             writer

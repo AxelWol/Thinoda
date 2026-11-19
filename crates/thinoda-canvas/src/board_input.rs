@@ -9328,6 +9328,7 @@ mod alignment_tests {
             .unwrap();
         sheet.zones.push(Zone {
             id: ZoneId(77),
+            drawio_source_id: None,
             name: "Guide clip".into(),
             frame: thinoda_core::Rect::from_center_size(
                 Vec2::new(500.0, 0.0),
@@ -9394,6 +9395,7 @@ mod alignment_tests {
         sheet.zones.extend([
             Zone {
                 id: ZoneId(10),
+                drawio_source_id: None,
                 name: "Original clip".into(),
                 frame: thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(60.0, 40.0)),
                 roots: vec![],
@@ -9405,6 +9407,7 @@ mod alignment_tests {
             },
             Zone {
                 id: ZoneId(11),
+                drawio_source_id: None,
                 name: "Destination clip".into(),
                 frame: thinoda_core::Rect::from_center_size(
                     Vec2::new(100.0, 0.0),

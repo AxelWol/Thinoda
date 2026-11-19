@@ -85,11 +85,7 @@ fn multi_topic_insertion_preserves_requested_order_and_one_step_undo() {
                 .filter(|id| !moving.contains(id))
                 .collect();
             expected.splice(retained_before..retained_before, moving.iter().copied());
-            let mut doc = Document::new(Workbook {
-                sheets: vec![sheet],
-                active_sheet: 0,
-                metadata: Default::default(),
-            });
+            let mut doc = Document::new(Workbook::new(sheet));
             let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
             let before = doc.workbook().clone();
             let proposal = DropTarget {
@@ -155,11 +151,7 @@ fn dropping_into_an_unchanged_slot_preserves_summary_ownership_and_history() {
     sheet.insert_child(root, "B").unwrap();
     sheet.add_summary(&[a], "Keep summary").unwrap();
     sheet.add_boundary(&[a]).unwrap();
-    let mut doc = Document::new(Workbook {
-        sheets: vec![sheet],
-        active_sheet: 0,
-        metadata: Default::default(),
-    });
+    let mut doc = Document::new(Workbook::new(sheet));
     let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
     let before = doc.workbook().clone();
     let state = doc.state_id();

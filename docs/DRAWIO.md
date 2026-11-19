@@ -304,6 +304,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
+- [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
@@ -342,6 +343,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 zone source identity | Imported zones retain source IDs through native, draw.io, XMind and recovery; copies clear ownership and deleted IDs remain reserved within the page budget. |
 | 2026-11-19 | D10 scene-container tombstones | Imported scene containers and represented table cells retain bounded source-ID tombstones, preventing generated IDs from reusing them after deletion. |
 | 2026-11-19 | D10 Sankey ID remapping | Sankey nodes and edges avoid source collisions while version 2 extensions retain flows, settings and inactive stage metadata, including in editable images. |
 | 2026-11-19 | D10 generated topic IDs | Non-Sankey topics avoid retained and live source IDs while maintaining connector references; conflicting fixed Sankey IDs refuse export. |
@@ -520,10 +522,11 @@ writes for any object kind is owned and never passed through, so a few keys
 that would be safe to keep are dropped. Keys that depend on an owned key
 (`dashPattern` on `dashed`, `gradientDirection` on `gradientColor`, ...) are
 dropped when the owner is missing or off, so a cleared gradient never comes
-back. Only canvas objects carry passthrough; cards, topics and zones are
-regenerated, so their ids and unknown keys are lost, as before. At D6,
+back. At D6 only canvas objects carried passthrough; card, topic and zone IDs
+and unknown keys were lost. D10 later added zone source-ID ownership, while
+unknown zone keys and card and topic IDs remain unpreserved. At D6,
 tombstones covered only cells that became objects; D10 later added named-layer
-IDs, while topic and zone ids still change on every import. Export gives a
+and zone IDs. Export gives a
 source id priority over a generated `o{id}`. D10 subsequently added numeric
 Sankey ID remapping while retaining the version 2 extension. Unmappable cells are still dropped with a
 warning; storing them as opaque objects and cut-once provenance belong to D10.
@@ -1211,10 +1214,19 @@ topics must be expanded for export.
 represented table cells now enter the bounded tombstone set, which survives
 native save/reopen and deletion. Their live source IDs continue to belong to
 the canvas objects. Duck check: the budget can omit a tombstone with a warning;
-the deleted ID is then not protected. Cards, zones, groups and unrepresented
-table rows still lack owner-bound source IDs. Adding their IDs as anonymous
+the deleted ID is then not protected. At that point cards, zones, groups and
+unrepresented table rows lacked owner-bound source IDs. Adding their IDs as anonymous
 tombstones before adding ownership causes ID churn on every round trip, so that
-approach was rejected. In-place save remains disabled.
+approach was rejected; zones have since gained ownership. In-place save remains disabled.
+
+**D10 zone source identity (partial).** Zones own their source cell IDs, and
+their IDs are reserved as bounded page tombstones for deletion. Native v54,
+versioned XMind snapshots and recovery retain them; sheet clipboard and sheet
+duplication clear zone ownership. Export reuses a unique source ID and updates
+member parent references, falling back to a fresh ID for conflicts. Duck check:
+page-budget omissions warn and may leave deleted IDs unprotected; topic, group,
+table-row and unrepresented-cell ownership still need work. Unknown zone XML is
+not yet preserved. In-place save remains disabled.
 
 ## 5. Rubber-duck findings
 

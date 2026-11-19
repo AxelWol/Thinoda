@@ -30,11 +30,7 @@ fn harness(zoom: f32) -> Harness<'static, State> {
     let target = sheet.add_floating("Target", Vec2::new(450.0, 220.0));
     sheet.add_relationship(child, target).unwrap();
     sheet.add_relationship(source, child).unwrap();
-    let mut doc = Document::new(Workbook {
-        sheets: vec![sheet],
-        active_sheet: 0,
-        metadata: Default::default(),
-    });
+    let mut doc = Document::new(Workbook::new(sheet));
     doc.mark_saved();
     let mut view = MapView::default();
     view.select_only(source);
