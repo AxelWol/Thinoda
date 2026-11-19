@@ -41,6 +41,7 @@ pub enum Format {
     FimXdf3,
     Thinoda,
     XMind,
+    XMindMark,
     FreeMind,
     Opml,
     Markdown,
@@ -67,6 +68,7 @@ impl Format {
         Self::FimXdf3,
         Self::Thinoda,
         Self::XMind,
+        Self::XMindMark,
         Self::FreeMind,
         Self::Opml,
         Self::Markdown,
@@ -85,6 +87,7 @@ impl Format {
         Self::FimXdf3,
         Self::Thinoda,
         Self::XMind,
+        Self::XMindMark,
         Self::FreeMind,
         Self::Opml,
         Self::Markdown,
@@ -117,6 +120,7 @@ impl Format {
             "xdf3" => Self::FimXdf3,
             "thinoda" => Self::Thinoda,
             "xmind" => Self::XMind,
+            "xmindmark" => Self::XMindMark,
             "mm" => Self::FreeMind,
             "opml" => Self::Opml,
             "md" | "markdown" => Self::Markdown,
@@ -143,6 +147,7 @@ impl Format {
             Self::FimXdf3 => &["xdf3"],
             Self::Thinoda => &["thinoda"],
             Self::XMind => &["xmind"],
+            Self::XMindMark => &["xmindmark"],
             Self::FreeMind => &["mm"],
             Self::Opml => &["opml"],
             Self::Markdown => &["md", "markdown"],
@@ -170,6 +175,7 @@ impl Format {
             Self::FimXdf3 => "FIM XDatenfelder 3",
             Self::Thinoda => "Thinoda",
             Self::XMind => "XMind",
+            Self::XMindMark => "XMindMark",
             Self::FreeMind => "FreeMind / Freeplane",
             Self::Opml => "OPML",
             Self::Markdown => "Markdown",
@@ -557,6 +563,7 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
                 Format::Thinoda => formats::native_import(bytes)?,
                 Format::Opml => formats::opml_import(bytes)?,
                 Format::Markdown => formats::markdown_import(bytes)?,
+                Format::XMindMark => formats::xmindmark_import(bytes)?,
                 Format::PlainText => formats::text_import(bytes)?,
                 Format::FimXdf2 | Format::FimXdf3 => {
                     let profile = fim::inspect(bytes)?;
@@ -593,6 +600,7 @@ const IMPORT_ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
 enum ImportReadPolicy {
     Fim,
     MindManager,
+    XMindMark,
     Archive,
 }
 
@@ -601,6 +609,7 @@ impl ImportReadPolicy {
         match self {
             Self::Fim => fim::MAX_XML_BYTES,
             Self::MindManager | Self::Archive => IMPORT_ARCHIVE_LIMIT,
+            Self::XMindMark => formats::MAX_XMINDMARK_BYTES,
         }
     }
 
@@ -608,6 +617,7 @@ impl ImportReadPolicy {
         match self {
             // FIM detection has always treated an over-limit XDF as unsupported.
             Self::Fim => IoError::UnsupportedFormat(name.display().to_string()),
+            Self::XMindMark => IoError::Invalid("XMindMark file exceeds the 32 MiB limit".into()),
             Self::MindManager | Self::Archive => {
                 IoError::Invalid("import archive exceeds size limit".into())
             }
@@ -618,6 +628,7 @@ impl ImportReadPolicy {
         match self {
             Self::Fim => IoError::UnsupportedFormat(path.display().to_string()),
             Self::MindManager => IoError::Invalid("MindManager file exceeds size limit".into()),
+            Self::XMindMark => IoError::Invalid("XMindMark file exceeds the 32 MiB limit".into()),
             Self::Archive => IoError::Invalid("import archive exceeds size limit".into()),
         }
     }
@@ -627,6 +638,7 @@ fn import_read_policy(name: &Path) -> Option<ImportReadPolicy> {
     match Format::from_path(name) {
         Some(Format::FimXdf2 | Format::FimXdf3) => Some(ImportReadPolicy::Fim),
         Some(Format::MindManager | Format::MindManagerXml) => Some(ImportReadPolicy::MindManager),
+        Some(Format::XMindMark) => Some(ImportReadPolicy::XMindMark),
         None
         | Some(
             Format::TextBundle
@@ -858,6 +870,7 @@ pub fn export_bytes_with_consent_and_visual_context(
         Format::FreeMind
             | Format::Opml
             | Format::Markdown
+            | Format::XMindMark
             | Format::PlainText
             | Format::MindManager
             | Format::TextBundle
@@ -951,6 +964,7 @@ pub fn export_bytes_with_consent_and_visual_context(
     Ok(match format {
         Format::Thinoda => formats::native_export(book)?,
         Format::XMind => xmind::export(book)?,
+        Format::XMindMark => formats::xmindmark_export(book, opts)?,
         Format::FreeMind => formats::freemind_export(book, opts)?,
         Format::Opml => formats::opml_export(book, opts)?,
         Format::Markdown => formats::markdown_export(book, opts),
@@ -1000,8 +1014,7 @@ fn exported_sheets<'a>(
     format: Format,
     opts: &ExportOptions,
 ) -> impl Iterator<Item = &'a thinoda_core::Sheet> {
-    let selected = format
-        .is_drawio_image()
+    let selected = (format.is_drawio_image() || format == Format::XMindMark)
         .then(|| export_sheet_index(book, opts));
     book.sheets
         .iter()

@@ -91,7 +91,9 @@ Grid or snapping may differ in draw.io|A grade ou o encaixe na grade podem ser d
 Page background may differ in draw.io|O fundo da página pode ser diferente no draw.io
 Cards may show folded corners in draw.io|Os cartões podem exibir cantos dobrados no draw.io
 Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
-Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
+Topic details omitted|Detalhes dos tópicos omitidos
+Boundary and relationship styling or routing omitted|Estilo ou roteamento de limites e relações omitidos
+Other sheets omitted|Outras planilhas omitidas
 Presentation slides omitted|Slides de apresentação omitidos
 Thinoda on GitHub|Thinoda no GitHub
 Click empty space to add · Esc to finish|Clique em um espaço vazio para adicionar · Esc para concluir

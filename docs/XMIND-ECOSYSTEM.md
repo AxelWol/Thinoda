@@ -18,7 +18,7 @@ the installed XMind app opens Thinoda files unless a row says that this was veri
 | Project | Pinned revision | Licence | What it is | Use for Thinoda |
 |---|---|---|---|---|
 | [xmindltd/xmind-generator](https://github.com/xmindltd/xmind-generator) | `af8e66ab57f480854671a45bccaa029151977534` | MIT | TypeScript builder that writes `.xmind` packages "in the same manner as Xmind UI applications". | Minimal-writer evidence: package layout, marker IDs, summaries, relationships, resource naming. Reader tolerance targets. |
-| [xmindltd/xmindmark](https://github.com/xmindltd/xmindmark) | `78d5b6ba5813d46ab870aa91cdde19672e95184d` (v0.3.2, last change 2022) | MIT | Indented-text markup for maps, plus a converter to `.xmind`. | Grammar for a new `.xmindmark` import/export format (X5). The CLI's SVG rendering downloads a proprietary renderer and is **not** used. |
+| [xmindltd/xmindmark](https://github.com/xmindltd/xmindmark) | `78d5b6ba5813d46ab870aa91cdde19672e95184d` (v0.3.2, last change 2022) | MIT | Indented-text markup for maps, plus a converter to `.xmind`. | Grammar for a new `.xmindmark` import/export format (X6). The CLI's SVG rendering downloads a proprietary renderer and is **not** used. |
 | [xmindltd/xmind-viewer](https://github.com/xmindltd/xmind-viewer) | `272b324bd82ea8567739c6617154d8d2556f6b50` (v1.1.2, deprecated) | MIT | Browser parser/SVG renderer for `content.json` and legacy `content.xml` + `styles.xml`. | Structure, shape, line-class and style-key vocabulary; legacy XML style resolution; reader tolerance rules. |
 | [atkins126/mind-viewer](https://github.com/atkins126/mind-viewer) | `bee7fd57` | MIT text with XMind copyright removed | A rebrand of xmind-viewer with no new format knowledge. | None beyond xmind-viewer. Cite upstream, not the fork. |
 | [xmindltd/mapify-mcp-server](https://github.com/xmindltd/mapify-mcp-server) | `753b8170` | MIT | One MCP tool that sends text, URLs or videos to the hosted mapify.so API (API key required) and returns image and edit links. | **No integration.** It contains no file-format data, needs a network account and would send user content to a third party. That conflicts with Thinoda's local-first and privacy defaults. Thinoda's AI features already use user-configured providers. |
@@ -174,7 +174,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 
 | Capability | Before | Target |
 |---|---|---|
-| XMindMark `.xmindmark` | ❌ | Bounded import with line-numbered errors and a deterministic export (X6). Registered in format detection and in the open/export dialogs. |
+| XMindMark `.xmindmark` | ✅ | Bounded UTF-8 import and deterministic export registered in format detection and the open/export dialogs. Supports indented topics, escaped brackets, numbered relationships, boundaries, summaries, and summary descendants. |
 
 ## 3. Phase plan
 
@@ -192,7 +192,7 @@ Every phase:
 | **X3 Markers** | Extend the catalog (`people` and `arrow` groups, dark-blue flag/star, `smiley-embarrass`, `task-pause`). Add the `week-web` alias. Localize every new name in all ten UI languages. | The marker picker shows the new groups; the catalog test covers ID uniqueness, and translation tests cover the new names. |
 | **X4 XMind 8** | Tree-based legacy parser: multiple sheets, attached/detached/summary collections, positions, boundaries, summaries, relationships, `styles.xml` style resolution, HTML notes, numbering, width, pictures and attachments from `attachments/`, all with warnings instead of silent loss. | Fixture-based tests; legacy files import with only the expected warnings. |
 | **X5 Export review** | Check the public JSON against the generator's minimal writer and the desktop samples. Document what remains private-snapshot only. | Tests that the export contains no unexpected keys and that every new public field round-trips with the private snapshot removed. |
-| **X6 XMindMark (follow-up format)** | New `Format::XMindMark` (`.xmindmark`). Bounded parser with line-numbered errors. Deterministic writer. App dialogs and localized format label. This is a separate text format and lands only after the `.xmind` phases. | Grammar tests from upstream examples, round-trip tests, fuzz seed. |
+| **X6 XMindMark (follow-up format)** | New `Format::XMindMark` (`.xmindmark`). UTF-8 input limited to 32 MiB and 200,000 topic nodes; line-numbered parser errors; deterministic writer; open/export dialog and localized preflight integration. | Tests cover tabs as four-space indentation, escaped brackets, numbered relationship endpoints with and without titles, boundaries, summaries and descendants, malformed-line locations, deterministic output, public format routing, and round trips. |
 | **X7 Documentation** | Update this file's status, the user guide and the fixtures README. | Docs match the implementation. No claim of installed-app verification without evidence. |
 
 ### 3.2 Plan review (rubber duck) and resolutions
@@ -275,8 +275,8 @@ branch for per-phase critiques.
 | X3 | Done. Added generator marker groups and variants with localized names in all ten languages; `week-web` imports as `week-wed`; task pause has a distinct glyph in vector/SVG rendering. |
 | X4 | Done. The bounded XML importer reads multiple sheets, attached/detached/summary collections, positions, relationships, boundaries, numbering, topic widths, styles/theme defaults, notes and safe local image/attachment members. Recoverable losses are reported. |
 | X5 | Done. The public projection is checked against an explicit XMind key allowlist; projection-2 fields round-trip with the Thinoda snapshot removed, while projection-1 snapshots remain covered by a checked-in fixture. |
-| X6 | Planned |
-| X7 | Planned |
+| X6 | Done. `.xmindmark` is a bounded, localized import/export format; supported hierarchy, boundaries, summaries and relationships round-trip deterministically, while export preflight identifies omitted topic details, annotation styling/routing and other sheets. |
+| X7 | Done. User guidance and this status/critique reflect the implemented behavior and its loss boundaries. |
 
 ### 4.1 X2 review critique
 
@@ -342,3 +342,39 @@ branch for per-phase critiques.
 - **Evidence limit:** The checked-in projection-1 file, generated projection-2
   maps, and supplied desktop packages are exercised locally. No claim is made
   that a particular installed XMind release accepts every generated field.
+
+### 4.5 X6 plan and outcome review
+
+- **Grammar boundary:** The parser follows the pinned XMindMark specification:
+  the first nonempty line is the root, `- ` and `* ` introduce indented topics,
+  tabs count as four spaces, and escaped square brackets remain literal.
+  Relationship endpoints are paired by their numeric marker, and group IDs
+  scope to one parent so repeated numbers in separate branches do not collide.
+- **Model fidelity:** Boundaries, summary ranges, summary descendants, and
+  relationship titles round-trip. Export is deterministic and selects one
+  sheet; preflight calls out omitted sheets, topic details and annotation
+  appearance/routing. Embedded resources fail explicitly rather than being
+  silently discarded.
+- **Resource limits:** UTF-8 input is capped at 32 MiB and 200,000 topic nodes.
+  Syntax and model errors identify the source line; external URLs are not
+  fetched. Escapes, nested summaries, malformed pairing, and repeated
+  deterministic exports have focused coverage.
+- **Evidence limit:** These tests validate Thinoda's implementation against
+  the reviewed grammar; they do not claim installed XMindMark CLI or XMind
+  Desktop interoperability.
+
+### 4.6 Final integration rubber-duck review
+
+| Question | Failure considered | Resolution / remaining boundary |
+|---|---|---|
+| Does an incidental desktop package member replace the authoritative map or block opening? | Thumbnail/metadata entries or legacy XML conflict with current content. | `content.json` remains authoritative; ancillary entries are validated as safe archive members and ignored. The supplied with/without-thumbnail fixtures must import to the same workbook. |
+| Can the XMind 8 fallback shadow a modern package? | A package contains both generations of content. | The importer selects `content.json` first; legacy `content.xml` is used only when modern content is absent. The legacy parser is bounded and keeps unsupported-content warnings explicit. |
+| Can a changed public projection silently trust stale Thinoda-private data? | New fields change the JSON the snapshot authenticates. | Projection versions separate the pre-X2 and current public shapes; tests cover both the checked-in older file and metadata-stripped public round trips. |
+| Does “XMind support” imply every feature round-trips? | Tasks, zones, topic links, rich runs, comments, and visual/resource details are not fully represented. | Import reports recoverable losses, export preflight identifies known losses, and docs distinguish unsupported/deferred features. Installed XMind interoperability remains unverified. |
+| Does the new `.xmindmark` format silently flatten model data or load remote content? | One-sheet grammar cannot encode board details, resources, or annotations' style/routing. | Export selects one sheet, refuses embedded-resource output, and surfaces omitted sheets/details/unsupported master boundaries in preflight. No URLs or external renderer are fetched. |
+| Are UI paths and localization part of the feature, not just library code? | File dialogs, export commands, or locales omit the new format or warnings. | The format is in import/export catalogs, extension routing, export menu and command IDs; app tests require every supported language catalog key. |
+
+The resulting support is intentionally evidence-bounded: Thinoda robustly imports
+the reviewed current and legacy XMind structures and supports a documented
+XMindMark subset, but does not claim exhaustive coverage of every future or
+undocumented XMind payload.

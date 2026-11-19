@@ -234,6 +234,19 @@ before opening; external links are never fetched. Accepting a lossy import does
 not overwrite the richer source file. XMind desktop interoperability has not
 been verified.
 
+**XMindMark text maps:** Thinoda also opens and exports `.xmindmark` files.
+The bounded UTF-8 format uses the upstream indentation grammar (`- ` or `* `;
+tabs count as four spaces), escaped square brackets, `[n]`/`[^n](title)`
+relationship markers, and `[B<n?>]`/`[S<n?>]` groups with optional title
+directives. Hierarchy, boundaries, summaries, summary descendants, and
+relationship titles are supported; malformed input reports its source line.
+Input is limited to 32 MiB and 200,000 topic nodes. Export writes the selected
+sheet as one map and asks for confirmation when other sheets or unsupported
+topic details, master boundaries, boundary appearance, or relationship routing
+would be omitted.
+Embedded resources cannot be exported to this text format. XMindMark is a
+separate text format; it does not change `.xmind` package handling.
+
 ## Label
 - Insert > Label adds a label to a topic; multiple labels are comma-separated. Existing labels can be selected from the quick-label suggestions.
 - Select a label and delete it from the label popup or right-click > Delete.

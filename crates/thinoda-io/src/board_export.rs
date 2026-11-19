@@ -322,8 +322,12 @@ pub enum ExportLoss {
     DrawioBackgroundAppearanceApproximated(usize),
     /// Flat cards are exported as draw.io notes with folded corners.
     DrawioCardAppearanceApproximated(usize),
-    /// Topic notes, labels, markers and task state are not written.
+    /// Topic notes, labels, links, markers, styles and task state are not written.
     TopicDetailsDropped(usize),
+    /// Boundary/relationship appearance or routing is not written.
+    AnnotationDetailsDropped(usize),
+    /// Other sheets are not written by this one-map format.
+    OtherSheetsDropped(usize),
     /// Typed socio-technical meaning is not represented by the target format.
     SocioTechnicalSemanticsDropped(usize),
     /// Presentation slides are not written.
@@ -376,6 +380,74 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         push(
             ExportLoss::SankeySemanticsDropped,
             sheets.iter().filter(|(_, s)| s.has_sankey()).count(),
+        );
+    }
+    if format == Format::XMindMark {
+        let omitted_details = sheets
+            .iter()
+            .map(|(_, sheet)| {
+                sheet
+                    .topics
+                    .values()
+                    .filter(|topic| {
+                        topic.notes.is_some()
+                            || !topic.labels.is_empty()
+                            || !topic.markers.is_empty()
+                            || !topic.marker_colors.is_empty()
+                            || topic.todo.is_some()
+                            || topic.hyperlink.is_some()
+                            || topic.attachment.is_some()
+                            || topic.image.is_some()
+                            || topic.image_size.is_some()
+                            || topic.image_below
+                            || topic.collapsed
+                            || topic.style != thinoda_core::TopicStyle::default()
+                            || topic.child_numbering.is_some()
+                            || topic.structure.is_some()
+                            || topic.branch_side.is_some()
+                            || topic.position.is_some()
+                    })
+                    .count()
+            })
+            .sum();
+        push(ExportLoss::TopicDetailsDropped, omitted_details);
+        push(
+            ExportLoss::BoundariesDropped,
+            sheets
+                .iter()
+                .map(|(_, sheet)| {
+                    sheet
+                        .boundaries
+                        .iter()
+                        .filter(|boundary| boundary.range.is_none())
+                        .count()
+                })
+                .sum(),
+        );
+        push(
+            ExportLoss::AnnotationDetailsDropped,
+            sheets
+                .iter()
+                .map(|(_, sheet)| {
+                    sheet
+                        .boundaries
+                        .iter()
+                        .filter(|boundary| boundary.color.is_some())
+                        .count()
+                        + sheet
+                            .relationships
+                            .iter()
+                            .filter(|relationship| {
+                                relationship.color.is_some()
+                                    || relationship.control_points.is_some()
+                            })
+                            .count()
+                })
+                .sum(),
+        );
+        push(
+            ExportLoss::OtherSheetsDropped,
+            book.sheets.len().saturating_sub(1),
         );
     }
     push(
@@ -488,6 +560,21 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
                     .map(|(_, sheet)| omitted_summary_trees(sheet))
                     .sum(),
             );
+        }
+        if matches!(
+            format,
+            Format::FreeMind
+                | Format::Opml
+                | Format::Markdown
+                | Format::PlainText
+                | Format::MindManager
+                | Format::TextBundle
+                | Format::Word
+                | Format::Excel
+                | Format::Csv
+                | Format::FimXdf2
+                | Format::FimXdf3
+        ) {
             push(
                 ExportLoss::RelationshipsDropped,
                 sheets

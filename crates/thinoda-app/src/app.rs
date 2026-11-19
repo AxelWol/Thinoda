@@ -410,6 +410,7 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::DrawIoPng,
     Format::FreeMind,
     Format::XMind,
+    Format::XMindMark,
     Format::Csv,
     Format::PlainText,
     Format::FimXdf2,

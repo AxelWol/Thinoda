@@ -635,10 +635,12 @@ const DE: &[(&str, &str)] = &[
         "Translucent connector labels may render differently",
         "Halbtransparente Verbindungsbeschriftungen können anders dargestellt werden",
     ),
+    ("Topic details omitted", "Themenangaben ausgelassen"),
     (
-        "Topic notes, labels, markers or tasks omitted",
-        "Notizen, Beschriftungen, Markierungen oder Aufgaben von Themen ausgelassen",
+        "Boundary and relationship styling or routing omitted",
+        "Stil oder Verlauf von Begrenzungen und Beziehungen ausgelassen",
     ),
+    ("Other sheets omitted", "Andere Tabellenblätter ausgelassen"),
     (
         "Presentation slides omitted",
         "Präsentationsfolien ausgelassen",
@@ -1887,6 +1889,7 @@ const DE: &[(&str, &str)] = &[
     ("Plain text", "Klartext"),
     ("Thinoda", "Thinoda"),
     ("XMind", "XMind"),
+    ("XMindMark", "XMindMark"),
     ("FreeMind / Freeplane", "FreeMind / Freeplane"),
     ("OPML", "OPML"),
     ("Markdown", "Markdown"),
@@ -6180,7 +6183,9 @@ mod tests {
             "Collapsed process outlines may be omitted in draw.io",
             "Grid or snapping may differ in draw.io",
             "Translucent connector labels may render differently",
-            "Topic notes, labels, markers or tasks omitted",
+            "Topic details omitted",
+            "Boundary and relationship styling or routing omitted",
+            "Other sheets omitted",
             "Presentation slides omitted",
         ];
         for key in outline_export_losses {
