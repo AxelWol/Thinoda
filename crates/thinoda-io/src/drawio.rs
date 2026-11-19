@@ -5861,12 +5861,24 @@ impl PageImport<'_> {
                                 || !data.properties.is_empty()
                                 || data.placeholders
                         })
+                        || o.layer.is_some()
+                        || o.locked
+                        || self.sheet.canvas.scene.parents.contains_key(&id)
+                        || self
+                            .zones
+                            .iter()
+                            .any(|(_, _, objects)| objects.contains(&id))
+                        || self
+                            .buckets
+                            .iter()
+                            .any(|(members, _)| members.contains(&BoardMember::Object(id)))
+                        || self.locked.contains(&BoardMember::Object(id))
                         || o.drawio.as_ref().is_some_and(|data| {
                             !data.style.is_empty() || !data.attributes.is_empty()
                         })
                     {
                         return Err(invalid(
-                            "Sankey node has object data that a card cannot retain",
+                            "Sankey node has object data or structure that a card cannot retain",
                         ));
                     }
                     let mut card = Card::new(CardKind::Text, o.rect.size);

@@ -303,6 +303,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
 - [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape and source-ID loss
+- [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
@@ -345,6 +346,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 Sankey structure safety | Sankey shape nodes with locks, named layers, groups, zones or scene parents remain ordinary objects when conversion would lose their structure. |
 | 2026-11-19 | D10 Sankey conversion safety | Shape-to-card conversion retains links, rich text, colors and alignment, and discloses remaining formatting and source-ID loss. Nodes carrying unsupported metadata or unknown styles remain ordinary objects with a stale-extension warning. |
 | 2026-11-19 | D10 container metadata diagnostics | Links, tooltips and enabled placeholder metadata on non-object containers are disclosed before conversion; supported card and object links remain intact. |
 | 2026-11-19 | D10 zone source identity | Imported zones retain source IDs through native, draw.io, XMind and recovery; copies clear ownership and deleted IDs remain reserved within the page budget. |
@@ -1246,6 +1248,11 @@ before reporting the stale extension; successful conversion reports the lost
 shape appearance and source identity. Duck check: fallback intentionally uses
 ordinary diagram objects rather than Sankey semantics; full owner-bound topic
 IDs and lossless conversion remain open.
+
+**D10 Sankey structure safety (partial).** Candidate conversion now checks
+deferred locks, groups and zone memberships as well as layers and scene
+parents before removing a shape. Duck check: ordinary-object fallback retains
+the structure but disables the Sankey extension until a lossless mapping exists.
 
 ## 5. Rubber-duck findings
 

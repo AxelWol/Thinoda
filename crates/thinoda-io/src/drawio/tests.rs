@@ -11137,6 +11137,78 @@ fn sankey_shape_node_retains_tooltip_and_unknown_style() {
 }
 
 #[test]
+fn sankey_shape_node_retains_lock_and_container_membership() {
+    for kind in ["locked", "layer", "group", "zone", "scene"] {
+        let book = thinoda_core::templates::instantiate("sankey-budget");
+        let node = *thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|id| book.active().topics[id].card.is_some())
+            .unwrap();
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        let mut xml = sankey_node_as_shape(&xml, node);
+        let id = format!(r#"id="t{}""#, node.0);
+        let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+        let changed = if kind == "locked" {
+            line.replacen("shape=rectangle;", "shape=rectangle;locked=1;", 1)
+        } else {
+            line.replacen(r#"parent="1""#, r#"parent="holder""#, 1)
+        };
+        assert_ne!(line, changed);
+        xml = xml.replacen(line, &changed, 1);
+        let holder = match kind {
+            "layer" => r#"<mxCell id="holder" value="Layer" parent="0"/>"#,
+            "group" => concat!(
+                r#"<mxCell id="holder" style="group;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#,
+                r#"<mxCell id="peer" value="Peer" style="shape=rectangle;" vertex="1" parent="holder"><mxGeometry width="20" height="20" as="geometry"/></mxCell>"#
+            ),
+            "zone" => {
+                r#"<mxCell id="holder" value="Zone" style="swimlane;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#
+            }
+            "scene" => {
+                r#"<mxCell id="holder" value="Container" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#
+            }
+            _ => "",
+        };
+        xml = xml.replacen("</root>", &format!("{holder}</root>"), 1);
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{kind}: {:?}",
+            report.warnings
+        );
+        let sheet = report.workbook.active();
+        let source = format!("t{}", node.0);
+        let object = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| {
+                object
+                    .drawio
+                    .as_ref()
+                    .and_then(|data| data.source_id.as_deref())
+                    == Some(source.as_str())
+            })
+            .unwrap();
+        match kind {
+            "locked" => assert!(object.locked),
+            "layer" => assert!(object.layer.is_some()),
+            "group" => assert!(object.group.is_some()),
+            "zone" => assert!(
+                sheet
+                    .zones
+                    .iter()
+                    .any(|zone| zone.objects.contains(&object.id))
+            ),
+            "scene" => assert!(sheet.canvas.scene.parents.contains_key(&object.id)),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn drawio_sankey_source_id_collisions_remap_without_losing_semantics() {
     for template in [
         "sankey-budget",
