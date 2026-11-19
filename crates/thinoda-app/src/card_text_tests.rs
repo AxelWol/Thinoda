@@ -3438,6 +3438,65 @@ fn formatted_title_input_precedes_close_tab_click() {
 }
 
 #[test]
+fn formatted_card_selection_shortcut_changes_only_selected_text() {
+    for existing in [false, true] {
+        let (mut app, id) = app_with_card(CardKind::Sticky);
+        if existing {
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("Card title", 0..4, |style| style.italic = Some(true))
+                .unwrap();
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .set_card_title_with_rich_text(id, "Card title", rich)
+                .unwrap();
+        }
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(4),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        h.input_mut()
+            .events
+            .extend(raw_key_press(Key::B, Modifiers::COMMAND));
+        run_input_hook_steps(&mut h, 3);
+        let doc = h.state().doc().unwrap();
+        let draft = doc.view.title_rich_formatting_draft().unwrap();
+        assert_eq!(draft.runs[0].style.bold, Some(true));
+        assert_eq!(draft.runs[0].style.italic, existing.then_some(true));
+        assert_eq!((draft.runs[0].start, draft.runs[0].end), (0, 4));
+        assert_ne!(
+            doc.doc.sheet().topic(id).unwrap().inline_text,
+            draft,
+            "formatting remains in the draft until commit"
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .inline_text,
+            draft
+        );
+    }
+}
+
+#[test]
 fn last_title_keystroke_and_window_close_in_one_frame_preserve_the_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fast-window-close.thinoda");

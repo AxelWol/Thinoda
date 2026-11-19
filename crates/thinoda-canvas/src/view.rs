@@ -51,6 +51,7 @@ mod image_resize;
 
 #[path = "board_input.rs"]
 pub(crate) mod board_input;
+use board_input::label_format;
 
 #[path = "ink_view.rs"]
 mod ink_view;
@@ -381,6 +382,7 @@ struct EditState {
     ime_composing: bool,
     companion_cursor: Option<(String, Option<egui::text::CCursorRange>)>,
     source_unavailable: bool,
+    plain_text_history_active: bool,
 }
 
 #[derive(Debug)]
@@ -1109,6 +1111,7 @@ impl MapView {
             ime_composing: false,
             companion_cursor: None,
             source_unavailable: false,
+            plain_text_history_active: false,
         });
         self.pending_reveal = Some(id);
     }
@@ -1136,6 +1139,7 @@ impl MapView {
         if let Some(e) = &mut self.editing
             && e.topic == id
         {
+            e.plain_text_history_active |= e.rich_history.is_none() && e.text != text;
             e.text = text.to_string();
         }
     }
@@ -1261,6 +1265,7 @@ impl MapView {
 
     pub fn set_editing_text(&mut self, text: &str) {
         if let Some(e) = &mut self.editing {
+            e.plain_text_history_active |= e.rich_history.is_none() && e.text != text;
             e.text = text.to_string();
         }
     }
@@ -3335,6 +3340,27 @@ fn card_title_input_event(event: &egui::Event, edit_id: Id) -> bool {
     }
 }
 
+fn card_title_format_shortcut(event: &egui::Event) -> Option<label_format::Format> {
+    let egui::Event::Key {
+        key,
+        modifiers,
+        pressed: true,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !modifiers.matches_exact(Modifiers::COMMAND) {
+        return None;
+    }
+    match key {
+        Key::B => Some(label_format::Format::Bold),
+        Key::I => Some(label_format::Format::Italic),
+        Key::U => Some(label_format::Format::Underline),
+        _ => None,
+    }
+}
+
 fn show_editor(
     ui: &mut Ui,
     doc: &mut Document,
@@ -3346,7 +3372,19 @@ fn show_editor(
     let split_input = !out.minimap_blocks_keyboard
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.editing.as_ref().is_some_and(|edit| {
-            edit.rich_history.is_some() || !edit.original_inline_text.is_empty()
+            edit.rich_history.is_some()
+                || !edit.original_inline_text.is_empty()
+                || (doc.sheet().topic(edit.topic).is_some_and(|topic| {
+                    matches!(
+                        topic.card.as_ref().map(|card| card.kind),
+                        Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+                    )
+                }) && ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| card_title_format_shortcut(event).is_some())
+                }))
         })
         && ui.input(|input| {
             input.focused
@@ -3582,17 +3620,51 @@ fn show_editor_pass(
     layout: &Layout,
     out: &mut CanvasOutput,
 ) {
+    let format_selection = ui.memory(|memory| memory.has_focus(MapCanvas::title_editor_id()))
+        && TextEdit::load_state(ui.ctx(), MapCanvas::title_editor_id())
+            .and_then(|state| state.cursor.char_range())
+            .is_some_and(|cursor| cursor.primary.index != cursor.secondary.index)
+        && ui.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| card_title_format_shortcut(event).is_some())
+        });
     let rich_card_title = view
         .editing
         .as_ref()
-        .and_then(|edit| doc.sheet().topic(edit.topic))
-        .is_some_and(|topic| {
-            topic.inline_text != InlineText::default()
-                && matches!(
-                    topic.card.as_ref().map(|card| card.kind),
-                    Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
-                )
+        .and_then(|edit| doc.sheet().topic(edit.topic).map(|topic| (edit, topic)))
+        .is_some_and(|(edit, topic)| {
+            matches!(
+                topic.card.as_ref().map(|card| card.kind),
+                Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+            ) && (topic.inline_text != InlineText::default()
+                || (format_selection
+                    && !edit.plain_text_history_active
+                    && edit.text == edit.original))
         });
+    if format_selection
+        && !rich_card_title
+        && view.editing.as_ref().is_some_and(|edit| {
+            edit.rich_history.is_none()
+                && (edit.plain_text_history_active || edit.text != edit.original)
+                && doc.sheet().topic(edit.topic).is_some_and(|topic| {
+                    matches!(
+                        topic.card.as_ref().map(|card| card.kind),
+                        Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+                    )
+                })
+        })
+    {
+        ui.input_mut(|input| {
+            input
+                .events
+                .retain(|event| card_title_format_shortcut(event).is_none())
+        });
+        view.title_error = Some(
+            "Finish and reopen this card title before applying inline formatting; its plain-text undo history is active".into(),
+        );
+    }
     if rich_card_title {
         let owner = doc.instance_id();
         let Some(edit) = view.editing.as_mut() else {
@@ -3775,6 +3847,16 @@ fn show_editor_pass(
         edit.companion_cursor = TextEdit::load_state(ui.ctx(), edit_id)
             .map(|state| (edit.text.clone(), state.cursor.char_range()));
     }
+    let rich_base = thinoda_core::label_style::LabelStyle {
+        font_family: style.font_family.clone(),
+        font_size: Some(style.font_size),
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+        strikethrough: style.strikethrough,
+        align: style.align,
+        ..Default::default()
+    };
     let mut history_cursor = None;
     if edit.rich_history.is_some() && ui.memory(|memory| memory.has_focus(edit_id)) {
         let redo = ui.input_mut(|input| {
@@ -3802,6 +3884,55 @@ fn show_editor_pass(
                 Err(error) => view.title_error = Some(error),
             }
         }
+        let selection = TextEdit::load_state(ui.ctx(), edit_id)
+            .and_then(|state| state.cursor.char_range())
+            .map(|cursor| DraftSelection {
+                anchor: cursor.secondary.index.0,
+                focus: cursor.primary.index.0,
+            })
+            .filter(|selection| selection.anchor != selection.focus);
+        if let Some(selection) = selection {
+            let format = [
+                (Key::B, label_format::Format::Bold),
+                (Key::I, label_format::Format::Italic),
+                (Key::U, label_format::Format::Underline),
+            ]
+            .into_iter()
+            .find_map(|(key, format)| {
+                ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, key))
+                    .then_some(format)
+            });
+            if let Some(format) = format
+                && let Some(history) = &mut edit.rich_history
+            {
+                let result = if ime_active || edit.rich_history_composing {
+                    Err("cannot format rich text during composition".into())
+                } else {
+                    let mut formatting = edit.inline_text.clone();
+                    label_format::apply(
+                        &mut formatting,
+                        &edit.text,
+                        selection.anchor.min(selection.focus)
+                            ..selection.anchor.max(selection.focus),
+                        &rich_base,
+                        format,
+                    )
+                    .and_then(|()| {
+                        history.set_selection(selection)?;
+                        history.replace_content(
+                            edit.text.clone(),
+                            formatting.clone(),
+                            selection,
+                        )?;
+                        edit.inline_text = formatting;
+                        Ok(())
+                    })
+                };
+                if let Err(error) = result {
+                    view.title_error = Some(error);
+                }
+            }
+        }
     }
     let align = match style.align {
         thinoda_core::TextAlign::Left => egui::Align::LEFT,
@@ -3814,16 +3945,6 @@ fn show_editor_pass(
     let rich_layout = text_card && edit.rich_history.is_some();
     let rich_formatting = edit.inline_text.clone();
     let zoom = view.zoom;
-    let rich_base = thinoda_core::label_style::LabelStyle {
-        font_family: style.font_family.clone(),
-        font_size: Some(style.font_size),
-        bold: style.bold,
-        italic: style.italic,
-        underline: style.underline,
-        strikethrough: style.strikethrough,
-        align: style.align,
-        ..Default::default()
-    };
     let background = style.fill.map_or(Color32::WHITE, color32);
     let mut rich_bold_sections = Vec::new();
     let mut rich_list_markers = Vec::new();
@@ -3924,6 +4045,9 @@ fn show_editor_pass(
     let pointer = pending_before_outside_pointer
         .then(|| ui.input_mut(|input| std::mem::take(&mut input.pointer)));
     let output = te.show(&mut child);
+    if edit.rich_history.is_none() && output.response.changed() {
+        edit.plain_text_history_active = true;
+    }
     if let Some(selection) = history_cursor {
         let mut state = output.state.clone();
         state
@@ -5163,6 +5287,267 @@ mod tests {
     }
 
     #[test]
+    fn formatted_card_selection_shortcuts_are_undoable() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "a\u{301}bc",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 2..3, |style| style.italic = Some(true))
+            .unwrap();
+        let original = topic.inline_text.clone();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(1);
+        let rich = h.state().view.title_rich_formatting_draft().unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(
+            h.state().view.title_rich_formatting_draft().unwrap(),
+            original
+        );
+        h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.title_rich_formatting_draft().unwrap(), rich);
+        h.key_press(Key::Enter);
+        h.run_steps(1);
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().inline_text, rich);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(
+            h.state().doc.sheet().topic(id).unwrap().inline_text,
+            original
+        );
+    }
+
+    #[test]
+    fn formatted_card_selection_shortcuts_follow_base_style_in_order() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.style.bold = Some(true);
+        topic.style.italic = Some(true);
+        topic.style.underline = Some(true);
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.font_size = Some(22.0))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        for key in [Key::B, Key::I, Key::U] {
+            h.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            });
+        }
+        h.run_steps(1);
+        let rich = h.state().view.title_rich_formatting_draft().unwrap();
+        let style = &rich.runs[0].style;
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+        assert_eq!(style.bold, Some(false));
+        assert_eq!(style.italic, Some(false));
+        assert_eq!(style.underline, Some(false));
+        assert_eq!(style.font_size, Some(22.0));
+    }
+
+    #[test]
+    fn formatted_card_selection_shortcut_is_rejected_during_composition() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.italic = Some(true))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        let before = h.state().view.title_rich_formatting_draft().unwrap();
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(1);
+        assert_eq!(
+            h.state().view.title_rich_formatting_draft().unwrap(),
+            before
+        );
+        assert!(
+            h.state_mut()
+                .view
+                .take_title_error()
+                .unwrap()
+                .contains("composition")
+        );
+    }
+
+    #[test]
+    fn plain_card_selection_formatting_preserves_existing_undo_history() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        for edit_mode in [0, 1, 2] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            if edit_mode != 0 {
+                h.event(egui::Event::Text("x".into()));
+                h.run_steps(1);
+                if edit_mode == 2 {
+                    h.key_press(Key::Backspace);
+                    h.run_steps(1);
+                }
+            }
+            let editor_id = MapCanvas::title_editor_id();
+            let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(1),
+                    egui::text::CCursor::new(0),
+                )));
+            state.store(&h.ctx, editor_id);
+            h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+            h.run_steps(1);
+            if edit_mode != 0 {
+                assert_eq!(
+                    h.state().view.editing_text(),
+                    Some(if edit_mode == 1 { "abx" } else { "ab" })
+                );
+                assert!(h.state().view.title_rich_formatting_draft().is_none());
+                assert!(
+                    h.state_mut()
+                        .view
+                        .take_title_error()
+                        .unwrap()
+                        .contains("reopen")
+                );
+            } else {
+                let rich = h.state().view.title_rich_formatting_draft().unwrap();
+                assert_eq!(rich.runs[0].style.bold, Some(true));
+                h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+                h.run_steps(1);
+                assert!(
+                    h.state()
+                        .view
+                        .title_rich_formatting_draft()
+                        .unwrap()
+                        .is_empty()
+                );
+                h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
+                h.run_steps(1);
+                assert_eq!(h.state().view.title_rich_formatting_draft().unwrap(), rich);
+                h.key_press(Key::Enter);
+                h.run_steps(1);
+                assert_eq!(h.state().doc.sheet().topic(id).unwrap().inline_text, rich);
+            }
+        }
+    }
+
+    #[test]
     fn formatted_card_title_editor_keeps_rich_text_when_typing() {
         use thinoda_core::{
             CardKind, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
@@ -5364,6 +5749,7 @@ mod tests {
             ime_composing: false,
             companion_cursor: None,
             source_unavailable: false,
+            plain_text_history_active: false,
         });
         Harness::builder()
             .with_size(vec2(900.0, 600.0))

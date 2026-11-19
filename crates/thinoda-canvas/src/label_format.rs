@@ -9,7 +9,7 @@ use thinoda_core::{
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Format {
+pub(in crate::view) enum Format {
     Bold,
     Italic,
     Underline,
@@ -616,7 +616,7 @@ pub(super) fn active(
     cursor >= range.end || inherited
 }
 
-pub(super) fn apply(
+pub(in crate::view) fn apply(
     rich: &mut InlineText,
     text: &str,
     range: Range<usize>,

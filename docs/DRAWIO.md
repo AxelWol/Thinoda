@@ -282,6 +282,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Cover an AccessKit whole-value request before and after an outside click
   - [x] Apply eligible formatted card-title input before an outside canvas click, retaining subsequent input and rejected stale drafts
   - [x] Retain a dirty formatted card-title draft when its source disappears; allow cancellation or restoration and reject recovery against the missing source
+  - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -815,6 +816,15 @@ formatting before preserving the draft. Existing unformatted title editing is
 unchanged. Focused native tests cover repeated text, style/list preservation,
 commit and undo. Real IME/accessibility acceptance and broader rich-title
 formatting controls remain open; this does not complete D9.
+
+**D9 card selection shortcuts (partial).** Command/Ctrl+B, I and U toggle
+bold, italic and underline for selected text in a formatted card title or a
+freshly opened plain title. Grapheme boundaries and inherited card styling
+are respected, and the change participates in draft and document undo.
+Duck check: caret typing styles and discoverable run-formatting controls are
+not yet implemented. A plain title with active text-edit history must be
+committed and reopened before applying a shortcut, so its existing undo history
+is not silently discarded. Formatting is refused during IME composition.
 
 **D9 formatted-card safety follow-up.** Deleting all or part of a formatted
 title no longer indexes stale run boundaries during intermediate layouts;

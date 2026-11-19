@@ -1,6 +1,6 @@
 //! View-only board gestures. Document edits happen once, on release.
 
-mod label_format;
+pub(super) mod label_format;
 
 use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
