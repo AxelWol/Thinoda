@@ -302,6 +302,33 @@ interpreted. Generated package fixtures test the supported contract; no
 installed XMind application interoperability or successful local fuzz campaign
 is claimed.
 
+### Desktop package regression evidence (#136)
+
+The two original reporter-supplied archives from
+[issue #136](https://github.com/AxelWol/Thinoda/issues/136#issuecomment-6992737512)
+are retained under `crates/thinoda-io/tests/fixtures/`. Their `content.json` and
+`metadata.json` bytes match exactly. The desktop-saved sample adds a directory
+entry `Thumbnails/`, a manifest-declared `Thumbnails/thumbnail.png`, and a legacy
+`content.xml` absent from the manifest. The cleaned sample removes these and
+the thumbnail declaration. The original importer failed on the thumbnail's
+manifest name, before parsing the map.
+
+The manifest is now treated as an inventory rather than a fixed allowlist of
+package filenames. Safe ancillary entries outside `resources/` are not read,
+decoded, or preserved; unknown filenames alone are not evidence of unsupported
+map semantics. The importer continues to reject unsupported attachment and
+image-reference representations in map content. JSON remains authoritative over
+legacy XML when both are present. Manifest structure, safe paths and declared
+entry existence remain mandatory, as do strict image-resource checks.
+Every archive entry, including ignored entries and directories, is checked for
+safe relative paths, duplicate names and the existing 200 MiB per-entry bound.
+The package-entry bound is independently set to 1,024 so directory/preview/vendor
+entries do not consume the 128-image allowance. Ignored payloads are never
+decompressed. Regression tests compare the original samples' imported workbooks
+and cover opaque future ancillary payloads, malformed paths/manifests, unused
+resources, and the archive-entry bound. This verifies these supplied desktop
+packages, not every XMind desktop version or feature.
+
 Re-fetched on 2026-10-26: To-Do vs Task, Numbering, Topic Filtering, View All Notes,
 Export, Import and Xmind Agent (including conversation history). The other linked guides remain prior digest references;
 their detailed behavior must be rechecked before implementation. Defaults,

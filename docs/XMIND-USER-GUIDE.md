@@ -376,6 +376,20 @@ round trip. This does not verify XMind
 attachment package data or every XMind version. No installed XMind app was
 used, so installed-app interoperability is not claimed.
 
+**Desktop package compatibility:** the two reporter-supplied sample files in
+[issue #136](https://github.com/AxelWol/Thinoda/issues/136) import the same map,
+with or without the desktop thumbnail. When present, `content.json` is the map
+source; an accompanying legacy `content.xml` is not parsed. Safe ancillary
+package entries, including `Thumbnails/*` and future vendor metadata, are
+ignored rather than imported or preserved on export. Their payloads are not
+decoded or executed. Manifest entries still require safe relative paths,
+object metadata, and a matching archive entry. All ZIP entries retain path,
+duplicate-name, and per-entry size checks; packages allow at most 1,024 entries,
+independently of the unchanged 128 embedded-image limit. Image references and
+`resources/*` entries still undergo strict declaration, usage, and decode
+validation; this does not add attachment support or claim general desktop
+interoperability.
+
 ## Pitch Mode
 - Enter with the Pitch Mode toolbar button; full-screen, windowed, and Presenter View modes are documented. Presenter View shows the presentation alongside the map.
 - Full-screen settings include themes (e.g. Dark/Light), aspect ratio, topic visibility, three delivery modes, layouts, and image position. Press `?` in full screen to display the shortcut list; no fixed entry shortcut is specified in the article.
