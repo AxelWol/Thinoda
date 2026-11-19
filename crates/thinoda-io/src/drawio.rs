@@ -5831,6 +5831,21 @@ impl PageImport<'_> {
         }
         let mut topics = HashMap::new();
         let mut objects = HashMap::new();
+        let structured_objects: HashSet<_> = self
+            .zones
+            .iter()
+            .flat_map(|(_, _, objects)| objects.iter().copied())
+            .chain(
+                self.buckets
+                    .iter()
+                    .flat_map(|(members, _)| members.iter())
+                    .chain(self.locked.iter())
+                    .filter_map(|member| match member {
+                        BoardMember::Object(id) => Some(*id),
+                        BoardMember::Card(_) => None,
+                    }),
+            )
+            .collect();
         let mut converted = false;
         for (old, notes) in extension.nodes {
             let key = format!("t{}", old.0);
@@ -5864,15 +5879,7 @@ impl PageImport<'_> {
                         || o.layer.is_some()
                         || o.locked
                         || self.sheet.canvas.scene.parents.contains_key(&id)
-                        || self
-                            .zones
-                            .iter()
-                            .any(|(_, _, objects)| objects.contains(&id))
-                        || self
-                            .buckets
-                            .iter()
-                            .any(|(members, _)| members.contains(&BoardMember::Object(id)))
-                        || self.locked.contains(&BoardMember::Object(id))
+                        || structured_objects.contains(&id)
                         || o.drawio.as_ref().is_some_and(|data| {
                             !data.style.is_empty() || !data.attributes.is_empty()
                         })

@@ -1251,8 +1251,10 @@ IDs and lossless conversion remain open.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene
-parents before removing a shape. Duck check: ordinary-object fallback retains
-the structure but disables the Sankey extension until a lossless mapping exists.
+parents before removing a shape. Deferred membership is indexed once so the
+check scales with the imported board size. Duck check: ordinary-object fallback
+retains the structure but disables the Sankey extension until a lossless mapping
+exists.
 
 ## 5. Rubber-duck findings
 
