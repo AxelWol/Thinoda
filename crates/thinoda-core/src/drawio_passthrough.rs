@@ -32,6 +32,30 @@ pub const RESERVED_DOCUMENT_ATTRIBUTES: &[&str] = &[
     "type",
     "version",
 ];
+/// Model attributes written by the draw.io adapter, not page passthrough.
+pub const RESERVED_MODEL_ATTRIBUTES: &[&str] = &[
+    "dx",
+    "dy",
+    "grid",
+    "gridSize",
+    "thinodaGrid",
+    "thinodaSnap",
+    "thinodaSankey",
+    "background",
+    "backgroundImage",
+    "guides",
+    "tooltips",
+    "connect",
+    "arrows",
+    "fold",
+    "page",
+    "pageScale",
+    "pageWidth",
+    "pageHeight",
+    "math",
+    "shadow",
+    "adaptiveColors",
+];
 
 /// Unknown attributes of the source `<mxfile>` element.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,7 +196,11 @@ impl DrawioPagePassthrough {
         }
         let mut names = HashSet::new();
         for (name, value) in &self.model_attributes {
-            if !valid_attribute_name(name) || !valid_text(value) || !names.insert(name.as_str()) {
+            if !valid_attribute_name(name)
+                || RESERVED_MODEL_ATTRIBUTES.contains(&name.as_str())
+                || !valid_text(value)
+                || !names.insert(name.as_str())
+            {
                 return Err(format!("invalid draw.io page attribute {name:?}"));
             }
         }
@@ -181,6 +209,9 @@ impl DrawioPagePassthrough {
         }
         for id in &self.cell_ids {
             valid_id(id, "draw.io cell id")?;
+        }
+        if self.byte_len() > MAX_SHEET_PASSTHROUGH_BYTES {
+            return Err("draw.io passthrough of the sheet is too large".into());
         }
         Ok(())
     }
@@ -320,12 +351,19 @@ mod tests {
     fn page_validation() {
         let page = DrawioPagePassthrough {
             diagram_id: Some("page-1".into()),
-            model_attributes: vec![("math".into(), "1".into())],
+            model_attributes: vec![("future".into(), "1".into())],
             cell_ids: vec!["0".into(), "1".into()],
         };
         page.validate().unwrap();
         let mut bad = page.clone();
-        bad.model_attributes.push(("math".into(), "0".into()));
+        bad.model_attributes.push(("future".into(), "0".into()));
+        assert!(bad.validate().is_err());
+        bad = page.clone();
+        bad.model_attributes.push(("grid".into(), "0".into()));
+        assert!(bad.validate().is_err());
+        bad = page;
+        bad.model_attributes
+            .push(("large".into(), "x".repeat(MAX_SHEET_PASSTHROUGH_BYTES)));
         assert!(bad.validate().is_err());
     }
 }

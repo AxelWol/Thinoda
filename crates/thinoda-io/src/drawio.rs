@@ -21,7 +21,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use thinoda_core::drawio_passthrough::{
     DrawioCellPassthrough as Passthrough, DrawioDocumentPassthrough, DrawioPagePassthrough,
-    RESERVED_DOCUMENT_ATTRIBUTES,
+    RESERVED_DOCUMENT_ATTRIBUTES, RESERVED_MODEL_ATTRIBUTES,
 };
 use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
@@ -639,6 +639,7 @@ pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
 struct Page {
     name: String,
     id: Option<String>,
+    dropped_id: bool,
     model: Element,
 }
 
@@ -671,6 +672,7 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
             pages: vec![Page {
                 name: String::new(),
                 id: None,
+                dropped_id: false,
                 model: root,
             }],
             passthrough: None,
@@ -708,6 +710,7 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                             && !id.chars().any(char::is_control)
                     })
                     .map(str::to_owned);
+                let dropped_id = diagram.attr("id").is_some() && id.is_none();
                 let model = match diagram
                     .children
                     .iter()
@@ -726,7 +729,12 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                         model
                     }
                 };
-                pages.push(Page { name, id, model });
+                pages.push(Page {
+                    name,
+                    id,
+                    dropped_id,
+                    model,
+                });
             }
             if pages.is_empty() {
                 return Err(invalid("draw.io document contains no pages"));
@@ -5345,37 +5353,14 @@ fn import_page(
         .filter(|(_, item)| matches!(item, Item::Object(_)))
         .map(|(index, _)| *index)
         .collect();
-    let drawio = page_passthrough(page, &cells, &object_cells);
+    let (drawio, dropped) = page_passthrough(page, &cells, &object_cells);
+    if dropped {
+        import.warn(ImportWarning::Other);
+    }
     let mut sheet = import.finish();
     sheet.drawio = drawio;
     Ok(sheet)
 }
-
-/// Unknown `mxGraphModel` attributes the exporter writes from first-class fields
-/// or as fixed values.
-const OWNED_MODEL_ATTRIBUTES: &[&str] = &[
-    "dx",
-    "dy",
-    "grid",
-    "gridSize",
-    "thinodaGrid",
-    "thinodaSnap",
-    "thinodaSankey",
-    "background",
-    "backgroundImage",
-    "guides",
-    "tooltips",
-    "connect",
-    "arrows",
-    "fold",
-    "page",
-    "pageScale",
-    "pageWidth",
-    "pageHeight",
-    "math",
-    "shadow",
-    "adaptiveColors",
-];
 
 /// Page-level passthrough. `cell_ids` records the cells that became canvas
 /// objects, so the exporter never hands a deleted object's id to another cell.
@@ -5383,48 +5368,52 @@ fn page_passthrough(
     page: &Page,
     cells: &[Cell],
     object_cells: &HashSet<usize>,
-) -> Option<Arc<DrawioPagePassthrough>> {
+) -> (Option<Arc<DrawioPagePassthrough>>, bool) {
     let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
     let mut drawio = DrawioPagePassthrough {
         diagram_id: page.id.clone(),
-        model_attributes: page
-            .model
-            .attrs
-            .iter()
-            .filter(|(name, value)| {
-                !OWNED_MODEL_ATTRIBUTES.contains(&name.as_str())
-                    && thinoda_core::drawio_passthrough::valid_attribute_name(name)
-                    && !value
-                        .chars()
-                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
-            })
-            .cloned()
-            .collect(),
+        model_attributes: Vec::new(),
         cell_ids: Vec::new(),
     };
     let mut seen = HashSet::new();
-    drawio
-        .model_attributes
-        .retain(|(name, _)| seen.insert(name.clone()));
+    let mut dropped = page.dropped_id;
     let mut bytes = drawio.byte_len();
+    for (name, value) in &page.model.attrs {
+        if RESERVED_MODEL_ATTRIBUTES.contains(&name.as_str()) {
+            continue;
+        }
+        let valid = thinoda_core::drawio_passthrough::valid_attribute_name(name)
+            && !value
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+            && seen.insert(name.as_str());
+        let next = bytes.saturating_add(name.len()).saturating_add(value.len());
+        if !valid || next > budget {
+            dropped = true;
+            continue;
+        }
+        bytes = next;
+        drawio.model_attributes.push((name.clone(), value.clone()));
+    }
     for (index, cell) in cells.iter().enumerate() {
         let id = &cell.id;
-        if !object_cells.contains(&index)
-            || id.starts_with('\u{0}')
-            || matches!(id.as_str(), "0" | "1")
+        if !object_cells.contains(&index) || id.starts_with('\u{0}') {
+            continue;
+        }
+        if matches!(id.as_str(), "0" | "1")
             || id.len() > thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
             || id.chars().any(char::is_control)
             || drawio.cell_ids.len() >= thinoda_core::drawio_passthrough::MAX_PAGE_CELL_IDS
+            || bytes.saturating_add(id.len()) > budget
         {
+            dropped = true;
             continue;
         }
         bytes += id.len();
-        if bytes > budget {
-            break;
-        }
         drawio.cell_ids.push(id.clone());
     }
-    (!drawio.is_empty() && drawio.validate().is_ok()).then(|| Arc::new(drawio))
+    debug_assert!(drawio.validate().is_ok());
+    ((!drawio.is_empty()).then(|| Arc::new(drawio)), dropped)
 }
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
@@ -7644,6 +7633,9 @@ fn export_sheets<'a>(
     }
     let sheets: Vec<_> = sheets.into_iter().collect();
     for sheet in &sheets {
+        if let Some(page) = &sheet.drawio {
+            page.validate().map_err(|error| invalid(&error))?;
+        }
         validate_scene_export(sheet)?;
     }
     if sheets.len() > 1

@@ -10514,6 +10514,45 @@ fn drawio_document_attributes_round_trip_through_native_workbooks() {
 }
 
 #[test]
+fn drawio_page_passthrough_reports_dropped_attributes_and_invalid_ids() {
+    let large = "x".repeat(thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2);
+    let xml = format!(
+        r#"<mxfile><diagram id="{}" name="Page"><mxGraphModel xmlns:future="urn:future" oversized="{large}" kept="yes"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
+        "p".repeat(thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES + 1)
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let page = report.workbook.active().drawio.as_ref().unwrap();
+    assert!(page.diagram_id.is_none());
+    assert_eq!(page.model_attributes, [("kept".into(), "yes".into())]);
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(exported.contains("kept=\"yes\""));
+    assert!(!exported.contains("oversized="));
+    assert!(!exported.contains("xmlns:future"));
+}
+
+#[test]
+fn drawio_page_passthrough_rejects_reserved_and_oversized_attributes() {
+    let mut book = Workbook::new(Sheet::new("Page", "Root"));
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        model_attributes: vec![("grid".into(), "0".into())],
+        ..Default::default()
+    }));
+    assert!(book.validate().is_err());
+    assert!(export(&book).is_err());
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        model_attributes: vec![(
+            "large".into(),
+            "x".repeat(thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES),
+        )],
+        ..Default::default()
+    }));
+    assert!(book.active().canvas.objects.is_empty());
+    assert!(book.validate().is_err());
+    assert!(export(&book).is_err());
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,

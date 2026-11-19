@@ -3333,8 +3333,10 @@ mod lock_tests {
             },
         ));
         book.validate().unwrap();
-        let mut plain = Workbook::default();
-        plain.drawio = book.drawio.clone();
+        let plain = Workbook {
+            drawio: book.drawio.clone(),
+            ..Workbook::default()
+        };
         let bytes = Snapshot::to_bytes(SnapshotMeta::default(), &plain).unwrap();
         assert_eq!(
             serde_json::from_slice::<Snapshot>(&bytes).unwrap().workbook,

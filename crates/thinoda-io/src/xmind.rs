@@ -2793,8 +2793,10 @@ mod tests {
                 attributes: vec![("owner".into(), "team".into())],
             },
         ));
-        let mut plain = Workbook::default();
-        plain.drawio = book.drawio.clone();
+        let plain = Workbook {
+            drawio: book.drawio.clone(),
+            ..Workbook::default()
+        };
         assert_eq!(import(&export(&plain).unwrap()).unwrap(), plain);
         let snapshot = private_snapshot(&book).unwrap();
         assert!(snapshot.contains(DRAWIO_DOCUMENT_SNAPSHOT_VERSION));
