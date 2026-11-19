@@ -1919,11 +1919,14 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   cover recovery. Pointer-free keyboard, IME and title-targeted accessible
   text-value actions process each event in order. IME candidate keys stay in
   composition and undo/redo during composition is refused; separate ordinary
-  text events create separate local undo steps. Batches with pointer or other
-  accessibility input still need ordering parity against the shape-label
-  editor. Single-event typing, deletion, cut, accessible selected-text
-  replacement and initial IME input share its grapheme-boundary rules;
-  mixed-pointer and other accessibility cases remain open.
+  text events create separate local undo steps. An outside canvas press now
+  applies preceding eligible text and IME input before committing, without
+  consuming later input; a rejected stale-source commit retains the draft.
+  Synthetic tests cover these boundaries, but host chrome can handle input
+  before the canvas and is not covered. In-editor pointer batches and other
+  accessibility targets still need ordering parity. Single-event typing,
+  deletion, cut, accessible selected-text replacement and initial IME input
+  share the shape-label editor's grapheme-boundary rules.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

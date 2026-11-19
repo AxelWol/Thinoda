@@ -280,6 +280,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
   - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
   - [x] Cover an AccessKit whole-value request before and after an outside click
+  - [x] Apply eligible formatted card-title input before an outside canvas click, retaining subsequent input and rejected stale drafts
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -827,7 +828,10 @@ processed event by event before the visible editor pass. IME candidate keys
 are protected, undo/redo during composition is refused, and a completed
 composition is one local undo step. Synthetic tests cover mixed input,
 undo-before-typing and accessible replacement around a partial grapheme
-selection. Separate ordinary text events create separate local undo steps.
+selection. Before an outside canvas press, eligible preceding input is applied
+in order before pointer handling can commit the title. Synthetic cases cover
+batched text, IME candidates, an earlier Enter and stale-source rejection.
+Separate ordinary text events create separate local undo steps.
 
 **D9 card graphemes (partial).** Single-event text/paste, line-break,
 deletion, cut, accessible selected-text replacement and initial IME input
@@ -835,10 +839,11 @@ use the board-label editor's grapheme boundaries. Focused synthetic tests
 cover replacement and deletion of a partial combining-character selection,
 an empty accessible replacement, caret snapping and initial IME insertion.
 
-Duck check: batches containing pointer or unrelated accessibility events do not
-use this ordered path, and mixed-pointer ordering and full grapheme parity
-remain open. Real-platform IME, screen-reader and visual acceptance are still
-required.
+Duck check: this outside-click protection runs at the canvas boundary, not
+before host chrome handles its own controls. In-editor pointer batches and
+other accessibility targets still lack ordered parity, and input after a
+rejected commit needs broader acceptance testing. Full grapheme parity and
+real-platform IME, screen-reader and visual acceptance remain open.
 
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;

@@ -1928,6 +1928,9 @@ impl MapCanvas {
 
         let minimap_rect = view.minimap_rect(rect, ui.clip_rect());
         if ctx.input(|input| input.pointer.any_pressed()) {
+            if ui.is_enabled() {
+                process_title_input_before_pointer_press(ui, doc, view, &layout, &mut out);
+            }
             let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(&ctx) {
                 minimap_rect
             } else {
@@ -3177,6 +3180,122 @@ fn handle_keys(
             }
             _ => {}
         }
+    }
+}
+
+fn process_title_input_before_pointer_press(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    out: &mut CanvasOutput,
+) {
+    let edit_id = MapCanvas::title_editor_id();
+    let Some(edit) = &view.editing else {
+        return;
+    };
+    if edit.rich_history.is_none() && edit.original_inline_text.is_empty() {
+        return;
+    }
+    let Some(topic_layout) = layout.topics.get(&edit.topic) else {
+        return;
+    };
+    let rect = view
+        .xf()
+        .rect(topic_editor_rect(doc.sheet(), topic_layout))
+        .expand(2.0);
+    if !ui.memory(|memory| {
+        memory.has_focus(edit_id)
+            || (memory.focused().is_none() && memory.had_focus_last_frame(edit_id))
+    }) {
+        return;
+    }
+    let Some(end) = ui.input(|input| {
+        if !input.focused {
+            return None;
+        }
+        let index = input
+            .events
+            .iter()
+            .position(|event| matches!(event, egui::Event::PointerButton { pressed: true, .. }))?;
+        let egui::Event::PointerButton { pos, .. } = &input.events[index] else {
+            return None;
+        };
+        if rect.contains(*pos)
+            || !input.events[..index]
+                .iter()
+                .any(|event| card_title_input_event(event, edit_id))
+        {
+            return None;
+        }
+        Some(index)
+    }) else {
+        return;
+    };
+    let previous_focus = ui.memory(|memory| memory.focused());
+    let (events, pointer) = ui.input_mut(|input| {
+        let events = std::mem::take(&mut input.events);
+        input.events = events[..end].to_vec();
+        (events, std::mem::take(&mut input.pointer))
+    });
+    ui.memory_mut(|memory| memory.request_focus(edit_id));
+    if view.editing.as_ref().is_some_and(|edit| edit.ime_composing)
+        || ui.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Ime(_)))
+        })
+    {
+        consume_ime_candidate_keys(ui.ctx(), edit_id);
+    }
+    let prefix = ui.input_mut(|input| std::mem::take(&mut input.events));
+    let mut processed = vec![false; prefix.len()];
+    for (index, event) in prefix.iter().enumerate() {
+        if !card_title_input_event(event, edit_id) {
+            continue;
+        }
+        ui.input_mut(|input| input.events = vec![event.clone()]);
+        let mut child = Ui::new(
+            ui.ctx().clone(),
+            edit_id.with(("input-before-pointer", index)),
+            egui::UiBuilder::new()
+                .layer_id(ui.layer_id())
+                .max_rect(ui.max_rect())
+                .layout(*ui.layout())
+                .style(ui.style().clone()),
+        );
+        child.set_clip_rect(Rect::NOTHING);
+        show_editor_pass(&mut child, doc, view, layout, out);
+        processed[index] = true;
+        if view.editing.is_none() {
+            break;
+        }
+    }
+    ui.input_mut(|input| {
+        input.pointer = pointer;
+        input.events = prefix
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, event)| (!processed[index]).then_some(event))
+            .chain(events.into_iter().skip(end))
+            .collect();
+    });
+    ui.memory_mut(|memory| {
+        if let Some(previous) = previous_focus.filter(|id| *id != edit_id || view.editing.is_some())
+        {
+            memory.request_focus(previous);
+        } else {
+            memory.surrender_focus(edit_id);
+        }
+    });
+}
+
+fn card_title_input_event(event: &egui::Event, edit_id: Id) -> bool {
+    if matches!(event, egui::Event::AccessKitActionRequest(_)) {
+        card_title_accessible_value(event, edit_id).is_some()
+    } else {
+        board_input::label_keyboard_event(event)
     }
 }
 
@@ -4584,6 +4703,115 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("abx"));
+    }
+
+    #[test]
+    fn formatted_card_title_outside_click_commits_only_preceding_input() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        for (prefix, expected, stale) in [
+            (vec![egui::Event::Text("X".into())], "abX", false),
+            (
+                vec![egui::Event::Text("X".into()), egui::Event::Text("Z".into())],
+                "abXZ",
+                false,
+            ),
+            (
+                vec![
+                    egui::Event::Text("X".into()),
+                    egui::Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                    egui::Event::Text("Z".into()),
+                ],
+                "abX",
+                false,
+            ),
+            (
+                vec![
+                    egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: "n".into(),
+                        active_range_chars: None,
+                    }),
+                    egui::Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                    egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+                ],
+                "abx",
+                false,
+            ),
+            (vec![egui::Event::Text("X".into())], "abX", true),
+        ] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic
+                .inline_text
+                .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            if stale {
+                h.state_mut()
+                    .doc
+                    .set_card_title_with_rich_text(id, "External", Default::default())
+                    .unwrap();
+            }
+            let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+            h.input_mut().events.extend(prefix);
+            h.input_mut().events.extend([
+                egui::Event::PointerMoved(outside),
+                egui::Event::PointerButton {
+                    pos: outside,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: outside,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::Text("Y".into()),
+            ]);
+            h.run_steps(2);
+            let topic = h.state().doc.sheet().topic(id).unwrap();
+            if stale {
+                assert_eq!(topic.title, "External");
+                assert_eq!(h.state().view.editing_text(), Some(expected));
+                assert!(h.state_mut().view.take_title_error().is_some());
+            } else {
+                assert_eq!(topic.title, expected);
+                assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+                assert_eq!(h.state().view.editing_topic(), None);
+            }
+        }
     }
 
     #[test]
