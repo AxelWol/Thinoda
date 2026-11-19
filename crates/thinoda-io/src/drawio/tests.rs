@@ -10954,6 +10954,189 @@ fn drawio_generated_topic_ids_avoid_sources_and_keep_connector_targets() {
 }
 
 #[test]
+fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let node = *thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|id| book.active().topics[id].card.is_some())
+        .unwrap();
+    let topic = book.active_mut().topics.get_mut(&node).unwrap();
+    topic.hyperlink = Some("https://example.com/retained".into());
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..1, |style| style.bold = Some(true))
+        .unwrap();
+    let title = topic.title.clone();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let xml = sankey_node_as_shape(&xml, node);
+    let report = load(&xml);
+    assert!(report.workbook.has_sankey());
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    let topic = report
+        .workbook
+        .active()
+        .topics
+        .values()
+        .find(|topic| topic.title == title)
+        .unwrap();
+    assert_eq!(
+        topic.hyperlink.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+    assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
+    assert_eq!(topic.style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(topic.style.align, Some(TextAlign::Right));
+}
+
+fn sankey_node_as_shape(xml: &str, node: TopicId) -> String {
+    let id = format!(r#"id="t{}""#, node.0);
+    let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+    let start = line.find("style=\"").unwrap() + "style=\"".len();
+    let end = start + line[start..].find('"').unwrap();
+    let replacement = format!(
+        "{}shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#123456;align=right;{}",
+        &line[..start],
+        &line[end..]
+    );
+    xml.replacen(line, &replacement, 1)
+}
+
+#[test]
+fn sankey_shape_node_metadata_refuses_conversion_without_losing_prior_nodes() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let mut nodes: Vec<_> = thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .filter(|id| book.active().topics[id].card.is_some())
+        .copied()
+        .collect();
+    nodes.sort();
+    let [first, last, ..] = nodes.as_slice() else {
+        panic!("fixture requires two Sankey cards")
+    };
+    book.active_mut().topics.get_mut(last).unwrap().hyperlink =
+        Some("https://example.com/retained".into());
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let xml = sankey_node_as_shape(&sankey_node_as_shape(&xml, *first), *last);
+    let needle = format!(r#"id="t{}" link="https://example.com/retained""#, last.0);
+    assert!(xml.contains(&needle));
+    let xml = xml.replacen(
+        &needle,
+        &format!(r#"{needle} tooltip="Retained tooltip" custom="Retained data""#),
+        1,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.workbook.has_sankey());
+    for node in [first, last] {
+        let id = format!("t{}", node.0);
+        assert!(
+            report
+                .workbook
+                .active()
+                .canvas
+                .objects
+                .iter()
+                .any(|object| {
+                    object
+                        .drawio
+                        .as_ref()
+                        .and_then(|data| data.source_id.as_deref())
+                        == Some(id.as_str())
+                })
+        );
+    }
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.alt_text == "Retained tooltip")
+        .unwrap();
+    let data = object.data.as_ref().unwrap();
+    assert_eq!(data.link.as_deref(), Some("https://example.com/retained"));
+    assert_eq!(data.property("custom"), Some("Retained data"));
+}
+
+#[test]
+fn sankey_shape_node_retains_tooltip_and_unknown_style() {
+    for kind in ["tooltip", "style"] {
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let node = *thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|id| book.active().topics[id].card.is_some())
+            .unwrap();
+        let topic = book.active_mut().topics.get_mut(&node).unwrap();
+        if kind == "tooltip" {
+            topic.hyperlink = Some("https://example.com".into());
+        }
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        let mut xml = sankey_node_as_shape(&xml, node);
+        match kind {
+            "tooltip" => {
+                xml = xml.replacen(
+                    r#"link="https://example.com""#,
+                    r#"tooltip="Retained tooltip""#,
+                    1,
+                );
+            }
+            "style" => {
+                let id = format!(r#"id="t{}""#, node.0);
+                let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+                let changed =
+                    line.replacen("shape=rectangle;", "shape=rectangle;customKey=retained;", 1);
+                xml = xml.replacen(line, &changed, 1);
+            }
+            _ => {}
+        }
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{kind}: {:?}",
+            report.warnings
+        );
+        let id = format!("t{}", node.0);
+        let object = report
+            .workbook
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| {
+                object
+                    .drawio
+                    .as_ref()
+                    .and_then(|data| data.source_id.as_deref())
+                    == Some(id.as_str())
+            })
+            .unwrap();
+        match kind {
+            "tooltip" => assert_eq!(object.alt_text, "Retained tooltip"),
+            "style" => assert!(
+                object
+                    .drawio
+                    .as_ref()
+                    .unwrap()
+                    .style
+                    .contains(&("customKey".into(), "retained".into()))
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn drawio_sankey_source_id_collisions_remap_without_losing_semantics() {
     for template in [
         "sankey-budget",

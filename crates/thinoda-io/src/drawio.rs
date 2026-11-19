@@ -5805,15 +5805,23 @@ impl PageImport<'_> {
         }
         let sheet = self.sheet.clone();
         let items = self.items.clone();
-        if self.apply_sankey_candidate(json).is_err() {
-            self.sheet = sheet;
-            self.items = items;
-            self.warn(ImportWarning::DrawioSankeyStale);
+        match self.apply_sankey_candidate(json) {
+            Ok(true) => {
+                // Shape-to-card conversion cannot retain the shape or its source ID.
+                self.warn(ImportWarning::Formatting);
+                self.warn(ImportWarning::Other);
+            }
+            Ok(false) => {}
+            Err(_) => {
+                self.sheet = sheet;
+                self.items = items;
+                self.warn(ImportWarning::DrawioSankeyStale);
+            }
         }
         Ok(())
     }
 
-    fn apply_sankey_candidate(&mut self, json: &str) -> Result<(), IoError> {
+    fn apply_sankey_candidate(&mut self, json: &str) -> Result<bool, IoError> {
         let extension: SankeyExtension = serde_json::from_str(json)?;
         if extension.version != 2 {
             return Err(IoError::NewerVersion(format!(
@@ -5823,6 +5831,7 @@ impl PageImport<'_> {
         }
         let mut topics = HashMap::new();
         let mut objects = HashMap::new();
+        let mut converted = false;
         for (old, notes) in extension.nodes {
             let key = format!("t{}", old.0);
             let index = *self.index.get(key.as_str()).ok_or_else(|| {
@@ -5846,17 +5855,37 @@ impl PageImport<'_> {
                     let CanvasObjectKind::Shape { label, .. } = &o.kind else {
                         return Err(invalid("Sankey node must be a topic-compatible vertex"));
                     };
+                    if !o.alt_text.is_empty()
+                        || o.data.as_ref().is_some_and(|data| {
+                            !data.tags.is_empty()
+                                || !data.properties.is_empty()
+                                || data.placeholders
+                        })
+                        || o.drawio.as_ref().is_some_and(|data| {
+                            !data.style.is_empty() || !data.attributes.is_empty()
+                        })
+                    {
+                        return Err(invalid(
+                            "Sankey node has object data that a card cannot retain",
+                        ));
+                    }
+                    let mut card = Card::new(CardKind::Text, o.rect.size);
+                    card.color = o.style.fill;
                     let topic = self
                         .sheet
-                        .add_card(
-                            label,
-                            o.rect.center(),
-                            Card::new(CardKind::Text, o.rect.size),
-                        )
+                        .add_card(label, o.rect.center(), card)
                         .map_err(IoError::Invalid)?;
+                    if let Some(t) = self.sheet.topic_mut(topic) {
+                        t.style.fill = card.color;
+                        t.style.text_color = o.style.text_color;
+                        t.style.align = self.cells[index].style.text_align();
+                        t.hyperlink = o.data.as_ref().and_then(|data| data.link.clone());
+                        t.inline_text = o.label_rich_text.as_deref().cloned().unwrap_or_default();
+                    }
                     self.sheet.canvas.objects.retain(|o| o.id != id);
                     self.items.insert(index, Item::Card(topic));
                     objects.insert(id, topic);
+                    converted = true;
                     topic
                 }
                 _ => return Err(invalid("Sankey node is not an editable vertex")),
@@ -5927,7 +5956,7 @@ impl PageImport<'_> {
         settings.stages = remap(settings.stages)?;
         self.sheet.sankey = Some(settings);
         self.sheet.validate().map_err(IoError::Invalid)?;
-        Ok(())
+        Ok(converted)
     }
 }
 
