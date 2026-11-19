@@ -61,8 +61,8 @@ pub use render::{
 };
 pub use view::{
     AddControlLabels, BoardLabelTarget, BoardLabels, BoardTool, CanvasOutput, CardTitleFormat,
-    MapCanvas, MapView, NewTopicTitles, ObjectSelection, ShapeDrop, StencilDrop,
-    TitleEditContinuation, protect_ime_candidate_keys, shortcut_bindings,
+    CardTitleInlineValues, CardTitleStyle, MapCanvas, MapView, NewTopicTitles, ObjectSelection,
+    ShapeDrop, StencilDrop, TitleEditContinuation, protect_ime_candidate_keys, shortcut_bindings,
 };
 
 /// Shared palette for text and object formatting controls.

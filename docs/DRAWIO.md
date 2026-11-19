@@ -92,7 +92,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards, including baseline overrides, render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists. Existing formatted card-title text can now be edited while preserving runs and lists, but run-level formatting controls remain open. One rotated fixture opens, edits and saves in Windows PowerPoint; visual parity and other Office hosts remain unverified. Zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards support run-level styling and render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists. Card font selection is not searchable and card colors lack arbitrary entry. One rotated fixture opens, edits and saves in Windows PowerPoint; visual parity and other Office hosts remain unverified. Zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -286,6 +286,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
   - [x] Add selection toolbar controls for strikethrough, subscript, superscript, bullets and numbering on card titles, with grapheme-safe ranges and local undo
   - [x] Apply card-title inline formatting at the caret for subsequent typing, including toolbar and keyboard shortcuts, ordered IME input, cursor changes and accessibility whole-value replacement
+  - [x] Add card-title inline font family, numeric size and palette color controls for selections and caret typing styles; show mixed and inherited values
+  - [ ] Add searchable card-title font selection and arbitrary RGBA color entry
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -353,6 +355,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D9 card inline typography (partial) | Selection and caret controls set font family, numeric size and palette color; mixed values, inherited resets and same-frame size input with color clicks or save are covered. Search and arbitrary color entry remain open. |
 | 2026-11-19 | D9 card typing styles | Card-title inline toolbar and shortcuts now set caret typing styles; cursor changes and whole-value accessibility replacement clear them. |
 | 2026-11-19 | D10 default zone folding | draw.io swimlanes are foldable by default; their conversion to nonfoldable frames now warns. |
 | 2026-11-19 | D10 default zone header | The draw.io default header size of 40 is disclosed when conversion uses Thinoda's 24-unit frame header. |
@@ -1311,6 +1314,15 @@ joins and draft/document undo retain the appropriate runs. Moving the caret or
 an accessibility whole-value replacement clears the pending style. Duck check:
 the existing plain-editor history guard still requires reopening after untracked
 plain edits, and font family, size and color run controls for cards remain open.
+
+**D9 card inline typography (partial).** The card-title toolbar now applies
+family, numeric size and palette color to selected text or subsequent typing,
+with inherited resets and mixed-value detection. The saved companion cursor
+protects the selection across the font popup. Existing custom colors are shown;
+native and draw.io round trips retain the resulting runs. Duck check: the font
+menu is not searchable and arbitrary color entry is not yet available for
+cards. Synthetic focus and touch tests do not replace real-platform IME,
+accessibility and visual acceptance; the plain-editor history guard remains.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

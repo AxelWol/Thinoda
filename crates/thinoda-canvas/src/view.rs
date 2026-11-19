@@ -96,6 +96,26 @@ pub enum CardTitleFormat {
     Numbered,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum CardTitleStyle {
+    FontFamily(Option<String>),
+    FontSize(Option<f32>),
+    Color(Option<thinoda_core::Color>),
+}
+
+/// Outer `None` represents mixed formatting; inner `None` inherits the card style.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CardTitleInlineValues {
+    pub font_family: Option<Option<String>>,
+    pub font_size: Option<Option<f32>>,
+    pub color: Option<Option<thinoda_core::Color>>,
+}
+
+enum CardTitleChange {
+    Format(CardTitleFormat),
+    Style(CardTitleStyle),
+}
+
 impl CardTitleFormat {
     fn label_format(self) -> label_format::Format {
         match self {
@@ -542,6 +562,55 @@ fn format_card_title_draft(
         history.set_typing_style(None)?;
     }
     Ok(())
+}
+
+fn style_card_title_draft(
+    history: &mut RichTextDraft,
+    formatting: &mut InlineText,
+    text: &str,
+    selection: DraftSelection,
+    change: CardTitleStyle,
+) -> Result<(), String> {
+    let update = |style: &mut thinoda_core::InlineTextStyle| match &change {
+        CardTitleStyle::FontFamily(value) => style.font_family.clone_from(value),
+        CardTitleStyle::FontSize(value) => style.font_size = *value,
+        CardTitleStyle::Color(value) => style.color = *value,
+    };
+    let range = selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus);
+    if range.is_empty() {
+        let mut style = if history.selection() == selection {
+            history.typing_style().cloned()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| label_format::style_at_caret(formatting, range.start));
+        update(&mut style);
+        history.set_typing_style(Some(style))?;
+        history.set_selection(selection)?;
+    } else {
+        label_format::apply_style(formatting, text, range, update)?;
+        history.set_selection(selection)?;
+        history.replace_content(text.to_owned(), formatting.clone(), selection)?;
+        history.set_typing_style(None)?;
+    }
+    Ok(())
+}
+
+fn card_title_selection(ctx: &egui::Context, edit: &EditState) -> Option<DraftSelection> {
+    let cursor = edit
+        .companion_cursor
+        .as_ref()
+        .filter(|(text, _)| text == &edit.text)
+        .and_then(|(_, cursor)| *cursor)
+        .or_else(|| {
+            TextEdit::load_state(ctx, MapCanvas::title_editor_id())?
+                .cursor
+                .char_range()
+        })?;
+    Some(DraftSelection {
+        anchor: cursor.secondary.index.0,
+        focus: cursor.primary.index.0,
+    })
 }
 
 /// An existing title edit that may be resumed after its text was committed.
@@ -1366,6 +1435,21 @@ impl MapView {
             .map(|history| history.formatting().clone())
     }
 
+    pub fn title_draft_font_families(&self) -> impl Iterator<Item = &str> {
+        self.editing.iter().flat_map(|edit| {
+            edit.inline_text
+                .runs
+                .iter()
+                .filter_map(|run| run.style.font_family.as_deref())
+                .chain(
+                    edit.rich_history
+                        .as_ref()
+                        .and_then(RichTextDraft::typing_style)
+                        .and_then(|style| style.font_family.as_deref()),
+                )
+        })
+    }
+
     pub fn validated_card_title_rich_draft(
         &self,
         doc: &Document,
@@ -1913,12 +1997,10 @@ impl MapCanvas {
         view: &MapView,
         format: CardTitleFormat,
     ) -> bool {
-        let Some(selection) = TextEdit::load_state(ctx, Self::title_editor_id())
-            .and_then(|state| state.cursor.char_range())
-        else {
+        let Some(edit) = view.editing.as_ref() else {
             return false;
         };
-        let Some(edit) = view.editing.as_ref() else {
+        let Some(selection) = card_title_selection(ctx, edit) else {
             return false;
         };
         let Some(topic) = doc.sheet().topic(edit.topic) else {
@@ -1933,10 +2015,6 @@ impl MapCanvas {
             underline: resolved.underline,
             strikethrough: resolved.strikethrough,
             ..Default::default()
-        };
-        let selection = DraftSelection {
-            anchor: selection.secondary.index.0,
-            focus: selection.primary.index.0,
         };
         let range = selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus);
         let format = format.label_format();
@@ -1955,22 +2033,83 @@ impl MapCanvas {
         active && topic.title == edit.original && topic.inline_text == edit.original_inline_text
     }
 
+    pub fn title_inline_values(
+        ctx: &egui::Context,
+        doc: &Document,
+        view: &MapView,
+    ) -> Option<CardTitleInlineValues> {
+        let edit = view.editing.as_ref()?;
+        let selection = card_title_selection(ctx, edit)?;
+        let topic = doc.sheet().topic(edit.topic)?;
+        if topic.title != edit.original || topic.inline_text != edit.original_inline_text {
+            return None;
+        }
+        let range = selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus);
+        if range.is_empty() {
+            let style = edit
+                .rich_history
+                .as_ref()
+                .filter(|history| history.selection() == selection)
+                .and_then(RichTextDraft::typing_style)
+                .cloned()
+                .unwrap_or_else(|| label_format::style_at_caret(&edit.inline_text, range.start));
+            Some(CardTitleInlineValues {
+                font_family: Some(style.font_family),
+                font_size: Some(style.font_size),
+                color: Some(style.color),
+            })
+        } else {
+            Some(CardTitleInlineValues {
+                font_family: label_format::selection_value(
+                    &edit.inline_text,
+                    &edit.text,
+                    range.clone(),
+                    |style| style.font_family.clone(),
+                ),
+                font_size: label_format::selection_value(
+                    &edit.inline_text,
+                    &edit.text,
+                    range.clone(),
+                    |style| style.font_size,
+                ),
+                color: label_format::selection_value(
+                    &edit.inline_text,
+                    &edit.text,
+                    range,
+                    |style| style.color,
+                ),
+            })
+        }
+    }
+
     pub fn format_title_selection(
         ctx: &egui::Context,
         doc: &Document,
         view: &mut MapView,
         format: CardTitleFormat,
     ) -> Result<bool, String> {
-        let Some(selection) = TextEdit::load_state(ctx, Self::title_editor_id())
-            .and_then(|state| state.cursor.char_range())
-            .map(|range| DraftSelection {
-                anchor: range.secondary.index.0,
-                focus: range.primary.index.0,
-            })
-        else {
+        Self::change_title_inline(ctx, doc, view, CardTitleChange::Format(format))
+    }
+
+    pub fn style_title_selection(
+        ctx: &egui::Context,
+        doc: &Document,
+        view: &mut MapView,
+        style: CardTitleStyle,
+    ) -> Result<bool, String> {
+        Self::change_title_inline(ctx, doc, view, CardTitleChange::Style(style))
+    }
+
+    fn change_title_inline(
+        ctx: &egui::Context,
+        doc: &Document,
+        view: &mut MapView,
+        change: CardTitleChange,
+    ) -> Result<bool, String> {
+        let Some(edit) = view.editing.as_ref() else {
             return Ok(false);
         };
-        let Some(edit) = view.editing.as_ref() else {
+        let Some(selection) = card_title_selection(ctx, edit) else {
             return Ok(false);
         };
         if edit.ime_composing || view.title_ime_active(ctx) {
@@ -2021,14 +2160,23 @@ impl MapCanvas {
             formatting.clone(),
             selection,
         )?);
-        format_card_title_draft(
-            &mut history,
-            &mut formatting,
-            &edit.text,
-            selection,
-            &base,
-            format.label_format(),
-        )?;
+        match change {
+            CardTitleChange::Format(format) => format_card_title_draft(
+                &mut history,
+                &mut formatting,
+                &edit.text,
+                selection,
+                &base,
+                format.label_format(),
+            )?,
+            CardTitleChange::Style(change) => style_card_title_draft(
+                &mut history,
+                &mut formatting,
+                &edit.text,
+                selection,
+                change,
+            )?,
+        }
         let Some(edit) = view.editing.as_mut() else {
             return Ok(false);
         };
@@ -6582,6 +6730,120 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn card_inline_styles_apply_to_selection_and_caret_with_validation() {
+        use thinoda_core::{CardKind, Color, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "abc",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(2),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        let ctx = h.ctx.clone();
+        {
+            let state = h.state_mut();
+            for change in [
+                CardTitleStyle::FontFamily(Some("Inter".into())),
+                CardTitleStyle::FontSize(Some(24.0)),
+                CardTitleStyle::Color(Some(Color::rgb(10, 20, 30))),
+            ] {
+                MapCanvas::style_title_selection(&ctx, &state.doc, &mut state.view, change)
+                    .unwrap();
+            }
+            assert!(
+                MapCanvas::style_title_selection(
+                    &ctx,
+                    &state.doc,
+                    &mut state.view,
+                    CardTitleStyle::FontSize(Some(f32::NAN))
+                )
+                .is_err()
+            );
+            let values = MapCanvas::title_inline_values(&ctx, &state.doc, &state.view).unwrap();
+            assert_eq!(values.font_family, Some(Some("Inter".into())));
+            assert_eq!(values.font_size, Some(Some(24.0)));
+            assert_eq!(values.color, Some(Some(Color::rgb(10, 20, 30))));
+        }
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(3),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        {
+            let state = h.state_mut();
+            let values = MapCanvas::title_inline_values(&ctx, &state.doc, &state.view).unwrap();
+            assert_eq!(values.font_family, None);
+            assert_eq!(values.font_size, None);
+            assert_eq!(values.color, None);
+            for change in [
+                CardTitleStyle::FontFamily(None),
+                CardTitleStyle::FontSize(None),
+                CardTitleStyle::Color(None),
+            ] {
+                MapCanvas::style_title_selection(&ctx, &state.doc, &mut state.view, change)
+                    .unwrap();
+            }
+            let values = MapCanvas::title_inline_values(&ctx, &state.doc, &state.view).unwrap();
+            assert_eq!(values.font_family, Some(None));
+            assert_eq!(values.font_size, Some(None));
+            assert_eq!(values.color, Some(None));
+        }
+        let mut state = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(3),
+            )));
+        state.store(&h.ctx, editor_id);
+        {
+            let state = h.state_mut();
+            MapCanvas::style_title_selection(
+                &ctx,
+                &state.doc,
+                &mut state.view,
+                CardTitleStyle::FontSize(Some(30.0)),
+            )
+            .unwrap();
+        }
+        h.event(egui::Event::Text("x".into()));
+        h.run_steps(1);
+        let rich = h.state().view.title_rich_formatting_draft().unwrap();
+        assert_eq!(rich.runs.len(), 1);
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (3, 4));
+        assert_eq!(rich.runs[0].style.font_size, Some(30.0));
+        h.key_press(Key::Enter);
+        h.run_steps(1);
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().inline_text, rich);
+        assert!(h.state_mut().doc.undo());
     }
 
     #[test]

@@ -364,7 +364,7 @@ fn style_at(rich: &InlineText, index: usize) -> InlineTextStyle {
         .map_or_else(InlineTextStyle::default, |run| run.style.clone())
 }
 
-pub(super) fn selection_value<T: PartialEq>(
+pub(in crate::view) fn selection_value<T: PartialEq>(
     rich: &InlineText,
     text: &str,
     range: Range<usize>,
@@ -479,7 +479,7 @@ pub(in crate::view) fn grapheme_replacement_range(
     }
 }
 
-pub(super) fn apply_style(
+pub(in crate::view) fn apply_style(
     rich: &mut InlineText,
     text: &str,
     range: Range<usize>,
