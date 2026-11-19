@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 56 && book.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require native format version 56".into(),
+            ));
+        }
         if version < 55 && book.has_drawio_topic_source_ids() {
             return Err(IoError::NewerVersion(
                 "draw.io topic source IDs require native format version 55".into(),
@@ -336,6 +341,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require native format version 56".into(),
+            ));
+        }
         if book.has_drawio_topic_source_ids() {
             return Err(IoError::NewerVersion(
                 "draw.io topic source IDs require native format version 55".into(),

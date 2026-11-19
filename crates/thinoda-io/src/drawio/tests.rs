@@ -6588,7 +6588,10 @@ fn out_of_range_group_center_uses_only_a_usable_explicit_fallback() {
             let sheet = &report.workbook.sheets[0];
             let edges = connectors(sheet);
             if fallback == Some("7") {
-                assert_eq!(report.warnings, vec![ImportWarning::DetachedConnectors]);
+                assert_eq!(
+                    report.warnings,
+                    vec![ImportWarning::DetachedConnectors, ImportWarning::Other]
+                );
                 assert_eq!(edges.len(), 1);
                 assert_eq!(edges[0].from, Endpoint::Point(Vec2::new(7.0, 8.0)));
                 assert_eq!(edges[0].to, Endpoint::Object(shapes(sheet)[0].id));
@@ -12440,6 +12443,224 @@ fn drawio_sankey_topic_source_ids_remain_stable_with_semantics() {
 }
 
 #[test]
+fn drawio_group_source_ids_round_trip_and_reserve_deleted_ids() {
+    let template = concat!(
+        r#"<mxCell id="g3" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="a" value="A" vertex="1" parent="g3"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" value="B" vertex="1" parent="g3"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+    );
+    let regroup = |book: &mut Workbook| {
+        let sheet = book.active_mut();
+        let group = sheet.canvas.groups[0].id;
+        let members = sheet.board_group_members(group);
+        sheet.ungroup_board_members(group).unwrap();
+        sheet.group_board_members(&members).unwrap()
+    };
+    let mut probe = load(&page(template)).workbook;
+    let next = regroup(&mut probe);
+    let source = format!("g{}", next.0);
+    let xml = page(&template.replace("g3", &source));
+    let mut book = load(&xml).workbook;
+    assert_eq!(
+        book.active().canvas.groups[0].drawio_source_id.as_deref(),
+        Some(source.as_str())
+    );
+    assert_eq!(crate::required_native_version(&book), 56);
+    let native = crate::formats::native_export(&book).unwrap();
+    book = crate::formats::native_import(&native).unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":55,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
+    for _ in 0..2 {
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(&format!(r#"id="{source}""#)).count(), 1);
+        assert_eq!(xml.matches(&format!(r#"parent="{source}""#)).count(), 2);
+        book = load(&xml).workbook;
+        assert_eq!(
+            book.active().canvas.groups[0].drawio_source_id.as_deref(),
+            Some(source.as_str())
+        );
+    }
+    assert_eq!(regroup(&mut book), next);
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source}""#)));
+    assert!(xml.contains(&format!(r#"id="{source}-1""#)));
+}
+
+#[test]
+fn drawio_nested_and_small_groups_disclose_unretained_identity() {
+    for children in [
+        "",
+        r#"<mxCell id="a" vertex="1" parent="outer"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        concat!(
+            r#"<mxCell id="inner" style="group" vertex="1" parent="outer"><mxGeometry width="200" height="100" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="a" vertex="1" parent="inner"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="b" vertex="1" parent="inner"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="outer" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>{children}"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Other));
+        if children.contains("inner") {
+            assert_eq!(
+                report.workbook.active().canvas.groups[0]
+                    .drawio_source_id
+                    .as_deref(),
+                Some("outer")
+            );
+            assert!(
+                !report
+                    .workbook
+                    .active()
+                    .drawio
+                    .as_ref()
+                    .unwrap()
+                    .cell_ids
+                    .iter()
+                    .any(|id| id == "inner")
+            );
+        } else {
+            assert!(report.workbook.active().canvas.groups.is_empty());
+        }
+    }
+}
+
+#[test]
+fn drawio_group_source_ids_handle_collisions_and_budget_limits() {
+    let cells = concat!(
+        r#"<mxCell id="group-source" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="a" value="A" vertex="1" parent="group-source"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" value="B" vertex="1" parent="group-source"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+    );
+    let mut book = load(&page(cells)).workbook;
+    let sheet = book.active_mut();
+    let object = sheet
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| object.label() == "A")
+        .unwrap();
+    object.drawio = Some(Arc::new(Passthrough {
+        source_id: Some("group-source".into()),
+        ..Default::default()
+    }));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(r#"id="group-source""#).count(), 1);
+    let report = load(&xml);
+    assert!(
+        report
+            .workbook
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .any(|object| {
+                object.label() == "A"
+                    && object
+                        .drawio
+                        .as_ref()
+                        .and_then(|data| data.source_id.as_deref())
+                        == Some("group-source")
+            })
+    );
+    assert_ne!(
+        report.workbook.active().canvas.groups[0]
+            .drawio_source_id
+            .as_deref(),
+        Some("group-source")
+    );
+
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/>{cells}</root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert_eq!(
+        sheet.canvas.groups[0].drawio_source_id.as_deref(),
+        Some("group-source")
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "group-source")
+    );
+    let xml = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(xml.contains(r#"id="group-source""#));
+}
+
+#[test]
+fn drawio_group_source_ids_reserve_sankey_node_and_edge_ids() {
+    for node_collision in [true, false] {
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+        let node = *before.nodes.iter().next().unwrap();
+        let edge = book.active().canvas.objects.iter().find(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some())
+        }).unwrap().id;
+        let source = if node_collision {
+            format!("t{}", node.0)
+        } else {
+            format!("o{}", edge.0)
+        };
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(900.0, 900.0, 80.0, 60.0),
+                "A",
+            ))
+            .unwrap();
+        let second = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(1000.0, 900.0, 80.0, 60.0),
+                "B",
+            ))
+            .unwrap();
+        sheet
+            .group_board_members(&[BoardMember::Object(first), BoardMember::Object(second)])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some(source.clone());
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(&format!(r#"id="{source}""#)).count(), 1);
+        let report = load(&xml);
+        assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+        assert_eq!(
+            report.workbook.active().canvas.groups[0]
+                .drawio_source_id
+                .as_deref(),
+            Some(source.as_str())
+        );
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(before_mass, after_mass);
+    }
+}
+
+#[test]
 fn drawio_scene_container_ids_survive_as_page_tombstones() {
     let xml = page(concat!(
         r#"<mxCell id="card-source" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
@@ -12460,6 +12681,7 @@ fn drawio_scene_container_ids_survive_as_page_tombstones() {
     let ids = &reopened.active().drawio.as_ref().unwrap().cell_ids;
     for id in [
         "card-source",
+        "group-source",
         "group-child-a",
         "group-child-b",
         "scene-source",
@@ -12467,7 +12689,6 @@ fn drawio_scene_container_ids_survive_as_page_tombstones() {
     ] {
         assert!(ids.iter().any(|retained| retained == id), "missing {id}");
     }
-    assert!(!ids.iter().any(|retained| retained == "group-source"));
     let first = export(&reopened).unwrap();
     assert!(String::from_utf8_lossy(&first).contains(r#"id="scene-source""#));
     let second = export(&import(&first).unwrap().workbook).unwrap();

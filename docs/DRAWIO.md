@@ -309,6 +309,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
+- [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
@@ -347,6 +348,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 group source identity | Representable flat groups own bounded source IDs through native v56, XMind and recovery; copies clear ownership, and flattened or undersized groups warn. |
 | 2026-11-19 | D10 topic source identity | Imported cards and converted Sankey nodes own bounded source IDs through native v55, XMind and recovery; moves retain identity, copies clear it, and exports avoid collisions. |
 | 2026-11-19 | D10 Sankey structure safety | Sankey shape nodes with locks, named layers, groups, zones or scene parents remain ordinary objects when conversion would lose their structure. |
 | 2026-11-19 | D10 Sankey conversion safety | Shape-to-card conversion retains links, rich text, colors and alignment, and discloses remaining formatting loss. Nodes carrying unsupported metadata or unknown styles remain ordinary objects with a stale-extension warning. |
@@ -1204,8 +1206,8 @@ fidelity is enabled.
 **D10 zone/group ID allocation (partial).** Generated zone and group IDs avoid
 retained tombstones and live source IDs, including when a page budget dropped
 the corresponding tombstone. Parent references use the allocated IDs and nested
-geometry remains relative to the correct parent. Duck check: source IDs for
-groups themselves are still regenerated; zones have since gained ownership.
+geometry remains relative to the correct parent. Duck check: zones and flat
+groups have since gained source ownership; nested groups remain flattened.
 
 **D10 map-decoration IDs (partial).** Generated boundaries, branch edges,
 relationships and summaries now avoid retained tombstones and live source IDs.
@@ -1225,14 +1227,15 @@ the canvas objects. Duck check: the budget can omit a tombstone with a warning;
 the deleted ID is then not protected. At that point cards, zones, groups and
 unrepresented table rows lacked owner-bound source IDs. Adding their IDs as anonymous
 tombstones before adding ownership causes ID churn on every round trip, so that
-approach was rejected; zones and imported cards have since gained ownership. In-place save remains disabled.
+approach was rejected; zones, imported cards and flat groups have since gained
+ownership. In-place save remains disabled.
 
 **D10 zone source identity (partial).** Zones own their source cell IDs, and
 their IDs are reserved as bounded page tombstones for deletion. Native v54,
 versioned XMind snapshots and recovery retain them; sheet clipboard and sheet
 duplication clear zone ownership. Export reuses a unique source ID and updates
 member parent references, falling back to a fresh ID for conflicts. Duck check:
-page-budget omissions warn and may leave deleted IDs unprotected; group,
+page-budget omissions warn and may leave deleted IDs unprotected;
 table-row and unrepresented-cell ownership still need work. Unknown zone XML is
 not yet preserved. In-place save remains disabled.
 
@@ -1258,8 +1261,16 @@ clipboard, duplication and masked-copy paths clear it. Native v55, versioned
 XMind snapshots and recovery retain ownership, and deleted owners leave bounded
 tombstones. Export reuses unique IDs, remapping Sankey nodes and semantic
 references together. Duck check: Sankey requires canonical numeric `t` IDs;
-unrepresentable or conflicting IDs are remapped. Groups, opaque cells and full
-source-preserving save remain open.
+unrepresentable or conflicting IDs are remapped. Nested groups, opaque cells
+and full source-preserving save remain open.
+
+**D10 group source identity (partial).** Representable flat groups own bounded
+source IDs, including through native v56, private XMind snapshots and recovery.
+Group copies and masked copies clear ownership; deletion retains bounded page
+tombstones. Export avoids collisions with all live owners and remaps Sankey IDs
+when necessary. Duck check: nested groups flatten and empty or one-member
+groups are omitted, so those identities warn rather than round-trip; omitted
+tombstones can permit reuse after deletion.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 55;
+pub const NATIVE_FORMAT_VERSION: u64 = 56;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -39,10 +39,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 55;
 /// label text styles, 49 inline shape-label formatting, and 50 inline
 /// primary connector-label formatting, 51 additional connector-label formatting,
 /// and 52 card text baseline overrides, 53 draw.io document passthrough, and
-/// 54 draw.io zone source IDs, 55 draw.io topic source IDs.
+/// 54 draw.io zone source IDs, 55 draw.io topic source IDs, and
+/// 56 draw.io group source IDs.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_drawio_topic_source_ids() {
+    if book.has_drawio_group_source_ids() {
+        56
+    } else if book.has_drawio_topic_source_ids() {
         55
     } else if book.has_drawio_zone_source_ids() {
         54

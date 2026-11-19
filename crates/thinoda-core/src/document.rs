@@ -838,6 +838,9 @@ impl Document {
             for topic in s.topics.values_mut() {
                 topic.drawio_source_id = None;
             }
+            for group in &mut s.canvas.groups {
+                group.drawio_source_id = None;
+            }
             wb.sheets.insert(index + 1, s);
             wb.active_sheet = index + 1;
             Ok(index + 1)
@@ -1735,6 +1738,59 @@ mod tests {
             document.workbook().masked_copy().sheets[0]
                 .topic(card)
                 .unwrap()
+                .drawio_source_id
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn group_source_ownership_clears_on_copy_and_returns_on_undo() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let first = sheet
+            .add_card(
+                "A",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                crate::Vec2::new(150.0, 0.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let group = sheet
+            .group_board_members(&[
+                crate::board::BoardMember::Card(first),
+                crate::board::BoardMember::Card(second),
+            ])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("private-group".into());
+        let mut document = Document::new(Workbook::new(sheet));
+        document
+            .edit_sheet("Ungroup", |sheet| {
+                sheet
+                    .ungroup_board_members(group)
+                    .map_err(crate::EditError::Invalid)
+            })
+            .unwrap();
+        assert!(document.sheet().canvas.groups.is_empty());
+        assert!(document.undo());
+        assert_eq!(
+            document.sheet().canvas.groups[0]
+                .drawio_source_id
+                .as_deref(),
+            Some("private-group")
+        );
+        document.duplicate_sheet(0).unwrap();
+        assert!(
+            document.workbook().sheets[1].canvas.groups[0]
+                .drawio_source_id
+                .is_none()
+        );
+        assert!(
+            document.workbook().masked_copy().sheets[0].canvas.groups[0]
                 .drawio_source_id
                 .is_none()
         );

@@ -936,6 +936,13 @@ impl Sheet {
             || self.has_drawio_topic_source_ids()
     }
 
+    pub fn has_drawio_group_source_ids(&self) -> bool {
+        self.canvas
+            .groups
+            .iter()
+            .any(|group| group.drawio_source_id.is_some())
+    }
+
     pub fn has_drawio_topic_source_ids(&self) -> bool {
         self.topics
             .values()
@@ -2840,6 +2847,10 @@ impl Workbook {
 
     pub fn has_drawio_topic_source_ids(&self) -> bool {
         self.sheets.iter().any(Sheet::has_drawio_topic_source_ids)
+    }
+
+    pub fn has_drawio_group_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_group_source_ids)
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {

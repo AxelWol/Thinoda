@@ -418,6 +418,10 @@ impl CanvasLayer {
 
     pub fn has_drawio_passthrough(&self) -> bool {
         self.objects.iter().any(|object| object.drawio.is_some())
+            || self
+                .groups
+                .iter()
+                .any(|group| group.drawio_source_id.is_some())
     }
 
     /// Whether this layer needs object-data-aware persistence.
@@ -466,11 +470,14 @@ impl CanvasLayer {
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanvasGroup {
     pub id: CanvasGroupId,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
+    /// Imported draw.io group identity; cleared when the group is copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio_source_id: Option<String>,
 }
 
 /// Persistent board state for a floating card topic.
@@ -2870,6 +2877,12 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         if !groups.insert(g.id) {
             return Err(format!("duplicate canvas group id {}", g.id));
         }
+        if let Some(source) = &g.drawio_source_id {
+            crate::drawio_passthrough::valid_id(source, "draw.io group id")?;
+            if matches!(source.as_str(), "0" | "1") {
+                return Err("draw.io group id is reserved".into());
+            }
+        }
     }
     let mut ids = HashMap::new();
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
@@ -2883,6 +2896,10 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     for topic in sheet.topics.values() {
         drawio_bytes =
             drawio_bytes.saturating_add(topic.drawio_source_id.as_ref().map_or(0, String::len));
+    }
+    for group in &canvas.groups {
+        drawio_bytes =
+            drawio_bytes.saturating_add(group.drawio_source_id.as_ref().map_or(0, String::len));
     }
     if drawio_bytes > crate::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES {
         return Err("draw.io passthrough of the sheet is too large".into());
@@ -3066,6 +3083,9 @@ fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
 
 /// Masks free text of the canvas layer (see [`crate::Workbook::masked_copy`]).
 pub(crate) fn mask_canvas(sheet: &mut Sheet) {
+    for group in &mut sheet.canvas.groups {
+        group.drawio_source_id = None;
+    }
     for (index, layer) in sheet.canvas.layers.iter_mut().enumerate() {
         layer.name = format!("Layer {}", index + 1);
         layer.source_id = None;
@@ -4615,7 +4635,11 @@ impl Sheet {
         }
 
         let id = self.alloc_canvas_group_id();
-        self.canvas.groups.push(CanvasGroup { id, locked: false });
+        self.canvas.groups.push(CanvasGroup {
+            id,
+            locked: false,
+            drawio_source_id: None,
+        });
         for object in &mut self.canvas.objects {
             if selected.contains(&BoardMember::Object(object.id)) {
                 object.group = Some(id);

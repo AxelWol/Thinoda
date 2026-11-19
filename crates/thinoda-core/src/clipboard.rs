@@ -64,13 +64,19 @@ const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
     let mut copied;
-    let sheet = if sheet.has_drawio_zone_source_ids() || sheet.has_drawio_topic_source_ids() {
+    let sheet = if sheet.has_drawio_zone_source_ids()
+        || sheet.has_drawio_topic_source_ids()
+        || sheet.has_drawio_group_source_ids()
+    {
         copied = sheet.clone();
         for zone in &mut copied.zones {
             zone.drawio_source_id = None;
         }
         for topic in copied.topics.values_mut() {
             topic.drawio_source_id = None;
+        }
+        for group in &mut copied.canvas.groups {
+            group.drawio_source_id = None;
         }
         &copied
     } else {
@@ -387,6 +393,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     if sheet.has_drawio_topic_source_ids() {
         return Err("sheet clipboard cannot carry draw.io topic source IDs".into());
+    }
+    if sheet.has_drawio_group_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io group source IDs".into());
     }
     if version < 41 && sheet.has_card_baseline_overrides() {
         return Err("card baseline overrides require sheet clipboard version 41".into());
@@ -1811,6 +1820,56 @@ mod tests {
         assert_eq!(
             sheet.topic(id).unwrap().drawio_source_id.as_deref(),
             Some("private-source")
+        );
+    }
+
+    #[test]
+    fn clipboards_clear_group_source_ownership_and_reject_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let first = sheet
+            .add_card(
+                "A",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                crate::Vec2::new(150.0, 0.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[
+                crate::board::BoardMember::Card(first),
+                crate::board::BoardMember::Card(second),
+            ])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("private-group".into());
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(!encoded.contains("private-group"));
+        assert!(
+            decode_sheet(&encoded).unwrap().canvas.groups[0]
+                .drawio_source_id
+                .is_none()
+        );
+        let forged = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged).is_err());
+        let layout = crate::layout_sheet(&sheet, &crate::ApproxMeasure, false);
+        let board = copy_board_selection(&sheet, &layout, &[first, second], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&board).unwrap();
+        assert!(!encoded.contains("private-group"));
+        let (prefix, json) = encoded.split_once('\n').unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+        value["fragment"]["canvas"]["groups"][0]["drawio_source_id"] = "forged".into();
+        let forged = format!("{prefix}\n{value}");
+        assert!(decode_board_payload(&forged).is_err());
+        assert_eq!(
+            sheet.canvas.groups[0].drawio_source_id.as_deref(),
+            Some("private-group")
         );
     }
 

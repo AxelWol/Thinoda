@@ -9181,10 +9181,12 @@ mod accessibility_index_tests {
             thinoda_core::board::CanvasGroup {
                 id: first_group,
                 locked: false,
+                drawio_source_id: None,
             },
             thinoda_core::board::CanvasGroup {
                 id: second_group,
                 locked: false,
+                drawio_source_id: None,
             },
         ]);
         sheet.canvas.objects[0].group = Some(first_group);

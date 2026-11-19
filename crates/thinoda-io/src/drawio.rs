@@ -2845,7 +2845,7 @@ struct PageImport<'a> {
     visited: Vec<bool>,
     paint_order: Vec<usize>,
     zones: Vec<(ZoneId, Vec<TopicId>, Vec<CanvasObjectId>)>,
-    buckets: Vec<(Vec<BoardMember>, bool)>,
+    buckets: Vec<(Vec<BoardMember>, bool, Option<usize>)>,
     locked: Vec<BoardMember>,
     deferred: Vec<(usize, Context)>,
     adaptive_fixed_colors: bool,
@@ -2880,7 +2880,7 @@ impl<'a> PageImport<'a> {
         self.warnings.insert(warning);
     }
 
-    fn topic_source_id(&mut self, index: usize) -> Option<String> {
+    fn owner_source_id(&mut self, index: usize) -> Option<String> {
         let id = &self.cells[index].id;
         if !id.is_empty()
             && !id.starts_with('\u{0}')
@@ -3505,10 +3505,13 @@ impl<'a> PageImport<'a> {
                 if context.scene_parent.is_some() {
                     self.warn(ImportWarning::Other);
                 }
-                let bucket = context.bucket.unwrap_or_else(|| {
-                    self.buckets.push((Vec::new(), false));
+                let bucket = if let Some(bucket) = context.bucket {
+                    self.warn(ImportWarning::Other);
+                    bucket
+                } else {
+                    self.buckets.push((Vec::new(), false, Some(index)));
                     self.buckets.len() - 1
-                });
+                };
                 if cell.style.flag("locked") {
                     self.buckets[bucket].1 = true;
                 }
@@ -3537,7 +3540,7 @@ impl<'a> PageImport<'a> {
                             Some(bucket) => bucket,
                             None => {
                                 let members = drawn.into_iter().collect();
-                                self.buckets.push((members, false));
+                                self.buckets.push((members, false, None));
                                 self.buckets.len() - 1
                             }
                         };
@@ -3566,7 +3569,7 @@ impl<'a> PageImport<'a> {
                         Some(bucket) => bucket,
                         None => {
                             let members = drawn.into_iter().collect();
-                            self.buckets.push((members, false));
+                            self.buckets.push((members, false, None));
                             self.buckets.len() - 1
                         }
                     };
@@ -4547,7 +4550,7 @@ impl<'a> PageImport<'a> {
         }
         match self.sheet.add_card(&label, rect.center(), card) {
             Ok(id) => {
-                let source_id = self.topic_source_id(index);
+                let source_id = self.owner_source_id(index);
                 if let Some(topic) = self.sheet.topic_mut(id) {
                     topic.drawio_source_id = source_id;
                     topic.style.fill = card.color;
@@ -5055,17 +5058,20 @@ impl<'a> PageImport<'a> {
                 self.warn(ImportWarning::Other);
             }
         }
-        for (members, locked) in std::mem::take(&mut self.buckets) {
+        for (members, locked, source) in std::mem::take(&mut self.buckets) {
             if members.len() < 2 {
+                if source.is_some() {
+                    self.warn(ImportWarning::Other);
+                }
                 continue;
             }
             match self.sheet.group_board_members(&members) {
                 Ok(group) => {
-                    if locked
-                        && let Some(group) =
-                            self.sheet.canvas.groups.iter_mut().find(|g| g.id == group)
+                    let source_id = source.and_then(|index| self.owner_source_id(index));
+                    if let Some(group) = self.sheet.canvas.groups.iter_mut().find(|g| g.id == group)
                     {
-                        group.locked = true;
+                        group.locked = locked;
+                        group.drawio_source_id = source_id;
                     }
                 }
                 Err(error) => {
@@ -5595,17 +5601,29 @@ fn import_page(
                 .and_then(|id| import.index.get(id).copied())
         })
         .collect();
+    let mut sheet = import.finish();
+    let group_sources: HashSet<_> = sheet
+        .canvas
+        .groups
+        .iter()
+        .filter_map(|group| group.drawio_source_id.as_deref())
+        .collect();
+    represented_cells.extend(
+        cells
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| group_sources.contains(cell.id.as_str()).then_some(index)),
+    );
     let (drawio, dropped) = page_passthrough(page, &cells, &represented_cells, &layer_cells);
     if dropped {
-        import.warn(ImportWarning::Other);
+        warnings.insert(ImportWarning::Other);
     }
-    let mut sheet = import.finish();
     sheet.drawio = drawio;
     Ok(sheet)
 }
 
-/// Record source IDs for represented objects, scene containers and layers so
-/// generated IDs cannot reuse them after their original owner is deleted.
+/// Record source IDs for represented owners so generated IDs cannot reuse
+/// them after their original owner is deleted.
 fn page_passthrough(
     page: &Page,
     cells: &[Cell],
@@ -5862,7 +5880,7 @@ impl PageImport<'_> {
             .chain(
                 self.buckets
                     .iter()
-                    .flat_map(|(members, _)| members.iter())
+                    .flat_map(|(members, _, _)| members.iter())
                     .chain(self.locked.iter())
                     .filter_map(|member| match member {
                         BoardMember::Object(id) => Some(*id),
@@ -6752,6 +6770,13 @@ impl<'a> PageWriter<'a> {
                 .values()
                 .filter_map(|topic| topic.drawio_source_id.clone()),
         );
+        unavailable.extend(
+            sheet
+                .canvas
+                .groups
+                .iter()
+                .filter_map(|group| group.drawio_source_id.clone()),
+        );
         let mut zone_sources: HashMap<&str, usize> = HashMap::new();
         for source in sheet
             .zones
@@ -6777,6 +6802,13 @@ impl<'a> PageWriter<'a> {
                     .topics
                     .values()
                     .filter_map(|topic| topic.drawio_source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .canvas
+                    .groups
+                    .iter()
+                    .filter_map(|group| group.drawio_source_id.as_deref()),
             )
             .collect();
         for zone in &sheet.zones {
@@ -6819,6 +6851,13 @@ impl<'a> PageWriter<'a> {
                     .iter()
                     .filter_map(|zone| zone.drawio_source_id.as_deref()),
             )
+            .chain(
+                sheet
+                    .canvas
+                    .groups
+                    .iter()
+                    .filter_map(|group| group.drawio_source_id.as_deref()),
+            )
             .collect();
         for topic in sheet.topics.values() {
             let Some(source) = topic.drawio_source_id.as_deref() else {
@@ -6841,6 +6880,49 @@ impl<'a> PageWriter<'a> {
                 }
             } else if reserved.insert(source.to_owned()) {
                 writer.topic_cells.insert(topic.id, source.to_owned());
+            }
+        }
+        let mut group_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .canvas
+            .groups
+            .iter()
+            .filter_map(|group| group.drawio_source_id.as_deref())
+        {
+            *group_sources.entry(source).or_default() += 1;
+        }
+        let other_group_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .zones
+                    .iter()
+                    .filter_map(|zone| zone.drawio_source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .topics
+                    .values()
+                    .filter_map(|topic| topic.drawio_source_id.as_deref()),
+            )
+            .collect();
+        for group in &sheet.canvas.groups {
+            if let Some(source) = group.drawio_source_id.as_deref()
+                && group_sources.get(source) == Some(&1)
+                && !other_group_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer.group_cells.insert(group.id, source.to_owned());
             }
         }
         for id in &sankey_nodes {
@@ -6980,7 +7062,8 @@ impl<'a> PageWriter<'a> {
         for group in &sheet.canvas.groups {
             writer
                 .group_cells
-                .insert(group.id, generated_id(format!("g{}", group.id.0)));
+                .entry(group.id)
+                .or_insert_with(|| generated_id(format!("g{}", group.id.0)));
         }
         writer.layer_cells = layer_cell_ids(sheet, &reserved);
         reserved.extend(writer.layer_cells.values().cloned());

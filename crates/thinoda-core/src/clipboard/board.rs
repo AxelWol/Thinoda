@@ -228,6 +228,9 @@ impl BoardClipboardPayload {
         if sheet.has_drawio_topic_source_ids() {
             return Err("board clipboard cannot carry draw.io topic source IDs".into());
         }
+        if sheet.has_drawio_group_source_ids() {
+            return Err("board clipboard cannot carry draw.io group source IDs".into());
+        }
         if sheet.topics.len() > MAX_BOARD_CLIPBOARD_TOPICS + 1 {
             return Err(format!(
                 "board clipboard exceeds {MAX_BOARD_CLIPBOARD_TOPICS} topics"
@@ -1247,7 +1250,11 @@ fn copy_prepared_board_selection(
         .groups
         .iter()
         .filter(|group| groups.contains(&group.id))
-        .copied()
+        .map(|group| {
+            let mut group = group.clone();
+            group.drawio_source_id = None;
+            group
+        })
         .collect();
     let layers: HashSet<_> = fragment
         .canvas
@@ -1701,7 +1708,8 @@ pub fn paste_board_selection(
     debug_assert_eq!(next, end);
 
     for group in &source.canvas.groups {
-        let mut group = *group;
+        let mut group = group.clone();
+        group.drawio_source_id = None;
         group.id = map_group(group.id)?;
         candidate.canvas.groups.push(group);
     }

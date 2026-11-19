@@ -134,6 +134,8 @@ const DRAWIO_ZONE_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-ZONE-IDS
 const DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-ZONE-IDS-1";
 const DRAWIO_TOPIC_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-TOPIC-IDS-1";
 const DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-TOPIC-IDS-1";
+const DRAWIO_GROUP_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-GROUP-IDS-1";
+const DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-GROUP-IDS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -155,7 +157,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_drawio_topic_source_ids() {
+        tuple.serialize_element(if self.workbook.has_drawio_group_source_ids() {
+            DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_topic_source_ids() {
             DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_drawio_zone_source_ids() {
             DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
@@ -337,7 +341,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_drawio_topic_source_ids() {
+    let version = if workbook.has_drawio_group_source_ids() {
+        DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+    } else if workbook.has_drawio_topic_source_ids() {
         DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
     } else if workbook.has_drawio_zone_source_ids() {
         DRAWIO_ZONE_IDS_WORKBOOK_VERSION
@@ -458,6 +464,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_drawio_group_source_ids() {
+                return Err(A::Error::custom(
+                    "draw.io group source IDs require a group-ID-aware recovery workbook",
+                ));
+            }
             if workbook.has_drawio_topic_source_ids() {
                 return Err(A::Error::custom(
                     "draw.io topic source IDs require a topic-ID-aware recovery workbook",
@@ -695,6 +706,8 @@ where
                 && version != DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
                 && version != DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
                 && version != DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+                && version != DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                && version != DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -704,6 +717,16 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let group_envelope = version == DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                || version == DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_group_source_ids() != group_envelope {
+                return Err(A::Error::custom(
+                    "draw.io group source IDs require a group-ID-aware recovery workbook",
+                ));
+            }
+            if group_envelope {
+                return finish_recovery_workbook(seq, workbook, has_pending_ink);
+            }
             let topic_envelope = version == DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
                 || version == DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION;
             if workbook.has_drawio_topic_source_ids() != topic_envelope {
@@ -3454,6 +3477,68 @@ mod lock_tests {
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
             let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             missing["workbook"][1]["sheets"][0]["topics"][root.0.to_string()]["drawio_source_id"] =
+                serde_json::Value::Null;
+            assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        }
+    }
+
+    #[test]
+    fn drawio_group_ids_require_aware_recovery_with_and_without_ink() {
+        use thinoda_core::{Card, CardKind, Vec2, board::BoardMember};
+
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_card(
+                "A",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                Vec2::new(150.0, 0.0),
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[BoardMember::Card(first), BoardMember::Card(second)])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("source-group".into());
+        sheet.topic_mut(first).unwrap().drawio_source_id = Some("source-topic".into());
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+            } else {
+                DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            raw["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(raw).is_err());
+            let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            missing["workbook"][1]["sheets"][0]["canvas"]["groups"][0]["drawio_source_id"] =
                 serde_json::Value::Null;
             assert!(serde_json::from_value::<Snapshot>(missing).is_err());
         }

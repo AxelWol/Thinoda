@@ -60,6 +60,7 @@ const CARD_BASELINE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CARD-BASELINE-1";
 const DRAWIO_DOCUMENT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-DOCUMENT-1";
 const DRAWIO_ZONE_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ZONE-IDS-1";
 const DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-TOPIC-IDS-1";
+const DRAWIO_GROUP_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-GROUP-IDS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -749,7 +750,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_drawio_topic_source_ids() {
+    if book.has_drawio_group_source_ids() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_GROUP_IDS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_topic_source_ids() {
         Ok(serde_json::to_string(&(
             DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION,
             book,
@@ -991,6 +997,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == DRAWIO_DOCUMENT_SNAPSHOT_VERSION
                 || version == DRAWIO_ZONE_IDS_SNAPSHOT_VERSION
                 || version == DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION
+                || version == DRAWIO_GROUP_IDS_SNAPSHOT_VERSION
         })
 }
 
@@ -1046,6 +1053,15 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                         .get("canvas")
                         .and_then(|canvas| canvas.get("layers"))
                         .is_some()
+                    || sheet
+                        .get("canvas")
+                        .and_then(|canvas| canvas.get("groups"))
+                        .and_then(Value::as_array)
+                        .is_some_and(|groups| {
+                            groups.iter().any(|group| {
+                                group.get("drawio_source_id").is_some_and(|v| !v.is_null())
+                            })
+                        })
             })
         })
     {
@@ -1156,10 +1172,23 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != DRAWIO_DOCUMENT_SNAPSHOT_VERSION
             && version != DRAWIO_ZONE_IDS_SNAPSHOT_VERSION
             && version != DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION
+            && version != DRAWIO_GROUP_IDS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let group_envelope = version == DRAWIO_GROUP_IDS_SNAPSHOT_VERSION;
+        if workbook.has_drawio_group_source_ids() != group_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require a group-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if group_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
         let topic_envelope = version == DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION;
         if workbook.has_drawio_topic_source_ids() != topic_envelope {
             return Err(IoError::NewerVersion(
@@ -1748,6 +1777,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require a group-ID-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_drawio_topic_source_ids() {
             return Err(IoError::NewerVersion(
                 "draw.io topic source IDs require a topic-ID-aware private XMind snapshot".into(),
@@ -2887,6 +2921,50 @@ mod tests {
         assert!(read_private_snapshot(&old).is_err());
         let missing =
             serde_json::to_string(&(DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
+    }
+
+    #[test]
+    fn drawio_group_ids_require_aware_private_snapshot() {
+        use thinoda_core::{Card, CardKind};
+
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_card(
+                "A",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                Vec2::new(150.0, 0.0),
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[
+                thinoda_core::board::BoardMember::Card(first),
+                thinoda_core::board::BoardMember::Card(second),
+            ])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("source-group".into());
+        sheet.topic_mut(first).unwrap().drawio_source_id = Some("source-topic".into());
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_GROUP_IDS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_GROUP_IDS_SNAPSHOT_VERSION, &Workbook::default()))
                 .unwrap();
         assert!(read_private_snapshot(&missing).is_err());
     }
