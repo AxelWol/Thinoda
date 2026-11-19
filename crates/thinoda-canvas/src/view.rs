@@ -3188,24 +3188,14 @@ fn show_editor(
     out: &mut CanvasOutput,
 ) {
     let edit_id = MapCanvas::title_editor_id();
-    let split_history = !out.minimap_blocks_keyboard
+    let split_keyboard = !out.minimap_blocks_keyboard
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.editing.as_ref().is_some_and(|edit| {
-            edit.rich_history.is_some() || !edit.original_inline_text.is_empty()
+            !edit.ime_composing
+                && (edit.rich_history.is_some() || !edit.original_inline_text.is_empty())
         })
         && ui.input(|input| {
             input.focused
-                && input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key {
-                            key: Key::Z | Key::Y,
-                            pressed: true,
-                            modifiers,
-                            ..
-                        } if modifiers.command
-                    )
-                })
                 && input
                     .events
                     .iter()
@@ -3221,7 +3211,7 @@ fn show_editor(
                     )
                 })
         });
-    if split_history {
+    if split_keyboard {
         let (events, pointer) = ui.input_mut(|input| {
             (
                 std::mem::take(&mut input.events),
@@ -3236,7 +3226,7 @@ fn show_editor(
             ui.input_mut(|input| input.events = vec![event.clone()]);
             let mut child = Ui::new(
                 ui.ctx().clone(),
-                edit_id.with(("history-input", index)),
+                edit_id.with(("keyboard-input", index)),
                 egui::UiBuilder::new()
                     .layer_id(ui.layer_id())
                     .max_rect(ui.max_rect())
@@ -4553,6 +4543,23 @@ mod tests {
         h.event(egui::Event::Text("X".into()));
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("Xb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut()
+            .events
+            .extend([egui::Event::Text("X".into()), egui::Event::Text("Y".into())]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("XYb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         h.run_steps(1);
         let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();

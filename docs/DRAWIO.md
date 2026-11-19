@@ -821,11 +821,12 @@ text. Save-and-resume rebases formatting and refuses a different document.
 Recovery has a focused snapshot round-trip and stale-format/foreign-owner
 test. IME composition also closes when a commit changes no text.
 
-**D9 card keyboard ordering (partial).** When a focused formatted title
-receives text and undo/redo keyboard events in one frame, each keyboard event
-is processed in order before the visible editor pass, including a following
-commit key. Synthetic tests cover both typing-before-undo and
-undo-before-typing.
+**D9 card keyboard ordering (partial).** Keyboard-only batches in a focused
+formatted title are processed event by event before the visible editor pass,
+including undo/redo and a following commit key. Synthetic tests cover both
+typing-before-undo and undo-before-typing, and multiple text events around a
+partial grapheme selection. Separate text events create separate local undo
+steps; composition, pointer and accessibility batches are not split here.
 
 **D9 card graphemes (partial).** Single-event text/paste, line-break,
 deletion, cut, accessible selected-text replacement and initial IME input

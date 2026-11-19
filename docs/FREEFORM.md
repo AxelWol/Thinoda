@@ -1916,8 +1916,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   selection deletion/insertion is a single replacement so it inherits the
   selected style; committed continuations rebase formatting and check the
   document owner. Snapshot round-trip and foreign-owner/stale-format tests
-  cover recovery. Keyboard-only batches containing undo/redo now process each
-  event in order, including a following commit key. Batches with pointer,
+  cover recovery. Keyboard-only batches now process each event in order,
+  including undo/redo and a following commit key; separate text events create
+  separate local undo steps. Batches with pointer,
   accessibility or IME input still need ordering parity against the shape-label
   editor. Single-event typing, deletion, cut, accessible selected-text
   replacement and initial IME input share its grapheme-boundary rules;
