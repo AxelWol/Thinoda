@@ -21,6 +21,17 @@ pub const MAX_SOURCE_ID_BYTES: usize = 256;
 pub const MAX_PAGE_CELL_IDS: usize = 100_000;
 /// Upper bound for unknown attributes on the source `<mxfile>` element.
 pub const MAX_DOCUMENT_PASSTHROUGH_BYTES: usize = 16 * 1024;
+/// Attributes managed by the draw.io adapter rather than document passthrough.
+pub const RESERVED_DOCUMENT_ATTRIBUTES: &[&str] = &[
+    "agent",
+    "compressed",
+    "etag",
+    "host",
+    "modified",
+    "pages",
+    "type",
+    "version",
+];
 
 /// Unknown attributes of the source `<mxfile>` element.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,7 +54,11 @@ impl DrawioDocumentPassthrough {
     pub fn validate(&self) -> Result<(), String> {
         let mut names = HashSet::new();
         for (name, value) in &self.attributes {
-            if !valid_attribute_name(name) || !valid_text(value) || !names.insert(name.as_str()) {
+            if !valid_attribute_name(name)
+                || RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str())
+                || !valid_text(value)
+                || !names.insert(name.as_str())
+            {
                 return Err(format!("invalid draw.io document attribute {name:?}"));
             }
         }
@@ -234,6 +249,7 @@ mod tests {
         document.validate().unwrap();
         for attributes in [
             vec![("xmlns:evil".into(), "x".into())],
+            vec![("host".into(), "spoofed".into())],
             vec![("custom".into(), "bad\u{1}".into())],
             vec![("custom".into(), "1".into()), ("custom".into(), "2".into())],
         ] {

@@ -57,6 +57,7 @@ const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECT
 const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
     "THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1";
 const CARD_BASELINE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CARD-BASELINE-1";
+const DRAWIO_DOCUMENT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-DOCUMENT-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -746,7 +747,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_card_baseline_overrides() {
+    if book.drawio.is_some() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_DOCUMENT_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_card_baseline_overrides() {
         Ok(serde_json::to_string(&(
             CARD_BASELINE_SNAPSHOT_VERSION,
             book,
@@ -970,6 +976,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
                 || version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
                 || version == CARD_BASELINE_SNAPSHOT_VERSION
+                || version == DRAWIO_DOCUMENT_SNAPSHOT_VERSION
         })
 }
 
@@ -981,6 +988,9 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .as_array()
         .and_then(|envelope| envelope.get(1))
         .unwrap_or(&value);
+    if workbook.get("drawio").is_some_and(|value| !value.is_null()) {
+        return true;
+    }
     if workbook
         .get("sheets")
         .and_then(Value::as_array)
@@ -1120,10 +1130,23 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
             && version != RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
             && version != CARD_BASELINE_SNAPSHOT_VERSION
+            && version != DRAWIO_DOCUMENT_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let document_envelope = version == DRAWIO_DOCUMENT_SNAPSHOT_VERSION;
+        if workbook.drawio.is_some() != document_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io document metadata requires a document-aware private XMind snapshot".into(),
+            ));
+        }
+        if document_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
         let card_baseline_envelope = version == CARD_BASELINE_SNAPSHOT_VERSION;
         if workbook.has_card_baseline_overrides() != card_baseline_envelope {
             return Err(IoError::NewerVersion(
@@ -1676,6 +1699,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document metadata requires a document-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_card_baseline_overrides() {
             return Err(IoError::NewerVersion(
                 "card baseline overrides require a card-baseline-aware private XMind snapshot"
@@ -2736,6 +2764,52 @@ mod tests {
         child_topic.image = Some(reference);
         child_topic.image_below = false;
         (Workbook::new(sheet), bytes)
+    }
+
+    #[test]
+    fn drawio_document_metadata_requires_aware_private_snapshot() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "Text",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("Text", 0..1, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+            })
+            .unwrap();
+        book.drawio = Some(std::sync::Arc::new(
+            thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+                attributes: vec![("owner".into(), "team".into())],
+            },
+        ));
+        let mut plain = Workbook::default();
+        plain.drawio = book.drawio.clone();
+        assert_eq!(import(&export(&plain).unwrap()).unwrap(), plain);
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_DOCUMENT_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(CARD_BASELINE_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_DOCUMENT_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
     }
 
     #[test]

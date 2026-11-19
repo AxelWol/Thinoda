@@ -21,6 +21,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use thinoda_core::drawio_passthrough::{
     DrawioCellPassthrough as Passthrough, DrawioDocumentPassthrough, DrawioPagePassthrough,
+    RESERVED_DOCUMENT_ATTRIBUTES,
 };
 use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
@@ -647,17 +648,6 @@ struct DrawioDocument {
     dropped_attributes: bool,
 }
 
-const OWNED_MXFILE_ATTRIBUTES: &[&str] = &[
-    "agent",
-    "compressed",
-    "etag",
-    "host",
-    "modified",
-    "pages",
-    "type",
-    "version",
-];
-
 fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
     if bytes.len() > MAX_BYTES {
         return Err(invalid("draw.io document exceeds size limit"));
@@ -688,14 +678,14 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
         }),
         "mxfile" => {
             let dropped_attributes = root.attrs.iter().any(|(name, _)| {
-                !OWNED_MXFILE_ATTRIBUTES.contains(&name.as_str())
+                !RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str())
                     && !thinoda_core::drawio_passthrough::valid_attribute_name(name)
             });
             let passthrough = DrawioDocumentPassthrough {
                 attributes: root
                     .attrs
                     .iter()
-                    .filter(|(name, _)| !OWNED_MXFILE_ATTRIBUTES.contains(&name.as_str()))
+                    .filter(|(name, _)| !RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str()))
                     .filter(|(name, _)| {
                         thinoda_core::drawio_passthrough::valid_attribute_name(name)
                     })

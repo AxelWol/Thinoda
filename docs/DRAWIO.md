@@ -293,6 +293,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D10 — Save back to `.drawio`
 
 - [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
+- [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -328,6 +329,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 document passthrough (partial) | Safe unknown `<mxfile>` attributes survive draw.io, native v53, private XMind snapshots and recovery with or without pending ink; older or mismatched envelopes reject the metadata rather than dropping it. |
 | 2026-11-19 | D9 card-title selection formatting (partial) | The active card-title toolbar applies strikethrough, subscript/superscript and bulleted/numbered paragraphs to selected text. Selection state is grapheme-aware, whole-card styling remains distinct, and each action participates in bounded local undo. Inline font family/size/color, caret formatting, Office visual parity and real input acceptance remain open. |
 | 2026-11-18 | D9 accessible outside-click ordering (partial) | A synthetic SetValue before an outside click commits with the label; a request after the click does not modify the old label. Other pointer and assistive-technology paths remain open. |
 | 2026-11-18 | D9 ignored text input (partial) | Empty text/paste and standalone newline text events no longer expand a partial grapheme selection or move an interior caret when egui ignores the input. |
@@ -1105,7 +1107,9 @@ separate precedence, persistence and undo contracts.
 **D10 document metadata slice (partial).** Safe unknown `<mxfile>` attributes
 are bounded, validated and retained across native workbook save/reopen and
 draw.io export; namespace-qualified attributes are dropped with an import
-warning because their namespace declaration is not represented. Duck check:
+warning because their namespace declaration is not represented. Private XMind
+and recovery envelopes are versioned, and generated attributes cannot appear in
+passthrough. Duck check:
 this is not sufficient for in-place saves. Opaque unsupported cells, other
 workbook/page-level XML, container compression policy and save conflict/recovery
 semantics still need explicit ownership and loss handling before an imported

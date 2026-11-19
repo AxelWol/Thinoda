@@ -183,6 +183,9 @@ v37 for cells/pages, v53 for document attributes, board clipboard v30): objects 
 bounded safe unknown `<mxfile>` attributes in `DrawioDocumentPassthrough`. Other
 workbook-level XML, opaque objects for unmappable cells and cut-once provenance remain
 deferred to D10, so every clipboard copy clears `source_id`.
+Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
+`THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
+recovery envelopes; older envelopes are rejected if they contain these attributes.
 Tombstones (`cell_ids`) list only cells that became canvas objects, because topic and
 zone ids are regenerated on each import. Export prefers a stored source id over the
 generated `o{id}` (Sankey connectors always use `o{id}`), which keeps renumbered
