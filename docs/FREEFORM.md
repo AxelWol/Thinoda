@@ -1919,8 +1919,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   cover recovery. Keyboard-only batches containing undo/redo now process each
   event in order, including a following commit key. Batches with pointer,
   accessibility or IME input still need ordering parity against the shape-label
-  editor. Single-event typing, deletion, cut and initial IME input now share
-  its grapheme-boundary rules; mixed-input and accessibility cases remain open.
+  editor. Single-event typing, deletion, cut, accessible selected-text
+  replacement and initial IME input share its grapheme-boundary rules;
+  mixed-input and other accessibility cases remain open.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

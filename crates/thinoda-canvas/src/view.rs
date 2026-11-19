@@ -3278,7 +3278,8 @@ fn protect_card_title_graphemes(
             return None;
         }
         let mut events = input.events.iter().filter(|event| {
-            board_input::label_keyboard_event(event)
+            (board_input::label_keyboard_event(event)
+                || card_title_accessible_replacement(event, edit_id).is_some())
                 && !matches!(event, egui::Event::Key { pressed: false, .. })
         });
         match (events.next(), events.next()) {
@@ -3332,6 +3333,12 @@ fn protect_card_title_graphemes(
             ) if !value.is_empty() && value != "\n" && value != "\r" => {
                 Some(Operation::Replace(true))
             }
+            (Some(event), None) if card_title_accessible_replacement(event, edit_id).is_some() => {
+                Some(Operation::Replace(
+                    card_title_accessible_replacement(event, edit_id)
+                        .is_some_and(|value| !value.is_empty()),
+                ))
+            }
             (Some(egui::Event::Cut), None) => Some(Operation::Replace(false)),
             _ => None,
         }
@@ -3381,6 +3388,22 @@ fn protect_card_title_graphemes(
         state.store(ctx, edit_id);
     }
     Ok(())
+}
+
+fn card_title_accessible_replacement(event: &egui::Event, edit_id: Id) -> Option<&str> {
+    match event {
+        egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+            action: egui::accesskit::Action::ReplaceSelectedText,
+            target_node,
+            target_tree,
+            data: Some(egui::accesskit::ActionData::Value(text)),
+        }) if *target_node == edit_id.accesskit_id()
+            && *target_tree == egui::accesskit::TreeId::ROOT =>
+        {
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 fn show_editor_pass(
@@ -4528,6 +4551,50 @@ mod tests {
             )));
         state.store(&h.ctx, edit_id);
         h.event(egui::Event::Text("X".into()));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("Xb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::ReplaceSelectedText,
+                target_node: edit_id.accesskit_id(),
+                target_tree: egui::accesskit::TreeId::ROOT,
+                data: Some(egui::accesskit::ActionData::Value("".into())),
+            },
+        ));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("e\u{301}b"));
+        let selection = TextEdit::load_state(&h.ctx, edit_id)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!(selection.primary.index.0, 1);
+        assert_eq!(selection.secondary.index.0, 1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::ReplaceSelectedText,
+                target_node: edit_id.accesskit_id(),
+                target_tree: egui::accesskit::TreeId::ROOT,
+                data: Some(egui::accesskit::ActionData::Value("X".into())),
+            },
+        ));
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("Xb"));
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);

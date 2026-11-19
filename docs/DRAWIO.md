@@ -828,9 +828,10 @@ commit key. Synthetic tests cover both typing-before-undo and
 undo-before-typing.
 
 **D9 card graphemes (partial).** Single-event text/paste, line-break,
-deletion, cut and initial IME input use the board-label editor's grapheme
-boundaries. Focused synthetic tests cover replacement and deletion of a partial
-combining-character selection, caret snapping and initial IME insertion.
+deletion, cut, accessible selected-text replacement and initial IME input
+use the board-label editor's grapheme boundaries. Focused synthetic tests
+cover replacement and deletion of a partial combining-character selection,
+an empty accessible replacement, caret snapping and initial IME insertion.
 
 Duck check: batches containing pointer, accessibility or IME events do not use
 the keyboard-only history path, and mixed-input ordering and full grapheme
