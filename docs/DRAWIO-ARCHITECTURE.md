@@ -169,17 +169,20 @@ Rules (each backed by a test):
 5. **Undo**: passthrough blobs are immutable `Arc<…>`, shared across snapshots and counted
    once in history memory accounting.
 6. **Privacy**: `masked_copy`/`mask_canvas` masks labels, tooltips, links, properties,
-   HTML labels and drops `attrs_rest` text content.
+   HTML labels and drops `attrs_rest` text content; `masked_copy` also drops document
+   passthrough attributes.
 7. **Budgets**: cumulative caps per object, sheet and workbook for passthrough bytes;
    exceeding them is an import diagnostic, not silent truncation.
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
-**As implemented in D6** (`thinoda_core::drawio_passthrough`, native v37, board
-clipboard v30): objects carry `DrawioCellPassthrough { source_id, style, attributes }`
-and sheets carry `DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`.
-Deviations from the rules above: the workbook level, opaque objects for unmappable cells
-and cut-once provenance are deferred to D10, so every clipboard copy clears `source_id`.
+**As implemented through D10 groundwork** (`thinoda_core::drawio_passthrough`, native
+v37 for cells/pages, v53 for document attributes, board clipboard v30): objects carry
+`DrawioCellPassthrough { source_id, style, attributes }`, sheets carry
+`DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`, and workbooks carry
+bounded safe unknown `<mxfile>` attributes in `DrawioDocumentPassthrough`. Other
+workbook-level XML, opaque objects for unmappable cells and cut-once provenance remain
+deferred to D10, so every clipboard copy clears `source_id`.
 Tombstones (`cell_ids`) list only cells that became canvas objects, because topic and
 zone ids are regenerated on each import. Export prefers a stored source id over the
 generated `o{id}` (Sankey connectors always use `o{id}`), which keeps renumbered

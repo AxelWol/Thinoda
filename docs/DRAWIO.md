@@ -292,6 +292,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D10 — Save back to `.drawio`
 
+- [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -1100,6 +1101,15 @@ retain the loss warning.
 already implemented and regression-tested. Duck check: do not treat named
 quick styles as default-style behavior or declarative style rules; those need
 separate precedence, persistence and undo contracts.
+
+**D10 document metadata slice (partial).** Safe unknown `<mxfile>` attributes
+are bounded, validated and retained across native workbook save/reopen and
+draw.io export; namespace-qualified attributes are dropped with an import
+warning because their namespace declaration is not represented. Duck check:
+this is not sufficient for in-place saves. Opaque unsupported cells, other
+workbook/page-level XML, container compression policy and save conflict/recovery
+semantics still need explicit ownership and loss handling before an imported
+source may be overwritten.
 
 ## 5. Rubber-duck findings
 

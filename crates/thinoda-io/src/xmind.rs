@@ -2433,6 +2433,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 sheets,
                 active_sheet: 0,
                 metadata: Default::default(),
+                drawio: None,
             });
         }
         let xml = zip_entry(&mut z, "content.xml")?;

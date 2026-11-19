@@ -19,6 +19,40 @@ pub const MAX_SHEET_PASSTHROUGH_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_SOURCE_ID_BYTES: usize = 256;
 /// Upper bound for remembered source cell ids of a page.
 pub const MAX_PAGE_CELL_IDS: usize = 100_000;
+/// Upper bound for unknown attributes on the source `<mxfile>` element.
+pub const MAX_DOCUMENT_PASSTHROUGH_BYTES: usize = 16 * 1024;
+
+/// Unknown attributes of the source `<mxfile>` element.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrawioDocumentPassthrough {
+    /// Attributes not represented by first-class workbook fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<(String, String)>,
+}
+
+impl DrawioDocumentPassthrough {
+    pub fn is_empty(&self) -> bool {
+        self.attributes.is_empty()
+    }
+
+    pub fn byte_len(&self) -> usize {
+        pairs_len(&self.attributes)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let mut names = HashSet::new();
+        for (name, value) in &self.attributes {
+            if !valid_attribute_name(name) || !valid_text(value) || !names.insert(name.as_str()) {
+                return Err(format!("invalid draw.io document attribute {name:?}"));
+            }
+        }
+        if self.byte_len() > MAX_DOCUMENT_PASSTHROUGH_BYTES {
+            return Err("draw.io document passthrough is too large".into());
+        }
+        Ok(())
+    }
+}
 
 /// Unknown draw.io data of one cell that became a canvas object.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +224,25 @@ mod tests {
             style: vec![("shadow".into(), "1".into()), ("glass".into(), "1".into())],
             attributes: vec![("owner".into(), "Ada".into())],
         }
+    }
+
+    #[test]
+    fn document_attributes_are_bounded_and_validated() {
+        let document = DrawioDocumentPassthrough {
+            attributes: vec![("custom".into(), "value".into())],
+        };
+        document.validate().unwrap();
+        for attributes in [
+            vec![("xmlns:evil".into(), "x".into())],
+            vec![("custom".into(), "bad\u{1}".into())],
+            vec![("custom".into(), "1".into()), ("custom".into(), "2".into())],
+        ] {
+            assert!(DrawioDocumentPassthrough { attributes }.validate().is_err());
+        }
+        let too_large = DrawioDocumentPassthrough {
+            attributes: vec![("custom".into(), "x".repeat(MAX_DOCUMENT_PASSTHROUGH_BYTES))],
+        };
+        assert!(too_large.validate().is_err());
     }
 
     #[test]

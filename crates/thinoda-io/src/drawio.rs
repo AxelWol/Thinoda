@@ -20,7 +20,7 @@ use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use thinoda_core::drawio_passthrough::{
-    DrawioCellPassthrough as Passthrough, DrawioPagePassthrough,
+    DrawioCellPassthrough as Passthrough, DrawioDocumentPassthrough, DrawioPagePassthrough,
 };
 use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
@@ -193,7 +193,7 @@ impl Element {
     pub(crate) fn attr(&self, key: &str) -> Option<&str> {
         self.attrs
             .iter()
-            .find(|(k, _)| k == key)
+            .find(|(k, _)| k == key || k.rsplit(':').next() == Some(key))
             .map(|(_, v)| v.as_str())
     }
 
@@ -212,10 +212,9 @@ fn element_from(start: &BytesStart) -> Result<Element, IoError> {
         let value = attr
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(xml_error)?;
-        element.attrs.push((
-            attr.key.local_name().as_ref().to_owned(),
-            value.into_owned(),
-        ));
+        element
+            .attrs
+            .push((attr.key.as_ref().to_owned(), value.into_owned()));
     }
     Ok(element)
 }
@@ -642,7 +641,24 @@ struct Page {
     model: Element,
 }
 
-fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
+struct DrawioDocument {
+    pages: Vec<Page>,
+    passthrough: Option<Arc<DrawioDocumentPassthrough>>,
+    dropped_attributes: bool,
+}
+
+const OWNED_MXFILE_ATTRIBUTES: &[&str] = &[
+    "agent",
+    "compressed",
+    "etag",
+    "host",
+    "modified",
+    "pages",
+    "type",
+    "version",
+];
+
+fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
     if bytes.len() > MAX_BYTES {
         return Err(invalid("draw.io document exceeds size limit"));
     }
@@ -661,12 +677,33 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
     };
     let root = parse_dom(&text)?;
     match root.name.as_str() {
-        "mxGraphModel" => Ok(vec![Page {
-            name: String::new(),
-            id: None,
-            model: root,
-        }]),
+        "mxGraphModel" => Ok(DrawioDocument {
+            pages: vec![Page {
+                name: String::new(),
+                id: None,
+                model: root,
+            }],
+            passthrough: None,
+            dropped_attributes: false,
+        }),
         "mxfile" => {
+            let dropped_attributes = root.attrs.iter().any(|(name, _)| {
+                !OWNED_MXFILE_ATTRIBUTES.contains(&name.as_str())
+                    && !thinoda_core::drawio_passthrough::valid_attribute_name(name)
+            });
+            let passthrough = DrawioDocumentPassthrough {
+                attributes: root
+                    .attrs
+                    .iter()
+                    .filter(|(name, _)| !OWNED_MXFILE_ATTRIBUTES.contains(&name.as_str()))
+                    .filter(|(name, _)| {
+                        thinoda_core::drawio_passthrough::valid_attribute_name(name)
+                    })
+                    .cloned()
+                    .collect(),
+            };
+            passthrough.validate().map_err(|error| invalid(&error))?;
+            let passthrough = (!passthrough.is_empty()).then(|| Arc::new(passthrough));
             let mut pages = Vec::new();
             for mut diagram in root.children.into_iter().filter(|c| c.name == "diagram") {
                 if pages.len() >= MAX_PAGES {
@@ -704,7 +741,11 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
             if pages.is_empty() {
                 return Err(invalid("draw.io document contains no pages"));
             }
-            Ok(pages)
+            Ok(DrawioDocument {
+                pages,
+                passthrough,
+                dropped_attributes,
+            })
         }
         _ => Err(invalid("not a draw.io document")),
     }
@@ -5405,18 +5446,24 @@ pub(crate) fn import(bytes: &[u8]) -> Result<ImportReport, IoError> {
 pub(crate) fn import_with_first_page_warnings(
     bytes: &[u8],
 ) -> Result<(ImportReport, Vec<ImportWarning>), IoError> {
-    let pages = read_pages(bytes)?;
+    let document = read_pages(bytes)?;
+    let dropped_document_attributes = document.dropped_attributes;
+    let pages = document.pages;
     let mut warnings = BTreeSet::new();
     let (first, rest) = pages
         .split_first()
         .ok_or_else(|| invalid("draw.io document contains no pages"))?;
     let mut workbook = Workbook::new(import_page(first, 1, &mut warnings)?);
+    if dropped_document_attributes {
+        warnings.insert(ImportWarning::Other);
+    }
     let first_page_warnings = warnings.iter().copied().collect();
     for (i, page) in rest.iter().enumerate() {
         workbook
             .sheets
             .push(import_page(page, i + 2, &mut warnings)?);
     }
+    workbook.drawio = document.passthrough;
     Ok((
         ImportReport {
             format: Format::DrawIo,
@@ -7595,10 +7642,16 @@ impl<'a> PageWriter<'a> {
 
 /// Writes all sheets as uncompressed draw.io pages.
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
-    Ok(export_sheets(&book.sheets)?.into_bytes())
+    Ok(export_sheets(&book.sheets, book.drawio.as_deref())?.into_bytes())
 }
 
-fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
+fn export_sheets<'a>(
+    sheets: impl IntoIterator<Item = &'a Sheet>,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<String, IoError> {
+    if let Some(document) = document {
+        document.validate().map_err(|error| invalid(&error))?;
+    }
     let sheets: Vec<_> = sheets.into_iter().collect();
     for sheet in &sheets {
         validate_scene_export(sheet)?;
@@ -7613,7 +7666,12 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
                 .into(),
         ));
     }
-    let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
+    let document_attributes: String = document
+        .into_iter()
+        .flat_map(|document| &document.attributes)
+        .map(|(name, value)| format!(" {name}=\"{}\"", esc(value)))
+        .collect();
+    let mut out = format!("<mxfile host=\"Thinoda\" type=\"device\"{document_attributes}>\n");
     let mut diagram_ids = HashSet::new();
     let kept_ids: Vec<Option<String>> = sheets
         .iter()
@@ -7901,7 +7959,7 @@ pub(crate) fn embed_svg(mut svg: String, sheet: &Sheet) -> Result<Vec<u8>, IoErr
     if !valid_rendered_svg(&svg) {
         return Err(invalid("rendered SVG is not a valid SVG document"));
     }
-    let xml = export_sheets(std::iter::once(sheet))?;
+    let xml = export_sheets(std::iter::once(sheet), None)?;
     let escaped_len = xml.chars().try_fold(0usize, |length, character| {
         let size = match character {
             '&' => 5,
@@ -7969,7 +8027,7 @@ pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoEr
     }
     let insertion = rendered_png_insertion(&png)
         .ok_or_else(|| invalid("rendered PNG has no valid image and end chunk"))?;
-    let xml = export_sheets(std::iter::once(sheet))?;
+    let xml = export_sheets(std::iter::once(sheet), None)?;
     let text_len = crate::drawio_clipboard::encoded_uri_component_len(&xml)
         .and_then(|length| length.checked_add(b"mxfile\0".len()))
         .ok_or_else(|| invalid("editable draw.io image exceeds size limit"))?;

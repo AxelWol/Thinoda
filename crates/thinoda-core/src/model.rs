@@ -2606,6 +2606,9 @@ pub struct Workbook {
     pub active_sheet: usize,
     #[serde(default)]
     pub metadata: Metadata,
+    /// Imported draw.io document data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioDocumentPassthrough>>,
 }
 
 impl Workbook {
@@ -2614,6 +2617,7 @@ impl Workbook {
             sheets: vec![sheet],
             active_sheet: 0,
             metadata: Metadata::default(),
+            drawio: None,
         }
     }
 
@@ -2787,6 +2791,10 @@ impl Workbook {
     }
 
     pub fn has_drawio_passthrough(&self) -> bool {
+        self.drawio.is_some() || self.has_drawio_page_passthrough()
+    }
+
+    pub fn has_drawio_page_passthrough(&self) -> bool {
         self.sheets.iter().any(Sheet::has_drawio_passthrough)
     }
 
@@ -2860,6 +2868,7 @@ impl Workbook {
     pub fn masked_copy(&self) -> Self {
         let mut copy = self.clone();
         copy.metadata = Metadata::default();
+        copy.drawio = None;
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
             sheet.fim = None;
             sheet.drawio = None;
@@ -2994,6 +3003,9 @@ impl Workbook {
     pub fn validate(&self) -> Result<(), String> {
         if self.sheets.is_empty() {
             return Err("workbook has no sheets".into());
+        }
+        if let Some(drawio) = &self.drawio {
+            drawio.validate()?;
         }
         self.validate_resource_limits()?;
         for (i, s) in self.sheets.iter().enumerate() {

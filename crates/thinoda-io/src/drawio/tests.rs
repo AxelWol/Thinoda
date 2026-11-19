@@ -48,6 +48,7 @@ fn connectors(sheet: &Sheet) -> Vec<&CanvasConnector> {
 /// passthrough (ids, unknown keys) that every imported page now carries.
 fn feature_version(book: &Workbook) -> u64 {
     let mut book = book.clone();
+    book.drawio = None;
     for sheet in &mut book.sheets {
         sheet.drawio = None;
         for object in &mut sheet.canvas.objects {
@@ -5161,7 +5162,7 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
     let pages = read_pages(&bytes).unwrap();
     let mut squares = 0;
     let mut rounded = 0;
-    for source_page in &pages {
+    for source_page in &pages.pages {
         let cells = read_cells(&source_page.model, &mut BTreeSet::new());
         for cell in &cells {
             if !cell
@@ -5269,7 +5270,7 @@ fn supplied_requirements_flow_imports_invisible_anchors() {
     }
     let bytes = std::fs::read(path).unwrap();
     let mut count = 0;
-    for source_page in read_pages(&bytes).unwrap() {
+    for source_page in read_pages(&bytes).unwrap().pages {
         for cell in read_cells(&source_page.model, &mut BTreeSet::new()) {
             if !cell
                 .style
@@ -10459,6 +10460,57 @@ fn drawio_object_data_imports_edits_and_exports() {
         .collect();
     assert_eq!(reopened, expected);
     assert!(!book.masked_copy().has_object_data());
+}
+
+#[test]
+fn drawio_document_attributes_round_trip_through_native_workbooks() {
+    let xml = r#"<mxfile host="app.diagrams.net" type="device" customOwner="team-a"><diagram name="Page"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let report = crate::import_bytes_with_report(Format::DrawIo, xml.as_bytes()).unwrap();
+    assert!(report.warnings.is_empty());
+    assert_eq!(
+        report.workbook.drawio.as_ref().unwrap().attributes,
+        [("customOwner".into(), "team-a".into())]
+    );
+    assert_eq!(crate::required_native_version(&report.workbook), 53);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(reopened.drawio, report.workbook.drawio);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&content),
+        Err(IoError::NewerVersion(_))
+    ));
+    let v52 = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":52,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&v52),
+        Err(IoError::NewerVersion(_))
+    ));
+    let exported = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(exported.contains("customOwner=\"team-a\""), "{exported}");
+    assert!(
+        exported.contains("host=\"Thinoda\" type=\"device\""),
+        "{exported}"
+    );
+    assert!(reopened.masked_copy().drawio.is_none());
+    let mut invalid = reopened.clone();
+    invalid.drawio = Some(std::sync::Arc::new(
+        thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+            attributes: vec![("bad\" name".into(), "x".into())],
+        },
+    ));
+    assert!(export(&invalid).is_err());
+
+    let unsupported = r#"<mxfile xmlns:future="urn:future"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let report = crate::import_bytes_with_report(Format::DrawIo, unsupported.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
 }
 
 #[test]

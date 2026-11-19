@@ -58,9 +58,14 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "socio-technical data requires native format version 36".into(),
             ));
         }
-        if version < 37 && book.has_drawio_passthrough() {
+        if version < 37 && book.has_drawio_page_passthrough() {
             return Err(IoError::NewerVersion(
                 "draw.io passthrough requires native format version 37".into(),
+            ));
+        }
+        if version < 53 && book.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document passthrough requires native format version 53".into(),
             ));
         }
         if version < 52 && book.has_card_baseline_overrides() {
@@ -321,6 +326,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document passthrough requires native format version 53".into(),
+            ));
+        }
         if book.has_card_baseline_overrides() {
             return Err(IoError::NewerVersion(
                 "card baseline overrides require native format version 52".into(),
