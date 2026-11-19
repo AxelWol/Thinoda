@@ -14,7 +14,7 @@ use thinoda_core::{
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const MAX_XMIND_ARCHIVE_ENTRIES: usize = MAX_RESOURCES + 5;
+const MAX_XMIND_ARCHIVE_ENTRIES: usize = 1024;
 const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
 const MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-1";
 const EXTENDED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-2";
@@ -216,6 +216,11 @@ fn archive_names<R: std::io::Read + std::io::Seek>(
     for index in 0..archive.len() {
         let file = archive.by_index(index)?;
         let name = file.name()?.into_owned();
+        if !safe_manifest_path(name.strip_suffix('/').unwrap_or(&name)) {
+            return Err(IoError::Invalid(format!(
+                "unsafe XMind archive path {name}"
+            )));
+        }
         if !names.insert(name.clone()) {
             return Err(IoError::Invalid(format!(
                 "duplicate XMind archive entry {name}"
@@ -267,7 +272,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
                     "unsafe or invalid XMind manifest path {path}"
                 )));
             }
-            let resource_component = if let Some(component) = path.strip_prefix("resources/") {
+            if let Some(component) = path.strip_prefix("resources/") {
                 let (_, expected) = image_component(&format!("xap:resources/{component}"))?;
                 if expected != *path {
                     return Err(IoError::Invalid(format!(
@@ -275,23 +280,15 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
                     )));
                 }
                 declared.insert(path.clone());
-                Some(component)
-            } else {
-                match path.as_str() {
-                    "content.json" | "metadata.json" | "content.xml" => None,
-                    _ => {
-                        return Err(IoError::Invalid(format!(
-                            "unsupported XMind manifest entry {path}"
-                        )));
-                    }
-                }
-            };
+            }
+            // Ancillary entries (for example desktop thumbnails) are not map resources.
+            // Validate their manifest envelope, but never read or decode their payloads.
             if !names.contains(path) {
                 return Err(IoError::Invalid(format!(
                     "XMind manifest entry is missing from archive: {path}"
                 )));
             }
-            if resource_component.is_some() && declared.len() > MAX_RESOURCES {
+            if declared.len() > MAX_RESOURCES {
                 return Err(IoError::Invalid(
                     "XMind archive exceeds the 128 embedded image limit".into(),
                 ));
@@ -4554,6 +4551,160 @@ mod tests {
             assert_eq!(topic.image_size, Some(size));
             assert_eq!(topic.image_below, below);
             assert_eq!(import(&export(&workbook).unwrap()).unwrap(), workbook);
+        }
+    }
+
+    #[test]
+    fn desktop_sample_packages_import_the_same_map() {
+        let without_thumbnail = include_bytes!("../tests/fixtures/sample-map-no-thumbnail.xmind");
+        let with_thumbnail = include_bytes!("../tests/fixtures/sample-map-with-thumbnail.xmind");
+        let expected = import(without_thumbnail).unwrap();
+        assert_eq!(expected.sheets.len(), 1);
+        assert_eq!(expected.active().root_topic().title, "Central Topic");
+        assert_eq!(import(with_thumbnail).unwrap(), expected);
+        assert_eq!(import(&export(&expected).unwrap()).unwrap(), expected);
+    }
+
+    #[test]
+    fn ancillary_package_entries_do_not_change_imported_content() {
+        let (book, _) = image_workbook();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        // Ancillary payloads are not interpreted, even if they look like map data.
+        let paths = [
+            "Thumbnails/thumbnail.png",
+            "Thumbnails/preview@2x.png",
+            "META-INF/vendor/future.json",
+        ];
+        update_manifest(&mut entries, |manifest| {
+            for path in paths {
+                manifest["file-entries"][path] = json!({});
+            }
+        });
+        for path in paths {
+            entries.push((path.into(), b"not an image or JSON".to_vec()));
+        }
+        entries.push(("Thumbnails/".into(), Vec::new()));
+        entries.push(("unlisted-vendor-data.bin".into(), vec![0xff]));
+        entries
+            .iter_mut()
+            .find(|(name, _)| name == "content.xml")
+            .unwrap()
+            .1 = b"not XML".to_vec();
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+    }
+
+    #[test]
+    fn ancillary_entries_keep_package_validation_and_resource_limits() {
+        let (book, _) = image_workbook();
+        let original = archive_entries(&export(&book).unwrap());
+        for path in [
+            "../preview.png",
+            "/preview.png",
+            "Thumbnails/../preview.png",
+            "Thumbnails\\preview.png",
+            "C:preview.png",
+            "Thumbnails//preview.png",
+            "Thumbnails/\npreview.png",
+        ] {
+            let mut entries = original.clone();
+            update_manifest(&mut entries, |manifest| {
+                manifest["file-entries"][path] = json!({});
+            });
+            assert!(import(&make_archive(&entries)).is_err(), "{path}");
+
+            let mut entries = original.clone();
+            entries.push((path.into(), Vec::new()));
+            assert!(import(&make_archive(&entries)).is_err(), "{path}");
+        }
+        let mut missing = original.clone();
+        update_manifest(&mut missing, |manifest| {
+            manifest["file-entries"]["Thumbnails/missing.png"] = json!({});
+        });
+        assert!(
+            import(&make_archive(&missing))
+                .unwrap_err()
+                .to_string()
+                .contains("missing from archive")
+        );
+        let mut invalid_metadata = original.clone();
+        update_manifest(&mut invalid_metadata, |manifest| {
+            manifest["file-entries"]["Thumbnails/thumbnail.png"] = json!(null);
+        });
+        invalid_metadata.push(("Thumbnails/thumbnail.png".into(), vec![0xff]));
+        assert!(
+            import(&make_archive(&invalid_metadata))
+                .unwrap_err()
+                .to_string()
+                .contains("unsafe or invalid XMind manifest path")
+        );
+
+        for declared in [false, true] {
+            let mut entries = original.clone();
+            let path = "resources/unused.png";
+            if declared {
+                update_manifest(&mut entries, |manifest| {
+                    manifest["file-entries"][path] = json!({});
+                });
+            }
+            entries.push((path.into(), vec![0xff]));
+            assert!(import(&make_archive(&entries)).is_err());
+        }
+
+        let mut at_limit = original;
+        for index in at_limit.len()..MAX_XMIND_ARCHIVE_ENTRIES {
+            at_limit.push((format!("vendor/entry-{index}"), Vec::new()));
+        }
+        assert_eq!(import(&make_archive(&at_limit)).unwrap(), book);
+        at_limit.push(("vendor/one-too-many".into(), Vec::new()));
+        assert!(
+            import(&make_archive(&at_limit))
+                .unwrap_err()
+                .to_string()
+                .contains("too many entries")
+        );
+    }
+
+    #[test]
+    fn desktop_ancillary_entries_do_not_reduce_image_allowance() {
+        let mut file_entries = json!({
+            "content.json": {},
+            "Thumbnails/thumbnail.png": {},
+        });
+        let mut entries = vec![
+            ("Thumbnails/".into(), Vec::new()),
+            ("Thumbnails/thumbnail.png".into(), vec![0xff]),
+            ("vendor/future.json".into(), Vec::new()),
+            ("content.xml".into(), b"not XML".to_vec()),
+        ];
+        let image = png([120, 20, 200], 32, 24);
+        let children: Vec<_> = (0..MAX_RESOURCES)
+            .map(|index| {
+                let path = format!("resources/image-{index}.png");
+                file_entries[&path] = json!({});
+                entries.push((path, image.clone()));
+                json!({
+                    "id": format!("child-{index}"),
+                    "title": format!("Image {index}"),
+                    "image": {"src": format!("xap:resources/image-{index}.png")},
+                })
+            })
+            .collect();
+        let content = json!([{
+            "rootTopic": {
+                "id": "root",
+                "title": "Root",
+                "children": {"attached": children},
+            },
+        }]);
+        entries.push(("content.json".into(), serde_json::to_vec(&content).unwrap()));
+        entries.push((
+            "manifest.json".into(),
+            serde_json::to_vec(&json!({"file-entries": file_entries})).unwrap(),
+        ));
+        let imported = import(&make_archive(&entries)).unwrap();
+        assert_eq!(imported.active().root_topic().children.len(), MAX_RESOURCES);
+        for id in &imported.active().root_topic().children {
+            assert!(imported.active().topic(*id).unwrap().image.is_some());
         }
     }
 
