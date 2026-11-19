@@ -2581,6 +2581,14 @@ fn import_notes(notes: &Value, context: &TopicImportContext<'_>) -> Option<Strin
 }
 
 /// Reports source content that has no Thinoda equivalent yet.
+fn canonical_marker_id(id: &str) -> &str {
+    if id.eq_ignore_ascii_case("week-web") {
+        "week-wed"
+    } else {
+        id
+    }
+}
+
 fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
     if v.get("attributedTitle")
         .and_then(Value::as_array)
@@ -2604,7 +2612,7 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
                     .get("markerId")
                     .or_else(|| marker.get("id"))
                     .and_then(Value::as_str)
-                    .is_none_or(|id| thinoda_core::markers::find(id).is_none())
+                    .is_none_or(|id| thinoda_core::markers::find(canonical_marker_id(id)).is_none())
             })
         })
     {
@@ -2750,6 +2758,7 @@ fn parse_topic(
             .iter()
             .filter_map(|x| x.get("markerId").or_else(|| x.get("id")))
             .filter_map(Value::as_str)
+            .map(canonical_marker_id)
             .map(str::to_owned)
             .collect();
     }
@@ -6592,6 +6601,41 @@ mod tests {
             Some(NumberFormat::Decimal)
         );
         assert_eq!(sheet.relationships[0].control_points, None);
+    }
+
+    #[test]
+    fn marker_catalog_and_week_web_alias_import_without_loss() {
+        let ids = [
+            "task-pause",
+            "flag-dark-blue",
+            "star-dark-blue",
+            "smiley-embarrass",
+            "people-red",
+            "people-orange",
+            "people-yellow",
+            "people-green",
+            "people-blue",
+            "people-purple",
+            "people-dark-blue",
+            "arrow-left",
+            "arrow-right",
+            "arrow-up",
+            "arrow-down",
+            "arrow-left-right",
+            "arrow-up-down",
+            "arrow-refresh",
+            "week-web",
+        ];
+        let markers: Vec<_> = ids.iter().map(|id| json!({"markerId": id})).collect();
+        let (workbook, warnings) =
+            content_report(json!({"rootTopic": {"title": "Root", "markers": markers}}));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let imported = &workbook.active().root_topic().markers;
+        assert_eq!(imported.len(), ids.len());
+        assert_eq!(imported.last().map(String::as_str), Some("week-wed"));
+        for id in &ids[..ids.len() - 1] {
+            assert!(imported.iter().any(|marker| marker == id), "{id}");
+        }
     }
 
     #[test]

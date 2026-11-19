@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 09:33:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 09:42:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind user guide digest (verification checklist)
 
@@ -253,6 +253,11 @@ Native save remains the complete source-preserving path.
 - Select topics and use toolbar Marker or Insert > Marker, then select a marker; click an existing marker to switch it.
 - Built-in groups include priority, task progress, flags, stars, arrows, and symbols. Desktop supports custom marker groups/icons; exact marker catalog is not fixed by the article.
 - Source: https://xmind.com/user-guide/marker-new
+
+Thinoda's XMind importer recognizes the `people-*` and `arrow-*` marker groups,
+dark-blue flag/star variants, `smiley-embarrass`, and `task-pause`. The
+generator's `week-web` spelling is normalized to `week-wed`; unknown marker IDs
+are retained and reported rather than discarded.
 
 ## Mask Data
 - Select a map with sensitive text, choose the toolbar sparkle icon > **Data Masking**, then **View Now** to inspect and adjust the masked map.

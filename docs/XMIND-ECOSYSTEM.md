@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 09:33:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 09:42:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind ecosystem research, gap analysis and phase plan
 
@@ -272,7 +272,7 @@ branch for per-phase critiques.
 |---|---|
 | X1 | Done. `xmind::import_with_report` reports categorized warnings; the manifest is optional and the archive is the inventory; encrypted packages fail with a dedicated message; callouts and nested detached topics become floating topics linked by a relationship (callouts stacked right of their owner, detached positions kept relative to the owner); notes fall back to visible HTML/delta text; lossy XMind opens never keep a writable path. Lossy XMind files cannot be merged (merge uses the strict import). |
 | X2 | Done. Public projection 2 imports/exports style aliases and approximations, summary ranges, control points, numbering, custom widths, unbalanced branch sides, map background/tapering, and opaque topic attachments. Projection 1 still validates pre-X2 private snapshots; round-trip tests also remove Thinoda metadata to exercise public content. Attachments share bytes with image resources when deduplicated and are never decoded or opened. |
-| X3 | Planned |
+| X3 | Done. Added generator marker groups and variants with localized names in all ten languages; `week-web` imports as `week-wed`; task pause has a distinct glyph in vector/SVG rendering. |
 | X4 | Planned |
 | X5 | Planned |
 | X6 | Planned |
@@ -296,3 +296,9 @@ branch for per-phase critiques.
 - **Evidence limit:** The new public round trips, legacy projection fixture,
   generator-style ranges, and the two supplied desktop fixtures are covered by
   tests. Installed-XMind interoperability has not been claimed or verified.
+
+### 4.2 X3 review critique
+
+- **Marker scope:** Catalog entries preserve the reviewed generator IDs and
+  have local glyph/color representations. XMind's custom marker groups and
+  `taskInfo` remain unsupported; unknown IDs still produce a Markers warning.

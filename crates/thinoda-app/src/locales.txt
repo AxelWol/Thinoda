@@ -224,6 +224,25 @@ Pentagon|Pentágono|Pentagone|Femkant|Vijfhoek|Pentágono|Pentagono|Pięciokąt
 Hexagon|Hexágono|Hexagone|Sekskant|Zeshoek|Hexágono|Esagono|Sześciokąt
 Octagon|Octágono|Octogone|Ottekant|Achthoek|Octógono|Ottagono|Ośmiokąt
 Arrow|Flecha|Flèche|Pil|Pijl|Seta|Freccia|Strzałka
+Paused|En pausa|En pause|Sat på pause|Gepauzeerd|Em pausa|In pausa|Wstrzymane
+Dark blue flag|Bandera azul oscuro|Drapeau bleu foncé|Mørkeblåt flag|Donkerblauwe vlag|Bandeira azul-escura|Bandiera blu scuro|Ciemnoniebieska flaga
+Dark blue star|Estrella azul oscuro|Étoile bleu foncé|Mørkeblå stjerne|Donkerblauwe ster|Estrela azul-escura|Stella blu scuro|Ciemnoniebieska gwiazda
+Embarrassed|Avergonzado|Gêné|Forlegen|Beschaamd|Envergonhado|Imbarazzato|Zakłopotany
+People|Personas|Personnes|Personer|Mensen|Pessoas|Persone|Ludzie
+Red person|Persona roja|Personne rouge|Rød person|Rood persoon|Pessoa vermelha|Persona rossa|Czerwona osoba
+Orange person|Persona naranja|Personne orange|Orange person|Oranje persoon|Pessoa laranja|Persona arancione|Pomarańczowa osoba
+Yellow person|Persona amarilla|Personne jaune|Gul person|Geel persoon|Pessoa amarela|Persona gialla|Żółta osoba
+Green person|Persona verde|Personne verte|Grøn person|Groen persoon|Pessoa verde|Persona verde|Zielona osoba
+Blue person|Persona azul|Personne bleue|Blå person|Blauw persoon|Pessoa azul|Persona blu|Niebieska osoba
+Purple person|Persona morada|Personne violette|Lilla person|Paarse persoon|Pessoa roxa|Persona viola|Fioletowa osoba
+Dark blue person|Persona azul oscuro|Personne bleu foncé|Mørkeblå person|Donkerblauw persoon|Pessoa azul-escura|Persona blu scuro|Ciemnoniebieska osoba
+Arrow left|Flecha izquierda|Flèche gauche|Pil venstre|Pijl links|Seta para a esquerda|Freccia sinistra|Strzałka w lewo
+Arrow right|Flecha derecha|Flèche droite|Pil højre|Pijl rechts|Seta para a direita|Freccia destra|Strzałka w prawo
+Arrow up|Flecha arriba|Flèche vers le haut|Pil op|Pijl omhoog|Seta para cima|Freccia in alto|Strzałka w górę
+Arrow down|Flecha abajo|Flèche vers le bas|Pil ned|Pijl omlaag|Seta para baixo|Freccia in basso|Strzałka w dół
+Arrow left and right|Flecha izquierda y derecha|Flèche gauche et droite|Pil venstre og højre|Pijl links en rechts|Seta para a esquerda e para a direita|Freccia sinistra e destra|Strzałka w lewo i w prawo
+Arrow up and down|Flecha arriba y abajo|Flèche vers le haut et le bas|Pil op og ned|Pijl omhoog en omlaag|Seta para cima e para baixo|Freccia in alto e in basso|Strzałka w górę i w dół
+Refresh arrow|Flecha de actualización|Flèche d’actualisation|Opdateringspil|Verversingspijl|Seta de atualização|Freccia di aggiornamento|Strzałka odświeżania
 Double arrow|Flecha doble|Double flèche|Dobbeltpil|Dubbele pijl|Seta dupla|Freccia doppia|Podwójna strzałka
 Chevron|Flecha angular|Chevron|Vinkel|Chevron|Seta angular|Freccia angolare|Szewron
 Callout|Bocadillo|Bulle|Taleboble|Tekstballon|Balão de texto|Fumetto|Dymek
