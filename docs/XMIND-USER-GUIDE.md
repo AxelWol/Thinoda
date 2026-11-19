@@ -1,4 +1,4 @@
-_Last updated: 2026-11-04 05:03:38 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 09:42:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind user guide digest (verification checklist)
 
@@ -18,8 +18,8 @@ for delivery/acceptance status.
 | Preferences: Shortcuts, Task/calendar/Gantt, Zone/Pitch, text/embedding AI | Implementation shipped; native/browser evidence and remaining host gaps are recorded in PLAN. | Do not create duplicate F1-F5 implementation tasks. PPTX and more delivery settings are not implied by Pitch PDF/PNG. |
 | Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
 | To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
-| Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
-| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. Import/export supports the pinned SDK's verified embedded topic-image subset; XMind attachment package exchange and installed-app interoperability remain unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
+| Numbering | Thinoda has structural sibling numbering; XMind's number format and tiering are imported/exported in the public package projection. | XV3 rendering/picker follow-up; see [XMind ecosystem status](XMIND-ECOSYSTEM.md#4-delivery-status). |
+| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. XMind public-package import/export supports embedded topic images and opaque `xap:resources/` attachment topics; installed-app interoperability remains unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
 | Import | TextBundle Markdown and bounded DOCX text/hierarchy import are implemented locally with conversion warnings; Word page layout and embedded resources are not preserved. External relationships are never fetched. | XV5; other unsupported importers stay in the broader inventory. |
 | Export / Pitch Mode | The user-directed vector redesign adds semantic source isolation, live framing, visual vector authoring and native editable PowerPoint text/shapes/paths. Preserve 16:9/4:3 and legacy crops. The previous bitmap-deck Office opening check is historical, not acceptance for native objects; see PRESENTATIONS for the current plan and evidence. | XV6 vector follow-up |
 | Note / Equation | Notes have Markdown-source tools, bounded preview/search/copy and a versioned source envelope. Notes equations render in the selected topic's inspector and a separate vector appendix in visual exports; XMind preserves the Thinoda source snapshot, while CSV/OPML source export retains existing format-loss consent. No topic/map-equation, chemical notation or public XMind equation schema is claimed. | XV7 partial |
@@ -73,9 +73,10 @@ documents/macros/scripts are never interpreted or executed. This is safe saving,
 not XMind's click-to-open/system-default-app behavior or attachment preview parity.
 All ten locales and Light/Dark/System share the same commands and inspector.
 Native v3/recovery/clipboard/undo retain attachments; other exports explicitly
-refuse them. Thinoda rejects XMind attachment topics because their package
-schema has not been verified; image-only XMind support does not imply
-attachment interoperability or installed-app compatibility (XV4 partial).
+refuse them. XMind `xap:resources/` attachment topics are imported and exported
+as opaque package bytes; unsupported or missing attachment references are
+reported under Resources. Neither saving nor importing opens or executes a file.
+Installed-app compatibility is unverified.
 
 ## Audio Note
 - Desktop: select a topic > Insert > Audio Note; recording requires an enabled microphone. Select the audio-note child to play it; right-click > Save As exports it.
@@ -223,6 +224,29 @@ Native save remains the complete source-preserving path.
 - File > Import supports formats including EdrawMind, MindManager, FreeMind, MindNode, DOCX, Markdown, OPML, and TextBundle. The guide does not give an exhaustive format/version matrix.
 - Source: https://xmind.com/user-guide/import-new
 
+**Thinoda XMind import:** Current `.xmind` packages with `content.json` and
+XMind 8 packages with `content.xml` are imported locally. Legacy packages retain
+multiple sheets, topic hierarchy, supported styles, numbering, boundaries,
+summaries, relationships, and decodable PNG/JPEG pictures. Safe in-package
+attachments remain opaque. Unsupported formatting, HTML notes, detached-topic
+conversion, missing resources, or other unrepresentable data is summarized
+before opening; external links are never fetched. Accepting a lossy import does
+not overwrite the richer source file. XMind desktop interoperability has not
+been verified.
+
+**XMindMark text maps:** Thinoda also opens and exports `.xmindmark` files.
+The bounded UTF-8 format uses the upstream indentation grammar (`- ` or `* `;
+tabs count as four spaces), escaped square brackets, `[n]`/`[^n](title)`
+relationship markers, and `[B<n?>]`/`[S<n?>]` groups with optional title
+directives. Hierarchy, boundaries, summaries, summary descendants, and
+relationship titles are supported; malformed input reports its source line.
+Input is limited to 32 MiB and 200,000 topic nodes. Export writes the selected
+sheet as one map and asks for confirmation when other sheets or unsupported
+topic details, master boundaries, boundary appearance, or relationship routing
+would be omitted.
+Embedded resources cannot be exported to this text format. XMindMark is a
+separate text format; it does not change `.xmind` package handling.
+
 ## Label
 - Insert > Label adds a label to a topic; multiple labels are comma-separated. Existing labels can be selected from the quick-label suggestions.
 - Select a label and delete it from the label popup or right-click > Delete.
@@ -252,6 +276,11 @@ Native save remains the complete source-preserving path.
 - Select topics and use toolbar Marker or Insert > Marker, then select a marker; click an existing marker to switch it.
 - Built-in groups include priority, task progress, flags, stars, arrows, and symbols. Desktop supports custom marker groups/icons; exact marker catalog is not fixed by the article.
 - Source: https://xmind.com/user-guide/marker-new
+
+Thinoda's XMind importer recognizes the `people-*` and `arrow-*` marker groups,
+dark-blue flag/star variants, `smiley-embarrass`, and `task-pause`. The
+generator's `week-web` spelling is normalized to `week-wed`; unknown marker IDs
+are retained and reported rather than discarded.
 
 ## Mask Data
 - Select a map with sensitive text, choose the toolbar sparkle icon > **Data Masking**, then **View Now** to inspect and adjust the masked map.
@@ -385,10 +414,26 @@ ignored rather than imported or preserved on export. Their payloads are not
 decoded or executed. Manifest entries still require safe relative paths,
 object metadata, and a matching archive entry. All ZIP entries retain path,
 duplicate-name, and per-entry size checks; packages allow at most 1,024 entries,
-independently of the unchanged 128 embedded-image limit. Image references and
-`resources/*` entries still undergo strict declaration, usage, and decode
-validation; this does not add attachment support or claim general desktop
-interoperability.
+independently of the unchanged 128 embedded-image limit. Every `resources/*`
+entry still counts towards the byte and count budgets, even when unused.
+
+**Opening maps with unsupported content (X1):** XMind files that contain
+content Thinoda cannot represent open through the same consent dialog as other
+lossy imports. The dialog lists the affected categories: Formatting (for
+example bold or italic runs inside a title, or unusable picture sizes),
+Resources (external, missing, undecodable or unused pictures, unresolved
+attachments and
+note images), Notes (HTML or formatted notes; their visible text is kept),
+Markers (unknown markers and task progress), Links (`xmind:#` topic links,
+kept as text), and Other (callouts, comments, zones, unknown child
+collections, and relationships or summaries whose target is missing).
+Callouts, and detached topics placed under a non-central topic, become
+floating topics joined to their owner by a relationship. After you accept,
+the map opens as an import: Save asks for a new file name, so the original
+XMind file is never overwritten with less content. Maps without such content
+still open in place. Password-protected XMind files are refused with a message
+asking you to remove the password in XMind first. The consent dialog reports
+losses, and is not a claim of general desktop interoperability.
 
 ## Pitch Mode
 - Enter with the Pitch Mode toolbar button; full-screen, windowed, and Presenter View modes are documented. Presenter View shows the presentation alongside the map.

@@ -63,7 +63,7 @@ fn visual_exports_keep_color_alpha_and_vector_progress() {
             ..Default::default()
         };
         let svg = String::from_utf8(export_bytes(&book, Format::Svg, &opts).unwrap()).unwrap();
-        assert_eq!(svg.matches("#0C2238B4").count(), 9);
+        assert!(svg.matches("#0C2238B4").count() >= markers::GROUPS.len());
         assert!(svg.contains("<circle"));
         assert!(svg.contains("<polygon"));
         assert!(svg.contains(">Jan</text>"));

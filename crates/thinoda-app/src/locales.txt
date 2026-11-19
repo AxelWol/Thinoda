@@ -162,7 +162,10 @@ Grid or snapping may differ in draw.io|La cuadrícula o el ajuste magnético pue
 Page background may differ in draw.io|El fondo de página puede variar en draw.io|L’arrière-plan de page peut différer dans draw.io|Sidens baggrund kan afvige i draw.io|De pagina-achtergrond kan afwijken in draw.io|O fundo da página pode diferir no draw.io|Lo sfondo della pagina può differire in draw.io|Tło strony może się różnić w draw.io
 Cards may show folded corners in draw.io|Las tarjetas pueden mostrar esquinas dobladas en draw.io|Les cartes peuvent afficher des coins pliés dans draw.io|Kort kan vise foldede hjørner i draw.io|Kaarten kunnen gevouwen hoeken tonen in draw.io|Os cartões podem apresentar cantos dobrados no draw.io|Le schede potrebbero mostrare angoli piegati in draw.io|Karty mogą mieć zagięte rogi w draw.io
 Translucent connector labels may render differently|Las etiquetas translúcidas de conectores pueden verse diferentes|Les étiquettes translucides des connecteurs peuvent s’afficher différemment|Halvgennemsigtige forbindelsesetiketter kan se anderledes ud|Halfdoorzichtige verbindingslabels kunnen er anders uitzien|As etiquetas translúcidas dos conetores podem ser apresentadas de forma diferente|Le etichette traslucide dei connettori possono apparire diverse|Półprzezroczyste etykiety łączników mogą wyglądać inaczej
-Topic notes, labels, markers or tasks omitted|Notas, etiquetas, marcadores o tareas de los temas omitidos|Notes, étiquettes, marqueurs ou tâches des sujets omis|Emners noter, etiketter, markører eller opgaver udelades|Notities, labels, markeringen of taken van onderwerpen weggelaten|Notas, etiquetas, marcadores ou tarefas dos tópicos omitidos|Note, etichette, indicatori o attività degli argomenti omessi|Pominięto notatki, etykiety, znaczniki lub zadania tematów
+Topic details omitted|Detalles de temas omitidos|Détails des sujets omis|Emnedetaljer udeladt|Onderwerpdetails weggelaten|Detalhes dos tópicos omitidos|Dettagli degli argomenti omessi|Pominięto szczegóły tematów
+XMindMark|XMindMark|XMindMark|XMindMark|XMindMark|XMindMark|XMindMark|XMindMark
+Boundary and relationship styling or routing omitted|Se omitieron el estilo o el trazado de límites y relaciones|Style ou routage des frontières et relations omis|Udseende eller føring af grænser og relationer udeladt|Stijl of route van grenzen en relaties weggelaten|Estilo ou roteamento de limites e relações omitidos|Stile o instradamento di limiti e relazioni omessi|Pominięto styl lub trasowanie granic i relacji
+Other sheets omitted|Otras hojas omitidas|Autres feuilles omises|Andre ark udeladt|Andere bladen weggelaten|Outras planilhas omitidas|Altri fogli omessi|Pominięto inne arkusze
 Presentation slides omitted|Diapositivas de presentación omitidas|Diapositives de présentation omises|Præsentationsdias udelades|Presentatiedia's weggelaten|Diapositivos de apresentação omitidos|Diapositive della presentazione omesse|Pominięto slajdy prezentacji
 Formatted card titles cannot be changed until rich-text editing is supported|Los títulos de tarjeta con formato no se pueden cambiar hasta que se admita la edición de texto enriquecido.|Les titres de carte mis en forme ne peuvent pas être modifiés tant que l’édition de texte enrichi n’est pas prise en charge.|Formaterede korttitler kan ikke ændres, før redigering af formateret tekst understøttes.|Opgemaakte kaarttitels kunnen pas worden gewijzigd wanneer tekst met opmaak wordt ondersteund.|Os títulos de cartões formatados não podem ser alterados até que a edição de texto formatado seja suportada.|I titoli delle schede formattati non possono essere modificati finché non è supportata la modifica del testo formattato.|Sformatowanych tytułów kart nie można zmienić, dopóki edycja tekstu sformatowanego nie jest obsługiwana.
 Formatted card text must remain on a floating sticky note or text card.|El texto de tarjeta con formato debe permanecer en una nota adhesiva flotante o una tarjeta de texto.|Le texte de carte mis en forme doit rester sur une note autocollante flottante ou une carte de texte.|Formateret korttekst skal forblive på en fritliggende klæbenote eller et tekstkort.|Opgemaakte kaarttekst moet op een zwevende plaknotitie of tekstkaart blijven staan.|O texto formatado do cartão tem de permanecer numa nota adesiva flutuante ou num cartão de texto.|Il testo formattato della scheda deve rimanere su una nota adesiva mobile o una scheda di testo.|Sformatowany tekst karty musi pozostać na pływającej karteczce lub karcie tekstowej.
@@ -224,6 +227,25 @@ Pentagon|Pentágono|Pentagone|Femkant|Vijfhoek|Pentágono|Pentagono|Pięciokąt
 Hexagon|Hexágono|Hexagone|Sekskant|Zeshoek|Hexágono|Esagono|Sześciokąt
 Octagon|Octágono|Octogone|Ottekant|Achthoek|Octógono|Ottagono|Ośmiokąt
 Arrow|Flecha|Flèche|Pil|Pijl|Seta|Freccia|Strzałka
+Paused|En pausa|En pause|Sat på pause|Gepauzeerd|Em pausa|In pausa|Wstrzymane
+Dark blue flag|Bandera azul oscuro|Drapeau bleu foncé|Mørkeblåt flag|Donkerblauwe vlag|Bandeira azul-escura|Bandiera blu scuro|Ciemnoniebieska flaga
+Dark blue star|Estrella azul oscuro|Étoile bleu foncé|Mørkeblå stjerne|Donkerblauwe ster|Estrela azul-escura|Stella blu scuro|Ciemnoniebieska gwiazda
+Embarrassed|Avergonzado|Gêné|Forlegen|Beschaamd|Envergonhado|Imbarazzato|Zakłopotany
+People|Personas|Personnes|Personer|Mensen|Pessoas|Persone|Ludzie
+Red person|Persona roja|Personne rouge|Rød person|Rood persoon|Pessoa vermelha|Persona rossa|Czerwona osoba
+Orange person|Persona naranja|Personne orange|Orange person|Oranje persoon|Pessoa laranja|Persona arancione|Pomarańczowa osoba
+Yellow person|Persona amarilla|Personne jaune|Gul person|Geel persoon|Pessoa amarela|Persona gialla|Żółta osoba
+Green person|Persona verde|Personne verte|Grøn person|Groen persoon|Pessoa verde|Persona verde|Zielona osoba
+Blue person|Persona azul|Personne bleue|Blå person|Blauw persoon|Pessoa azul|Persona blu|Niebieska osoba
+Purple person|Persona morada|Personne violette|Lilla person|Paarse persoon|Pessoa roxa|Persona viola|Fioletowa osoba
+Dark blue person|Persona azul oscuro|Personne bleu foncé|Mørkeblå person|Donkerblauw persoon|Pessoa azul-escura|Persona blu scuro|Ciemnoniebieska osoba
+Arrow left|Flecha izquierda|Flèche gauche|Pil venstre|Pijl links|Seta para a esquerda|Freccia sinistra|Strzałka w lewo
+Arrow right|Flecha derecha|Flèche droite|Pil højre|Pijl rechts|Seta para a direita|Freccia destra|Strzałka w prawo
+Arrow up|Flecha arriba|Flèche vers le haut|Pil op|Pijl omhoog|Seta para cima|Freccia in alto|Strzałka w górę
+Arrow down|Flecha abajo|Flèche vers le bas|Pil ned|Pijl omlaag|Seta para baixo|Freccia in basso|Strzałka w dół
+Arrow left and right|Flecha izquierda y derecha|Flèche gauche et droite|Pil venstre og højre|Pijl links en rechts|Seta para a esquerda e para a direita|Freccia sinistra e destra|Strzałka w lewo i w prawo
+Arrow up and down|Flecha arriba y abajo|Flèche vers le haut et le bas|Pil op og ned|Pijl omhoog en omlaag|Seta para cima e para baixo|Freccia in alto e in basso|Strzałka w górę i w dół
+Refresh arrow|Flecha de actualización|Flèche d’actualisation|Opdateringspil|Verversingspijl|Seta de atualização|Freccia di aggiornamento|Strzałka odświeżania
 Double arrow|Flecha doble|Double flèche|Dobbeltpil|Dubbele pijl|Seta dupla|Freccia doppia|Podwójna strzałka
 Chevron|Flecha angular|Chevron|Vinkel|Chevron|Seta angular|Freccia angolare|Szewron
 Callout|Bocadillo|Bulle|Taleboble|Tekstballon|Balão de texto|Fumetto|Dymek

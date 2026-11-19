@@ -161,6 +161,7 @@ impl Cmd {
             Self::Export(format) => match format {
                 Format::Thinoda => "export.thinoda",
                 Format::XMind => "export.xmind",
+                Format::XMindMark => "export.xmindmark",
                 Format::FreeMind => "export.freemind",
                 Format::Opml => "export.opml",
                 Format::Markdown => "export.markdown",

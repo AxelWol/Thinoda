@@ -2700,6 +2700,19 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
             );
         }
         "task" => {
+            if id == "task-pause" {
+                painter.circle(c, rad - 0.5, a(detail), Stroke::new(1.2, a(foreground)));
+                for x in [-0.18, 0.18] {
+                    painter.line_segment(
+                        [
+                            pos2(c.x + rad * x, c.y - rad * 0.42),
+                            pos2(c.x + rad * x, c.y + rad * 0.42),
+                        ],
+                        Stroke::new(1.8, a(foreground)),
+                    );
+                }
+                return;
+            }
             let frac = thinoda_core::markers::task_fraction(id);
             let green = a(foreground);
             painter.circle(c, rad - 0.5, a(detail), Stroke::new(1.2, green));
