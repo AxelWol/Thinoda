@@ -491,6 +491,7 @@ Numbered list|Lista numerada|Liste numérotée|Nummereret liste|Genummerde lijst
 Inline formatting|Formato en línea|Mise en forme en ligne|Inlineformatering|Inline-opmaak|Formatação em linha|Formattazione in linea|Formatowanie znaków
 Mixed|Mixto|Mixte|Blandet|Gemengd|Misto|Misto|Mieszane
 Inline Font Family|Fuente del texto seleccionado|Police du texte sélectionné|Skrifttype for markeret tekst|Lettertype van geselecteerde tekst|Tipo de letra do texto selecionado|Carattere del testo selezionato|Czcionka zaznaczonego tekstu
+Search fonts|Buscar fuentes|Rechercher des polices|Søg efter skrifttyper|Lettertypen zoeken|Pesquisar tipos de letra|Cerca caratteri|Szukaj czcionek
 Inline Font Size|Tamaño del texto seleccionado|Taille du texte sélectionné|Skriftstørrelse for markeret tekst|Tekengrootte van geselecteerde tekst|Tamanho do texto selecionado|Dimensione del testo selezionato|Rozmiar zaznaczonego tekstu
 Inline Font Size Auto|Tamaño automático del texto seleccionado|Taille automatique du texte sélectionné|Automatisk skriftstørrelse for markeret tekst|Automatische tekengrootte van geselecteerde tekst|Tamanho automático do texto selecionado|Dimensione automatica del testo selezionato|Automatyczny rozmiar zaznaczonego tekstu
 Inline Text Color|Color del texto seleccionado|Couleur du texte sélectionné|Farve på markeret tekst|Kleur van geselecteerde tekst|Cor do texto selecionado|Colore del testo selezionato|Kolor zaznaczonego tekstu

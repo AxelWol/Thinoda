@@ -3849,6 +3849,94 @@ fn inline_font_auto_clears_a_mixed_selection() {
 }
 
 #[test]
+fn inline_font_search_preserves_selection_and_filters_choices() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    assert!(h.get_by_label("Search fonts").is_focused());
+    h.get_by_label("Search fonts").type_text("mono");
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Monospace").is_some(),
+        "search present={} title={:?} focus={:?}",
+        h.query_by_label("Search fonts").is_some(),
+        h.state().doc().unwrap().view.editing_text(),
+        h.ctx.memory(|memory| memory.focused())
+    );
+    assert!(h.query_by_label("Auto").is_none());
+    h.get_by_label("Monospace").click();
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    let draft = doc.view.title_rich_formatting_draft().unwrap();
+    assert_eq!((draft.runs[0].start, draft.runs[0].end), (0, 10));
+    assert_eq!(
+        draft.runs[0].style.font_family.as_deref(),
+        Some("monospace")
+    );
+    assert_eq!(doc.view.editing_text(), Some("Card title"));
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    assert!(h.query_by_label("Auto").is_some());
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    h.get_by_label("Search fonts").type_text("mono");
+    h.run_steps(2);
+    h.key_press(Key::Escape);
+    h.run_steps(4);
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Inline Font Family")
+            .is_some(),
+        "draft={:?} topic={:?} toolbar={}",
+        h.state().doc().unwrap().view.editing_text(),
+        h.state().doc().unwrap().view.editing_topic(),
+        h.query_by_role_and_label(Role::Button, "Bold").is_some()
+    );
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    assert!(h.query_by_label("Auto").is_some());
+}
+
+#[test]
+fn inline_font_search_ime_composition_cannot_apply_a_font() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    assert!(h.get_by_label("Search fonts").is_focused());
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "mono".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    assert!(
+        h.get_by_label("Monospace").accesskit_node().is_disabled(),
+        "search focused={} title={:?}",
+        h.get_by_label("Search fonts").is_focused(),
+        h.state().doc().unwrap().view.editing_text()
+    );
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_text(),
+        Some("Card title")
+    );
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("mono".into())));
+    h.run_steps(3);
+    assert!(!h.get_by_label("Monospace").accesskit_node().is_disabled());
+}
+
+#[test]
 fn canceled_and_multitouch_inline_color_keep_the_title_draft() {
     for (contacts, cancel) in [(1, true), (2, false)] {
         let (app, id) = app_with_card(CardKind::Sticky);

@@ -1557,9 +1557,17 @@ fn font_choice(
         default_label,
         generic_monospace,
         owned,
-        false,
+        FontChoiceMode {
+            mixed: false,
+            searchable: false,
+        },
     )
     .0
+}
+
+struct FontChoiceMode {
+    mixed: bool,
+    searchable: bool,
 }
 
 fn font_choice_with_mixed(
@@ -1569,10 +1577,42 @@ fn font_choice_with_mixed(
     default_label: &str,
     generic_monospace: bool,
     mut owned: Option<&mut Vec<egui::Id>>,
-    mixed: bool,
+    mode: FontChoiceMode,
 ) -> (egui::Response, bool) {
+    let mixed = mode.mixed;
+    let search_id = ui.make_persistent_id("font_family_search");
+    let composing_id = search_id.with("composing");
+    let open_id = search_id.with("open");
+    if mode.searchable
+        && !ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(open_id))
+            .unwrap_or(false)
+    {
+        ui.ctx().data_mut(|data| data.remove::<String>(search_id));
+    }
+    let mut composing = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(composing_id))
+        .unwrap_or(false);
+    if mode.searchable && ui.memory(|memory| memory.has_focus(search_id)) {
+        thinoda_canvas::protect_ime_candidate_keys(ui.ctx(), search_id, &mut composing);
+    } else {
+        composing = false;
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(composing_id, composing));
+    let dismiss = mode.searchable
+        && !composing
+        && ui.memory(|memory| memory.has_focus(search_id))
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     let mut chosen = false;
     let response = egui::ComboBox::from_id_salt("font_family")
+        .close_behavior(if mode.searchable {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        } else {
+            egui::PopupCloseBehavior::CloseOnClick
+        })
         .selected_text(match (mixed, value.as_deref()) {
             (true, _) => t("Mixed"),
             (false, None) => default_label,
@@ -1582,39 +1622,73 @@ fn font_choice_with_mixed(
         .width(ui.available_width())
         .truncate()
         .show_ui(ui, |ui| {
-            let response = ui.selectable_label(!mixed && value.is_none(), default_label);
-            if response.clicked() {
-                *value = None;
-                chosen = true;
-            }
-            if let Some(owned) = owned.as_deref_mut() {
-                owned.push(response.id);
-            }
-            if generic_monospace {
-                let response = ui.selectable_label(
-                    !mixed && value.as_deref() == Some("monospace"),
-                    t("Monospace"),
-                );
-                if response.clicked() {
-                    *value = Some("monospace".into());
-                    chosen = true;
-                }
+            let mut query = ui
+                .ctx()
+                .data(|data| data.get_temp::<String>(search_id))
+                .unwrap_or_default();
+            if mode.searchable {
+                let response = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut query)
+                            .id(search_id)
+                            .char_limit(thinoda_core::rich_text::MAX_INLINE_FONT_FAMILY_BYTES)
+                            .hint_text(t("Search")),
+                    )
+                    .accessible_name(t("Search fonts"));
                 if let Some(owned) = owned.as_deref_mut() {
                     owned.push(response.id);
                 }
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(search_id, query.clone()));
             }
-            for name in fonts.names() {
-                let response = ui.selectable_label(!mixed && value.as_ref() == Some(name), name);
-                if response.clicked() {
-                    *value = Some(name.clone());
-                    chosen = true;
+            let query = query.trim().to_lowercase();
+            let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
+            ui.add_enabled_ui(!composing, |ui| {
+                if matches(default_label) {
+                    let response = ui.selectable_label(!mixed && value.is_none(), default_label);
+                    if response.clicked() {
+                        *value = None;
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
                 }
-                if let Some(owned) = owned.as_deref_mut() {
-                    owned.push(response.id);
+                if generic_monospace && matches(t("Monospace")) {
+                    let response = ui.selectable_label(
+                        !mixed && value.as_deref() == Some("monospace"),
+                        t("Monospace"),
+                    );
+                    if response.clicked() {
+                        *value = Some("monospace".into());
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
                 }
+                for name in fonts.names().iter().filter(|name| matches(name)) {
+                    let response =
+                        ui.selectable_label(!mixed && value.as_ref() == Some(name), name);
+                    if response.clicked() {
+                        *value = Some(name.clone());
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
+                }
+            });
+            if (chosen || dismiss) && mode.searchable {
+                ui.ctx().data_mut(|data| data.remove::<String>(search_id));
+                ui.close();
             }
         })
         .response;
+    if mode.searchable {
+        let open = egui::ComboBox::is_open(ui.ctx(), response.id);
+        ui.ctx().data_mut(|data| data.insert_temp(open_id, open));
+    }
     if let Some(owned) = owned {
         owned.push(response.id);
     }
@@ -4222,7 +4296,10 @@ impl ThinodaApp {
                                                                     t("Auto"),
                                                                     true,
                                                                     Some(&mut owned_focus),
-                                                                    values.font_family.is_none(),
+                                                                    FontChoiceMode {
+                                                                        mixed: values.font_family.is_none(),
+                                                                        searchable: true,
+                                                                    },
                                                                 );
                                                                 let response = response.accessible_name(t("Inline Font Family"));
                                                                 family_chosen = chosen;
@@ -4325,10 +4402,11 @@ impl ThinodaApp {
             || inline_size_change.is_some()
             || inline_style_change.is_some();
         let keyboard_finish = pointer_event.is_none()
-            && (((size_was_editing && !size_is_editing
-                || inline_size_was_editing && !inline_size_is_editing)
-                && focus.is_none())
-                || (has_change && (focus.is_none() || (popup_was_open && !popup_open))));
+            && ((popup_was_open && !popup_open)
+                || ((size_was_editing && !size_is_editing
+                    || inline_size_was_editing && !inline_size_is_editing)
+                    && focus.is_none())
+                || (has_change && focus.is_none()));
         let refocus = ime_active
             || keyboard_finish
             || (pointer_released

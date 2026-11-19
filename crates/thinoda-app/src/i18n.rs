@@ -2720,6 +2720,7 @@ const DE: &[(&str, &str)] = &[
     ("Inline formatting", "Inline-Formatierung"),
     ("Mixed", "Gemischt"),
     ("Inline Font Family", "Inline-Schriftart"),
+    ("Search fonts", "Schriftarten suchen"),
     ("Inline Font Size", "Inline-Schriftgröße"),
     ("Inline Font Size Auto", "Inline-Schriftgröße automatisch"),
     ("Inline Text Color", "Inline-Textfarbe"),

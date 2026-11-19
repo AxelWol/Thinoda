@@ -1352,12 +1352,15 @@ impl MapView {
     pub fn title_ime_active(&self, ctx: &egui::Context) -> bool {
         self.editing.as_ref().is_some_and(|edit| {
             edit.ime_composing
-                || ctx.input(|input| {
+                || (ctx.memory(|memory| {
+                    memory.has_focus(MapCanvas::title_editor_id())
+                        || memory.had_focus_last_frame(MapCanvas::title_editor_id())
+                }) && ctx.input(|input| {
                     input
                         .events
                         .iter()
                         .any(|event| matches!(event, egui::Event::Ime(_)))
-                })
+                }))
         })
     }
 
