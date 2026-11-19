@@ -349,6 +349,9 @@ pub struct Topic {
     pub marker_colors: std::collections::BTreeMap<usize, Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
+    /// Imported draw.io cell identity; cleared when the topic is copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "TopicStyle::is_default")]
     pub style: TopicStyle,
     /// Inline style runs and list semantics for supported board-card titles.
@@ -402,6 +405,7 @@ impl Topic {
             markers: Vec::new(),
             marker_colors: Default::default(),
             hyperlink: None,
+            drawio_source_id: None,
             style: TopicStyle::default(),
             inline_text: crate::rich_text::InlineText::default(),
             position: None,
@@ -629,6 +633,7 @@ impl Subtree {
         let m = |id: TopicId| *map.get(&id).unwrap_or(&id);
         for t in &mut self.topics {
             t.id = m(t.id);
+            t.drawio_source_id = None;
             t.parent = t.parent.map(m);
             for c in &mut t.children {
                 *c = m(*c);
@@ -928,6 +933,13 @@ impl Sheet {
         self.drawio.is_some()
             || self.canvas.has_drawio_passthrough()
             || self.has_drawio_zone_source_ids()
+            || self.has_drawio_topic_source_ids()
+    }
+
+    pub fn has_drawio_topic_source_ids(&self) -> bool {
+        self.topics
+            .values()
+            .any(|topic| topic.drawio_source_id.is_some())
     }
 
     pub fn has_drawio_zone_source_ids(&self) -> bool {
@@ -1642,6 +1654,12 @@ impl Sheet {
             return Err("root has a parent".into());
         }
         for (id, t) in &self.topics {
+            if let Some(source) = &t.drawio_source_id {
+                crate::drawio_passthrough::valid_id(source, "draw.io topic id")?;
+                if matches!(source.as_str(), "0" | "1") {
+                    return Err("draw.io topic id is reserved".into());
+                }
+            }
             if !t.inline_text.is_empty() {
                 if !t.card.is_some_and(|card| {
                     matches!(
@@ -2820,6 +2838,10 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_drawio_zone_source_ids)
     }
 
+    pub fn has_drawio_topic_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_topic_source_ids)
+    }
+
     pub fn has_scene_hierarchy(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_hierarchy)
     }
@@ -2925,6 +2947,7 @@ impl Workbook {
                 topic.notes = None;
                 topic.labels.clear();
                 topic.hyperlink = None;
+                topic.drawio_source_id = None;
                 topic.image = None;
                 topic.attachment = None;
                 topic.image_size = None;

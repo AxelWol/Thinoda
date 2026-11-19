@@ -60,14 +60,17 @@ const RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-40\n";
 const CARD_BASELINE_SHEET_PREFIX: &str = "THINODA-SHEET-41\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
-/// A versioned OS text payload retaining sheet content but not zone source ownership.
+/// A versioned OS text payload retaining content but not source ownership.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
     let mut copied;
-    let sheet = if sheet.has_drawio_zone_source_ids() {
+    let sheet = if sheet.has_drawio_zone_source_ids() || sheet.has_drawio_topic_source_ids() {
         copied = sheet.clone();
         for zone in &mut copied.zones {
             zone.drawio_source_id = None;
+        }
+        for topic in copied.topics.values_mut() {
+            topic.drawio_source_id = None;
         }
         &copied
     } else {
@@ -382,6 +385,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     if sheet.has_drawio_zone_source_ids() {
         return Err("sheet clipboard cannot carry draw.io zone source IDs".into());
     }
+    if sheet.has_drawio_topic_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io topic source IDs".into());
+    }
     if version < 41 && sheet.has_card_baseline_overrides() {
         return Err("card baseline overrides require sheet clipboard version 41".into());
     }
@@ -557,10 +563,13 @@ fn topic_copy_roots(sheet: &Sheet, ids: &[TopicId]) -> Vec<TopicId> {
 }
 
 fn copy_topic_roots(sheet: &Sheet, roots: &[TopicId]) -> ClipboardPayload {
-    let subtrees: Vec<Subtree> = roots
+    let mut subtrees: Vec<Subtree> = roots
         .iter()
         .filter_map(|r| sheet.copy_subtree(*r))
         .collect();
+    for topic in subtrees.iter_mut().flat_map(|subtree| &mut subtree.topics) {
+        topic.drawio_source_id = None;
+    }
     let outlines: Vec<OutlineNode> = roots.iter().map(|r| to_outline(sheet, *r)).collect();
     ClipboardPayload {
         subtrees,
@@ -1751,6 +1760,58 @@ mod tests {
         );
         let forged = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
         assert!(decode_sheet(&forged).is_err());
+    }
+
+    #[test]
+    fn clipboards_clear_topic_source_ownership_and_reject_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "Card",
+                crate::Vec2::new(100.0, 100.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet.topic_mut(id).unwrap().drawio_source_id = Some("private-source".into());
+        let sheet_payload = encode_sheet(&sheet).unwrap();
+        assert!(!sheet_payload.contains("private-source"));
+        assert!(
+            decode_sheet(&sheet_payload)
+                .unwrap()
+                .topic(id)
+                .unwrap()
+                .drawio_source_id
+                .is_none()
+        );
+        let forged_sheet = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged_sheet).is_err());
+
+        let topics = copy_topics(&sheet, &[id]).unwrap().unwrap();
+        let topic_payload = encode_topic_payload(&topics).unwrap();
+        assert!(!topic_payload.contains("private-source"));
+        let forged_topic = topic_payload.replacen(
+            r#""title":"Card""#,
+            r#""drawio_source_id":"forged","title":"Card""#,
+            1,
+        );
+        assert!(decode_topic_payload(&forged_topic).is_err());
+
+        let layout = crate::layout_sheet(&sheet, &crate::ApproxMeasure, false);
+        let board = copy_board_selection(&sheet, &layout, &[id], &[])
+            .unwrap()
+            .unwrap();
+        let board_payload = encode_board_payload(&board).unwrap();
+        assert!(!board_payload.contains("private-source"));
+        let forged_board = board_payload.replacen(
+            r#""title":"Card""#,
+            r#""drawio_source_id":"forged","title":"Card""#,
+            1,
+        );
+        assert!(decode_board_payload(&forged_board).is_err());
+        assert_eq!(
+            sheet.topic(id).unwrap().drawio_source_id.as_deref(),
+            Some("private-source")
+        );
     }
 
     #[test]

@@ -225,6 +225,9 @@ impl BoardClipboardPayload {
             return Err("board clipboard payload exceeds 16 MiB".into());
         }
         let sheet = &self.fragment;
+        if sheet.has_drawio_topic_source_ids() {
+            return Err("board clipboard cannot carry draw.io topic source IDs".into());
+        }
         if sheet.topics.len() > MAX_BOARD_CLIPBOARD_TOPICS + 1 {
             return Err(format!(
                 "board clipboard exceeds {MAX_BOARD_CLIPBOARD_TOPICS} topics"
@@ -1026,9 +1029,9 @@ fn copy_prepared_board_selection(
         }
     }
     for &id in &owned {
-        fragment
-            .topics
-            .insert(id, sheet.topic(id).expect("owned topic exists").clone());
+        let mut topic = sheet.topic(id).expect("owned topic exists").clone();
+        topic.drawio_source_id = None;
+        fragment.topics.insert(id, topic);
     }
     for &id in &roots {
         let original = sheet.topic(id).expect("selected topic exists");
@@ -1418,6 +1421,7 @@ pub fn paste_floating_subtrees(
         previous_height = height;
         for original in &subtree.topics {
             let mut topic = original.clone();
+            topic.drawio_source_id = None;
             topic.id = map(original.id)?;
             if original.id == subtree.root {
                 topic.parent = None;
@@ -1643,6 +1647,7 @@ pub fn paste_board_selection(
             continue;
         }
         let mut topic = original.clone();
+        topic.drawio_source_id = None;
         topic.id = map_topic(id)?;
         topic.parent = topic.parent.map(map_topic).transpose()?;
         topic.children = topic

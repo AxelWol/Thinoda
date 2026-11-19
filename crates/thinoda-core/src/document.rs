@@ -835,6 +835,9 @@ impl Document {
             for zone in &mut s.zones {
                 zone.drawio_source_id = None;
             }
+            for topic in s.topics.values_mut() {
+                topic.drawio_source_id = None;
+            }
             wb.sheets.insert(index + 1, s);
             wb.active_sheet = index + 1;
             Ok(index + 1)
@@ -1668,6 +1671,70 @@ mod tests {
         assert!(document.redo());
         assert!(
             document.workbook().sheets[1].zones[0]
+                .drawio_source_id
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn topic_source_ownership_follows_moves_but_not_copies() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let root = sheet.root;
+        let card = sheet
+            .add_card(
+                "Card",
+                crate::Vec2::new(100.0, 100.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet.topic_mut(card).unwrap().drawio_source_id = Some("private-source".into());
+        let mut document = Document::new(Workbook::new(sheet));
+        document
+            .edit_sheet("Move", |sheet| sheet.move_topic(card, root, 0))
+            .unwrap();
+        assert_eq!(
+            document
+                .sheet()
+                .topic(card)
+                .unwrap()
+                .drawio_source_id
+                .as_deref(),
+            Some("private-source")
+        );
+        let duplicate = document
+            .edit_sheet("Duplicate", |sheet| sheet.duplicate(card))
+            .unwrap();
+        assert!(
+            document
+                .sheet()
+                .topic(duplicate)
+                .unwrap()
+                .drawio_source_id
+                .is_none()
+        );
+        assert!(document.undo());
+        assert!(document.undo());
+        assert_eq!(
+            document
+                .sheet()
+                .topic(card)
+                .unwrap()
+                .drawio_source_id
+                .as_deref(),
+            Some("private-source")
+        );
+        document.duplicate_sheet(0).unwrap();
+        assert!(
+            document.workbook().sheets[1]
+                .topic(card)
+                .unwrap()
+                .drawio_source_id
+                .is_none()
+        );
+        assert!(
+            document.workbook().masked_copy().sheets[0]
+                .topic(card)
+                .unwrap()
                 .drawio_source_id
                 .is_none()
         );

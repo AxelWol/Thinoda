@@ -10954,7 +10954,7 @@ fn drawio_generated_topic_ids_avoid_sources_and_keep_connector_targets() {
 }
 
 #[test]
-fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
+fn sankey_shape_node_conversion_discloses_lost_shape_and_retains_identity() {
     let mut book = thinoda_core::templates::instantiate("sankey-budget");
     let node = *thinoda_core::sankey::evaluate(book.active())
         .unwrap()
@@ -10974,7 +10974,7 @@ fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
     let report = load(&xml);
     assert!(report.workbook.has_sankey());
     assert!(report.warnings.contains(&ImportWarning::Formatting));
-    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.warnings.contains(&ImportWarning::Other));
     assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
     let topic = report
         .workbook
@@ -10986,6 +10986,10 @@ fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
     assert_eq!(
         topic.hyperlink.as_deref(),
         Some("https://example.com/retained")
+    );
+    assert_eq!(
+        topic.drawio_source_id.as_deref(),
+        Some(format!("t{}", node.0).as_str())
     );
     assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
     assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
@@ -11007,6 +11011,10 @@ fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
     assert_eq!(
         topic.hyperlink.as_deref(),
         Some("https://example.com/retained")
+    );
+    assert_eq!(
+        topic.drawio_source_id.as_deref(),
+        Some(format!("t{}", node.0).as_str())
     );
     assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
     assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
@@ -12241,6 +12249,197 @@ fn drawio_zone_source_ids_reserve_sankey_node_and_edge_ids() {
 }
 
 #[test]
+fn drawio_card_source_ids_round_trip_and_reserve_deleted_ids() {
+    let xml = page(concat!(
+        r#"<mxCell id="t3" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge" edge="1" parent="1" source="t3"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="40" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let mut probe = load(&xml).workbook;
+    let sheet = probe.active_mut();
+    sheet.detach_subtree(sheet.floating[0]).unwrap();
+    let next = sheet
+        .add_card(
+            "Replacement",
+            Vec2::new(300.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    let source = format!("t{}", next.0);
+    let xml = xml.replace("t3", &source);
+    let report = load(&xml);
+    let sheet = report.workbook.active();
+    let card = *sheet.floating.first().unwrap();
+    assert_eq!(
+        sheet.topic(card).unwrap().drawio_source_id.as_deref(),
+        Some(source.as_str())
+    );
+    assert_eq!(crate::required_native_version(&report.workbook), 55);
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut reopened = crate::formats::native_import(&native).unwrap();
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":54,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
+    for _ in 0..2 {
+        let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+        assert_eq!(out.matches(&format!(r#"id="{source}""#)).count(), 1);
+        assert!(out.contains(&format!(r#"source="{source}""#)));
+        reopened = load(&out).workbook;
+        assert_eq!(
+            reopened
+                .active()
+                .topic(reopened.active().floating[0])
+                .unwrap()
+                .drawio_source_id
+                .as_deref(),
+            Some(source.as_str())
+        );
+    }
+    let sheet = reopened.active_mut();
+    let card = sheet.floating[0];
+    sheet.detach_subtree(card).unwrap();
+    let replacement = sheet
+        .add_card(
+            "Replacement",
+            Vec2::new(300.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert_eq!(replacement, next);
+    assert!(!out.contains(&format!(r#"id="{source}""#)));
+    assert!(out.contains(&format!(r#"id="t{}-1""#, replacement.0)));
+}
+
+#[test]
+fn drawio_card_source_id_collisions_do_not_steal_other_owners() {
+    let mut book = Workbook::default();
+    let sheet = book.active_mut();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(100.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(card).unwrap().drawio_source_id = Some("shared".into());
+    let shape = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(300.0, 100.0, 80.0, 60.0),
+            "Shape",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(shape).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some("shared".into()),
+        ..Default::default()
+    }));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(r#"id="shared""#).count(), 1);
+    let restored = load(&xml);
+    assert_eq!(cards(restored.workbook.active()).len(), 1);
+    assert!(shapes(restored.workbook.active()).iter().any(|object| {
+        object.label() == "Shape"
+            && object
+                .drawio
+                .as_ref()
+                .and_then(|data| data.source_id.as_deref())
+                == Some("shared")
+    }));
+}
+
+#[test]
+fn drawio_card_invalid_source_id_is_disclosed() {
+    let id = "x".repeat(thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES + 1);
+    let xml = page(&format!(
+        r#"<mxCell id="{id}" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report
+            .workbook
+            .active()
+            .topics
+            .values()
+            .all(|topic| topic.drawio_source_id.is_none())
+    );
+}
+
+#[test]
+fn drawio_card_source_id_survives_when_tombstone_budget_is_exhausted() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="card-source" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert!(
+        sheet
+            .topics
+            .values()
+            .any(|topic| topic.drawio_source_id.as_deref() == Some("card-source"))
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "card-source")
+    );
+    let xml = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(xml.contains(r#"id="card-source""#));
+}
+
+#[test]
+fn drawio_sankey_topic_source_ids_remain_stable_with_semantics() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let node = *thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|id| book.active().topics[id].card.is_some())
+        .unwrap();
+    book.active_mut().topic_mut(node).unwrap().drawio_source_id = Some("t9876".into());
+    let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+    for _ in 0..2 {
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(r#"id="t9876""#).count(), 1);
+        let report = load(&xml);
+        assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+        assert!(
+            report
+                .workbook
+                .active()
+                .topics
+                .values()
+                .any(|topic| { topic.drawio_source_id.as_deref() == Some("t9876") })
+        );
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(before_mass, after_mass);
+        book = report.workbook;
+    }
+}
+
+#[test]
 fn drawio_scene_container_ids_survive_as_page_tombstones() {
     let xml = page(concat!(
         r#"<mxCell id="card-source" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
@@ -12260,6 +12459,7 @@ fn drawio_scene_container_ids_survive_as_page_tombstones() {
     let reopened = crate::formats::native_import(&native).unwrap();
     let ids = &reopened.active().drawio.as_ref().unwrap().cell_ids;
     for id in [
+        "card-source",
         "group-child-a",
         "group-child-b",
         "scene-source",
@@ -12267,12 +12467,7 @@ fn drawio_scene_container_ids_survive_as_page_tombstones() {
     ] {
         assert!(ids.iter().any(|retained| retained == id), "missing {id}");
     }
-    for id in ["card-source", "group-source"] {
-        assert!(
-            !ids.iter().any(|retained| retained == id),
-            "unexpected {id}"
-        );
-    }
+    assert!(!ids.iter().any(|retained| retained == "group-source"));
     let first = export(&reopened).unwrap();
     assert!(String::from_utf8_lossy(&first).contains(r#"id="scene-source""#));
     let second = export(&import(&first).unwrap().workbook).unwrap();

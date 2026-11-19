@@ -2880,6 +2880,10 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         drawio_bytes =
             drawio_bytes.saturating_add(zone.drawio_source_id.as_ref().map_or(0, String::len));
     }
+    for topic in sheet.topics.values() {
+        drawio_bytes =
+            drawio_bytes.saturating_add(topic.drawio_source_id.as_ref().map_or(0, String::len));
+    }
     if drawio_bytes > crate::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES {
         return Err("draw.io passthrough of the sheet is too large".into());
     }

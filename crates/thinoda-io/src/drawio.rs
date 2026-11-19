@@ -2880,6 +2880,24 @@ impl<'a> PageImport<'a> {
         self.warnings.insert(warning);
     }
 
+    fn topic_source_id(&mut self, index: usize) -> Option<String> {
+        let id = &self.cells[index].id;
+        if !id.is_empty()
+            && !id.starts_with('\u{0}')
+            && !matches!(id.as_str(), "0" | "1")
+            && id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !id.chars().any(char::is_control)
+            && self.passthrough_bytes.saturating_add(id.len())
+                <= thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.passthrough_bytes += id.len();
+            Some(id.clone())
+        } else {
+            self.warn(ImportWarning::Other);
+            None
+        }
+    }
+
     /// Unknown style keys, attributes and the id of `cell` (architecture §3.1.1).
     fn cell_passthrough(
         &mut self,
@@ -4529,7 +4547,9 @@ impl<'a> PageImport<'a> {
         }
         match self.sheet.add_card(&label, rect.center(), card) {
             Ok(id) => {
+                let source_id = self.topic_source_id(index);
                 if let Some(topic) = self.sheet.topic_mut(id) {
+                    topic.drawio_source_id = source_id;
                     topic.style.fill = card.color;
                     topic.style.text_color = style.text_color();
                     topic.inline_text = rich.unwrap_or_default();
@@ -5552,6 +5572,10 @@ fn import_page(
         .filter(|(_, item)| matches!(item, Item::Object(_) | Item::Container(_)))
         .map(|(index, _)| *index)
         .collect();
+    represented_cells.extend(import.items.iter().filter_map(|(index, item)| match item {
+        Item::Card(id) if import.sheet.topic(*id)?.drawio_source_id.is_some() => Some(*index),
+        _ => None,
+    }));
     represented_cells.extend(
         import
             .sheet
@@ -5633,6 +5657,7 @@ fn page_passthrough(
         bytes += id.len();
         drawio.cell_ids.push(id.clone());
     }
+    drawio.cell_ids.sort_unstable();
     debug_assert!(drawio.validate().is_ok());
     ((!drawio.is_empty()).then(|| Arc::new(drawio)), dropped)
 }
@@ -5807,9 +5832,8 @@ impl PageImport<'_> {
         let items = self.items.clone();
         match self.apply_sankey_candidate(json) {
             Ok(true) => {
-                // Shape-to-card conversion cannot retain the shape or its source ID.
+                // Shape-to-card conversion cannot retain the shape.
                 self.warn(ImportWarning::Formatting);
-                self.warn(ImportWarning::Other);
             }
             Ok(false) => {}
             Err(_) => {
@@ -5899,6 +5923,8 @@ impl PageImport<'_> {
                         t.style.text_color = o.style.text_color;
                         t.style.align = self.cells[index].style.text_align();
                         t.hyperlink = o.data.as_ref().and_then(|data| data.link.clone());
+                        t.drawio_source_id =
+                            o.drawio.as_ref().and_then(|data| data.source_id.clone());
                         t.inline_text = o.label_rich_text.as_deref().cloned().unwrap_or_default();
                     }
                     self.sheet.canvas.objects.retain(|o| o.id != id);
@@ -6720,6 +6746,12 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .filter_map(|zone| zone.drawio_source_id.clone()),
         );
+        unavailable.extend(
+            sheet
+                .topics
+                .values()
+                .filter_map(|topic| topic.drawio_source_id.clone()),
+        );
         let mut zone_sources: HashMap<&str, usize> = HashMap::new();
         for source in sheet
             .zones
@@ -6740,6 +6772,12 @@ impl<'a> PageWriter<'a> {
                     .iter()
                     .filter_map(|layer| layer.source_id.as_deref()),
             )
+            .chain(
+                sheet
+                    .topics
+                    .values()
+                    .filter_map(|topic| topic.drawio_source_id.as_deref()),
+            )
             .collect();
         for zone in &sheet.zones {
             if let Some(source) = zone.drawio_source_id.as_deref()
@@ -6755,9 +6793,62 @@ impl<'a> PageWriter<'a> {
             sankey_nodes.extend(settings.sources.keys().copied());
             sankey_nodes.extend(settings.stages.keys().copied());
         }
+        let mut topic_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .topics
+            .values()
+            .filter_map(|topic| topic.drawio_source_id.as_deref())
+        {
+            *topic_sources.entry(source).or_default() += 1;
+        }
+        let other_topic_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .zones
+                    .iter()
+                    .filter_map(|zone| zone.drawio_source_id.as_deref()),
+            )
+            .collect();
+        for topic in sheet.topics.values() {
+            let Some(source) = topic.drawio_source_id.as_deref() else {
+                continue;
+            };
+            if topic_sources.get(source) != Some(&1) || other_topic_sources.contains(source) {
+                continue;
+            }
+            if sankey_nodes.contains(&topic.id) {
+                let Some(number) = source
+                    .strip_prefix('t')
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .filter(|number| format!("t{number}") == source)
+                else {
+                    continue;
+                };
+                if reserved.insert(source.to_owned()) {
+                    writer.sankey_topic_ids.insert(topic.id, TopicId(number));
+                    writer.topic_cells.insert(topic.id, source.to_owned());
+                }
+            } else if reserved.insert(source.to_owned()) {
+                writer.topic_cells.insert(topic.id, source.to_owned());
+            }
+        }
         for id in &sankey_nodes {
             let cell = format!("t{}", id.0);
-            if !unavailable.contains(&cell) && reserved.insert(cell) {
+            if !writer.sankey_topic_ids.contains_key(id)
+                && !unavailable.contains(&cell)
+                && reserved.insert(cell)
+            {
                 writer.sankey_topic_ids.insert(*id, *id);
             }
         }
@@ -6846,6 +6937,9 @@ impl<'a> PageWriter<'a> {
             id
         };
         for id in sheet.topics.keys() {
+            if writer.topic_cells.contains_key(id) {
+                continue;
+            }
             let base = format!("t{}", id.0);
             let cell = if let Some(mapped) = writer.sankey_topic_ids.get(id) {
                 format!("t{}", mapped.0)

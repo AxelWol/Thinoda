@@ -207,6 +207,9 @@ fn validate_payload(payload: &ClipboardPayload) -> Result<(), String> {
         let mut topics = HashMap::new();
         let mut remapped = HashMap::new();
         for topic in &subtree.topics {
+            if topic.drawio_source_id.is_some() {
+                return Err("topic clipboard cannot carry draw.io source IDs".into());
+            }
             if topics.insert(topic.id, topic).is_some() {
                 return Err(format!("duplicate topic clipboard ID {}", topic.id));
             }
