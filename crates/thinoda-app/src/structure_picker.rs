@@ -112,8 +112,11 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
     let mut chosen = None;
     let viewport = ui.ctx().content_rect();
     let popup_width = (viewport.width() - 32.0).clamp(80.0, 390.0);
+    let popup_frame = egui::Frame::popup(ui.style());
+    let content_width = popup_width - popup_frame.total_margin().sum().x;
     let mut popup = egui::Popup::menu(&response)
         .width(popup_width)
+        .frame(popup_frame)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     if !thinoda_ui::widgets::touch_activation_allowed(ui.ctx()) {
         popup = popup.open_memory(None);
@@ -122,8 +125,12 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
     let popup_id = popup.get_id();
     let escape = was_open && ui.input(|input| input.key_pressed(egui::Key::Escape));
     popup.show(|ui| {
+        // Popup::width is only an initial size. Do not feed rounded grid widths
+        // back into the next frame's right-aligned popup position.
+        ui.set_width(content_width);
         egui::ScrollArea::vertical()
             .id_salt("structure_gallery_scroll")
+            .auto_shrink([false, true])
             .max_height((viewport.height() * 0.65).min(420.0))
             .show(ui, |ui| {
                 for (family, structures) in FAMILIES {
@@ -172,6 +179,57 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn popup_width_and_cards_remain_stable_at_fractional_positions() {
+        crate::i18n::set_lang(crate::i18n::Lang::En);
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            for offset in [0.0, 0.25, 0.5, 0.75] {
+                let mut h = Harness::builder()
+                    .with_size(vec2(800.0 + offset, 800.0))
+                    .with_pixels_per_point(scale)
+                    .build_ui_state(
+                        |ui, size: &mut Option<egui::Vec2>| {
+                            ui.scope_builder(
+                                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                                    egui::pos2(480.0 + offset, 100.0),
+                                    vec2(300.0, 600.0),
+                                )),
+                                |ui| {
+                                    let (response, _) = show(ui, Structure::MapClockwise);
+                                    let popup = egui::Popup::menu(&response);
+                                    *size = popup.get_expected_size();
+                                },
+                            );
+                        },
+                        None,
+                    );
+                h.get_by_role_and_label(egui::Role::Button, "Choose Structure: Mind Map")
+                    .click();
+                h.run_steps(20);
+                let size = h.state().unwrap();
+                assert!(
+                    (size.x - 390.0).abs() <= 1.0 / scale,
+                    "popup width drifted at {scale}/{offset}: {size:?}"
+                );
+                let labels = ["Mind Map", "Mind Map (one side)", "Logic Chart (right)"];
+                let rects =
+                    labels.map(|label| h.get_by_role_and_label(egui::Role::Button, label).rect());
+                for frame in 0..30 {
+                    h.run_steps(1);
+                    assert_eq!(*h.state(), Some(size), "{scale}/{offset}/{frame}");
+                    for (label, rect) in labels.into_iter().zip(rects) {
+                        assert_eq!(
+                            h.get_by_role_and_label(egui::Role::Button, label).rect(),
+                            rect,
+                            "{label} moved at {scale}/{offset}/{frame}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn families_cover_all_structures_once_and_previews_are_valid() {
