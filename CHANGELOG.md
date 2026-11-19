@@ -1,4 +1,4 @@
-_Last updated: 2026-11-18 14:37:38 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 13:15:27 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -38,6 +38,14 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.27.2](https://github.com/AxelWol/Thinoda/compare/v0.27.1...v0.27.2) (2026-11-19)
+
+
+### Bug Fixes
+
+* **xmind:** ignore ancillary desktop package entries on import ([48ace69](https://github.com/AxelWol/Thinoda/commit/48ace69c529a0aadd0f9ee40f7e441b8cc8d5774))
+* **xmind:** ignore ancillary desktop package entries on import ([5b94b80](https://github.com/AxelWol/Thinoda/commit/5b94b803b1d74403b6794a36c7ecefa0b4fb4124)), closes [#136](https://github.com/AxelWol/Thinoda/issues/136)
 
 ## [0.27.1](https://github.com/AxelWol/Thinoda/compare/v0.27.0...v0.27.1) (2026-11-18)
 
