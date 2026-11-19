@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 07:56:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 12:53:59 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io fixtures
 
