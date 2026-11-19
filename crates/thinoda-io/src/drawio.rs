@@ -1662,10 +1662,30 @@ fn point(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Ve
     }
 }
 
+fn has_extra_xml(element: &Element, allowed_attributes: &[&str], allow_children: bool) -> bool {
+    element
+        .attrs
+        .iter()
+        .any(|(name, _)| !allowed_attributes.contains(&name.as_str()))
+        || !element.text.trim().is_empty()
+        || (!allow_children && !element.children.is_empty())
+}
+
 fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarning>) -> Geometry {
     let Some(element) = element else {
         return Geometry::default();
     };
+    if has_extra_xml(
+        element,
+        &["x", "y", "width", "height", "relative", "as"],
+        true,
+    ) || element.attr("as").is_some_and(|value| value != "geometry")
+        || element
+            .attr("relative")
+            .is_some_and(|value| !matches!(value, "0" | "1"))
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     let (x, y, width, height, invalid_frame) = match (
         number(element, "x"),
         number(element, "y"),
@@ -1689,12 +1709,33 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
         relative: element.attr("relative") == Some("1"),
         ..Geometry::default()
     };
+    let mut seen = HashSet::new();
     for child in &element.children {
+        if let Some(role) = child.attr("as")
+            && matches!(
+                role,
+                "sourcePoint" | "targetPoint" | "offset" | "alternateBounds" | "points"
+            )
+            && !seen.insert(role)
+        {
+            warnings.insert(ImportWarning::Other);
+        }
         match (child.name.as_str(), child.attr("as")) {
-            ("mxPoint", Some("sourcePoint")) => geometry.source = point(child, warnings),
-            ("mxPoint", Some("targetPoint")) => geometry.target = point(child, warnings),
-            ("mxPoint", Some("offset")) => geometry.offset = point(child, warnings),
+            ("mxPoint", Some(role @ ("sourcePoint" | "targetPoint" | "offset"))) => {
+                if has_extra_xml(child, &["as", "x", "y"], false) {
+                    warnings.insert(ImportWarning::Other);
+                }
+                let point = point(child, warnings);
+                match role {
+                    "sourcePoint" => geometry.source = point,
+                    "targetPoint" => geometry.target = point,
+                    _ => geometry.offset = point,
+                }
+            }
             ("mxRectangle", Some("alternateBounds")) => {
+                if has_extra_xml(child, &["as", "x", "y", "width", "height"], false) {
+                    warnings.insert(ImportWarning::Other);
+                }
                 match (
                     number(child, "x"),
                     number(child, "y"),
@@ -1715,6 +1756,13 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
                 }
             }
             ("Array", Some("points")) => {
+                if has_extra_xml(child, &["as"], true)
+                    || child.children.iter().any(|point| {
+                        point.name != "mxPoint" || has_extra_xml(point, &["x", "y"], false)
+                    })
+                {
+                    warnings.insert(ImportWarning::Other);
+                }
                 geometry.points = child
                     .children
                     .iter()
@@ -1722,7 +1770,9 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
                     .filter_map(|p| point(p, warnings))
                     .collect();
             }
-            _ => {}
+            _ => {
+                warnings.insert(ImportWarning::Other);
+            }
         }
     }
     geometry
@@ -1735,6 +1785,50 @@ fn read_cell(
     warnings: &mut BTreeSet<ImportWarning>,
 ) -> Cell {
     let owned = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
+    let style = Style::parse(inner.attr("style").unwrap_or_default());
+    if has_extra_xml(
+        inner,
+        &[
+            "id",
+            "parent",
+            "value",
+            "style",
+            "vertex",
+            "edge",
+            "collapsed",
+            "source",
+            "target",
+            "visible",
+            "connectable",
+        ],
+        true,
+    ) || inner
+        .children
+        .iter()
+        .filter(|child| child.name == "mxGeometry")
+        .count()
+        > 1
+        || inner
+            .children
+            .iter()
+            .any(|child| child.name != "mxGeometry")
+        || ["vertex", "edge", "visible"].iter().any(|key| {
+            inner
+                .attr(key)
+                .is_some_and(|value| !matches!(value, "0" | "1"))
+        })
+        || inner.attr("connectable").is_some_and(|value| {
+            value != "1" && !(value == "0" && style.tokens.iter().any(|token| token == "edgeLabel"))
+        })
+        || user.is_some_and(|user| {
+            user.children.len() != 1
+                || !user.text.trim().is_empty()
+                || inner.attr("id").is_some()
+                || inner.attr("value").is_some()
+        })
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     let collapsed = match inner.attr("collapsed") {
         None | Some("0") => false,
         Some("1") => true,
@@ -1752,7 +1846,7 @@ fn read_cell(
         }
         .unwrap_or_default()
         .to_owned(),
-        style: Style::parse(inner.attr("style").unwrap_or_default()),
+        style,
         vertex: inner.attr("vertex") == Some("1"),
         edge: inner.attr("edge") == Some("1"),
         collapsed,

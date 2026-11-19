@@ -297,6 +297,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
 - [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
 - [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
+- [x] Report ignored cell and geometry attributes, children, duplicate geometry parts and unsupported flags rather than silently discarding them
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -332,6 +333,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 cell/geometry import diagnostics (partial) | Unknown cell and geometry XML, malformed flags, repeated geometry roles and non-connectable shapes/groups now warn; recognized non-connectable edge labels remain warning-free. |
 | 2026-11-19 | D10 document passthrough budget | Oversized, unsafe or excess unknown `<mxfile>` attributes produce import warnings; individually valid attributes that fit are still retained and round-trip. |
 | 2026-11-19 | D10 structural import diagnostics (partial) | Ignored document children, diagram attributes or children, and graph/root-level content produce import warnings; later-page warnings do not contaminate the first-page clipboard report, and the original source remains protected. |
 | 2026-11-19 | D10 page passthrough safety (partial) | Unknown page attributes and object-ID tombstones are bounded during import; omissions warn. Reserved generated model attributes and oversized page passthrough are rejected even on empty sheets or direct export. |
@@ -1131,9 +1133,10 @@ for conversion-only imports, but existing topic/zone ID regeneration and
 unsupported cells remain incompatible with safe source overwrite.
 
 **D10 structural diagnostics (partial).** Unknown top-level children, diagram
-attributes and children, graph children and root attributes are disclosed
-instead of silently discarded. Duck check: this identifies loss; it does not
-preserve the omitted XML, nor does it audit every cell and geometry feature.
+attributes and children, graph children, root attributes and unrepresented cell
+and geometry XML are disclosed instead of silently discarded. Duck check: this
+identifies loss; it does not preserve the omitted XML or establish complete
+semantic parity for all accepted cell and geometry values.
 
 ## 5. Rubber-duck findings
 

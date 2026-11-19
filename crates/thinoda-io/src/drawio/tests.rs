@@ -8007,8 +8007,11 @@ fn nested_geometry_groups_containers_and_edge_labels() {
         "#,
     );
     let report = load(&xml);
-    // `<b>` is formatting without a native equivalent.
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    // The formatting and non-connectable group cannot both be preserved.
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::Formatting, ImportWarning::Other]
+    );
     let sheet = &report.workbook.sheets[0];
     let find = |label: &str| {
         shapes(sheet)
@@ -10609,6 +10612,41 @@ fn drawio_import_reports_unsupported_document_and_page_xml() {
     let (report, first) = import_with_first_page_warnings(xml.as_bytes()).unwrap();
     assert!(first.is_empty());
     assert_eq!(report.warnings, [ImportWarning::Other]);
+}
+
+#[test]
+fn drawio_import_reports_unrepresented_cell_and_geometry_xml() {
+    let geometry = r#"<mxGeometry x="0" y="0" width="100" height="60" as="geometry"/>"#;
+    let baseline =
+        format!(r#"<mxCell id="shape" value="Label" vertex="1" parent="1">{geometry}</mxCell>"#);
+    assert!(load(&page(&baseline)).warnings.is_empty());
+    let cases = [
+        baseline.replace("vertex=\"1\"", "vertex=\"1\" custom=\"data\""),
+        baseline.replace("vertex=\"1\"", "vertex=\"1\" connectable=\"0\""),
+        baseline.replace("</mxCell>", "<future/></mxCell>"),
+        baseline.replace(geometry, &format!("{geometry}{geometry}")),
+        baseline.replace("as=\"geometry\"", "as=\"geometry\" custom=\"data\""),
+        baseline.replace("as=\"geometry\"", "as=\"geometry\" relative=\"true\""),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><mxPoint as="offset" x="1" custom="data"/></mxGeometry>"#,
+        ),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><mxPoint as="offset" x="1"/><mxPoint as="offset" x="2"/></mxGeometry>"#,
+        ),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><Array as="points"><future/></Array></mxGeometry>"#,
+        ),
+        format!(
+            r#"<object id="shape" label="Label"><mxCell vertex="1" parent="1">{geometry}</mxCell><future/></object>"#
+        ),
+    ];
+    for cell in cases {
+        let report = load(&page(&cell));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{cell}");
+    }
 }
 
 #[test]
