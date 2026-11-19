@@ -10811,6 +10811,57 @@ fn drawio_generated_edge_labels_do_not_reuse_deleted_object_ids() {
 }
 
 #[test]
+fn drawio_generated_zones_and_groups_do_not_reuse_source_ids() {
+    let mut sheet = Sheet::new("Page", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let zone = sheet
+        .create_board_frame("Zone", rect(100.0, 100.0, 400.0, 300.0))
+        .unwrap();
+    let first = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(140.0, 150.0, 80.0, 60.0),
+            "First",
+        ))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(260.0, 180.0, 80.0, 60.0),
+            "Second",
+        ))
+        .unwrap();
+    sheet
+        .set_zone_members(zone, vec![], vec![first, second])
+        .unwrap();
+    let group = sheet.group_canvas_objects(&[first, second]).unwrap();
+    let zone_id = format!("z{}", zone.0);
+    let group_id = format!("g{}", group.0);
+    sheet.canvas.object_mut(first).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(group_id.clone()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![zone_id.clone(), format!("{zone_id}-1")],
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{zone_id}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{zone_id}-2""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{group_id}-1""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"parent="{zone_id}-2""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"parent="{group_id}-1""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{group_id}""#)), "{xml}");
+    let reopened = load(&xml).workbook;
+    let objects = shapes(reopened.active());
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0].rect.min, Vec2::new(140.0, 150.0));
+    assert_eq!(objects[1].rect.min, Vec2::new(260.0, 180.0));
+}
+
+#[test]
 fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
     let drawio = Passthrough {
         source_id: None,

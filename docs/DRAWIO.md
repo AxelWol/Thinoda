@@ -303,6 +303,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
+- [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -338,6 +339,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 generated zone/group IDs | Zone and group IDs avoid retained tombstones and live source IDs, with remapped parent links preserving nested geometry. |
 | 2026-11-19 | D10 layer tombstones | Imported named-layer source IDs survive as bounded page tombstones, including native save/reopen; dropped IDs warn. |
 | 2026-11-19 | D10 structural-cell diagnostics | Unrepresented root/layer geometry, data and styles, regenerated structural IDs and normalized layer names now produce import warnings; supported layer visibility and locking remain warning-free. |
 | 2026-11-19 | D10 generated-cell ID reservation | Deleted imported object IDs are reserved against newly generated connector-label and table-cell IDs. |
@@ -1170,8 +1172,8 @@ exhaustive semantic audit. Complete layer and source fidelity remain open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot
-silently inherit a deleted imported object's ID. Duck check: fixed topic, zone,
-group and Sankey IDs still need a complete ownership and collision policy;
+silently inherit a deleted imported object's ID. Duck check: fixed topic and
+Sankey IDs still need a complete ownership and collision policy;
 topic and zone tombstones are not yet retained. This is not sufficient
 to enable in-place save.
 
@@ -1181,6 +1183,13 @@ undo snapshots. A budget omission warns instead of claiming retention. Duck
 check: tombstones do not survive a draw.io export as deleted cells, and fixed
 generated IDs can still collide; neither source overwrite nor complete ID
 fidelity is enabled.
+
+**D10 zone/group ID allocation (partial).** Generated zone and group IDs avoid
+retained tombstones and live source IDs, including when a page budget dropped
+the corresponding tombstone. Parent references use the allocated IDs and nested
+geometry remains relative to the correct parent. Duck check: source IDs for
+zones and groups themselves are still regenerated, and other fixed generated
+IDs, including Sankey IDs, need their own collision policy.
 
 ## 5. Rubber-duck findings
 

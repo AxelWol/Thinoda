@@ -189,9 +189,10 @@ Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
 `THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
 recovery envelopes; older envelopes are rejected if they contain these attributes.
 Tombstones (`cell_ids`) cover represented canvas objects and named layers with retained
-source IDs; topic and zone IDs are still regenerated. Generated object, layer and
-auxiliary cell IDs avoid retained tombstones, but fixed generated IDs do not yet have a
-complete collision policy. Export prefers a stored object source ID over generated
+source IDs; topic and zone source IDs are still regenerated. Generated object, layer,
+zone, group and auxiliary cell IDs avoid retained tombstones. Generated zone and group
+IDs also avoid live source IDs even when the tombstone budget omitted them. Other fixed
+generated IDs do not yet have a complete collision policy. Export prefers a stored object source ID over generated
 `o{id}` (Sankey connectors always use `o{id}`). Tombstones persist in native workbooks,
 not as deleted cells in draw.io exports. Object passthrough is an immutable `Arc`,
 shared across undo snapshots.

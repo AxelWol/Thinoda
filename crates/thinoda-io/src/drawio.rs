@@ -6367,6 +6367,9 @@ struct PageWriter<'a> {
     used_ids: HashSet<String>,
     /// draw.io layer cell id of each named board layer.
     layer_cells: HashMap<thinoda_core::BoardLayerId, String>,
+    /// Generated draw.io cell IDs for zones and groups.
+    zone_cells: HashMap<ZoneId, String>,
+    group_cells: HashMap<CanvasGroupId, String>,
     /// Row cell ids and absolute row origins of each written table.
     table_rows: HashMap<CanvasObjectId, Vec<(String, Vec2)>>,
 }
@@ -6410,9 +6413,8 @@ fn layer_cell_ids(
 
 /// Cell ids of canvas objects: the imported draw.io id when it is still unique
 /// and not one of the ids generated for other cells (`reserved`), otherwise
-/// `o{id}`. Ids of deleted source cells are never reused, so external
-/// references to them cannot silently retarget. Sankey edges keep `o{id}`,
-/// which their native extension reattaches by.
+/// `o{id}`. Generated object IDs avoid retained source IDs, apart from Sankey
+/// edges, which keep `o{id}` for their native extension.
 fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasObjectId, String> {
     let tombstones: HashSet<&str> = sheet
         .drawio
@@ -6544,12 +6546,12 @@ impl<'a> PageWriter<'a> {
             label_placement: None,
             used_ids: HashSet::new(),
             layer_cells: HashMap::new(),
+            zone_cells: HashMap::new(),
+            group_cells: HashMap::new(),
             table_rows: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
         reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
-        reserved.extend(sheet.zones.iter().map(|zone| format!("z{}", zone.id.0)));
-        reserved.extend(sheet.canvas.groups.iter().map(|g| format!("g{}", g.id.0)));
         reserved.extend(
             writer
                 .layout
@@ -6572,6 +6574,45 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .map(|s| format!("s{}", s.id.0)),
         );
+        let mut unavailable: HashSet<String> = sheet
+            .drawio
+            .iter()
+            .flat_map(|page| page.cell_ids.iter().cloned())
+            .collect();
+        unavailable.extend(
+            sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| object.drawio.as_ref()?.source_id.clone()),
+        );
+        unavailable.extend(
+            sheet
+                .canvas
+                .layers
+                .iter()
+                .filter_map(|layer| layer.source_id.clone()),
+        );
+        let mut generated_id = |base: String| {
+            let mut id = base.clone();
+            let mut suffix = 1;
+            while reserved.contains(&id) || unavailable.contains(&id) {
+                id = format!("{base}-{suffix}");
+                suffix += 1;
+            }
+            reserved.insert(id.clone());
+            id
+        };
+        for zone in &sheet.zones {
+            writer
+                .zone_cells
+                .insert(zone.id, generated_id(format!("z{}", zone.id.0)));
+        }
+        for group in &sheet.canvas.groups {
+            writer
+                .group_cells
+                .insert(group.id, generated_id(format!("g{}", group.id.0)));
+        }
         writer.layer_cells = layer_cell_ids(sheet, &reserved);
         reserved.extend(writer.layer_cells.values().cloned());
         writer.cell_ids = object_cell_ids(sheet, &reserved);
@@ -6604,7 +6645,7 @@ impl<'a> PageWriter<'a> {
                 &zones.into_iter().collect::<Vec<_>>()[..],
             ) {
                 (Some(layer), _) => layer,
-                (None, [Some(zone)]) => format!("z{}", zone.0),
+                (None, [Some(zone)]) => writer.zone_cells[zone].clone(),
                 _ => "1".into(),
             };
             writer.groups.insert(group.id, (parent, bounds));
@@ -6688,14 +6729,14 @@ impl<'a> PageWriter<'a> {
             return (self.cell_id(*parent), origin);
         }
         if let Some(group) = self.member_group(member) {
-            return (format!("g{}", group.0), self.groups[&group].1.min);
+            return (self.group_cells[&group].clone(), self.groups[&group].1.min);
         }
         // draw.io layers hold top-level cells, so a layered object leaves its frame.
         if let Some(layer) = self.member_layer_cell(member) {
             return (layer, Vec2::ZERO);
         }
         match self.member_zone(member) {
-            Some(zone) => (format!("z{}", zone.0), self.zone_origin(zone)),
+            Some(zone) => (self.zone_cells[&zone].clone(), self.zone_origin(zone)),
             None => ("1".into(), Vec2::ZERO),
         }
     }
@@ -6952,14 +6993,8 @@ impl<'a> PageWriter<'a> {
             if zone.clip {
                 style.push_str("thinodaClip=1;");
             }
-            self.vertex(
-                &format!("z{}", zone.id.0),
-                &zone.name,
-                &style,
-                "1",
-                zone.frame,
-                None,
-            );
+            let id = self.zone_cells[&zone.id].clone();
+            self.vertex(&id, &zone.name, &style, "1", zone.frame, None);
         }
     }
 
@@ -6977,12 +7012,13 @@ impl<'a> PageWriter<'a> {
                 .sheet
                 .zones
                 .iter()
-                .find(|zone| format!("z{}", zone.id.0) == parent)
+                .find(|zone| self.zone_cells[&zone.id] == parent)
                 .map_or(Vec2::ZERO, |zone| zone.frame.min);
             let locked = self.sheet.canvas.group(group).is_some_and(|g| g.locked);
             let style = if locked { "group;locked=1;" } else { "group;" };
+            let id = self.group_cells[&group].clone();
             self.vertex(
-                &format!("g{}", group.0),
+                &id,
                 "",
                 style,
                 &parent,
