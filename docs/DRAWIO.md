@@ -303,6 +303,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
 - [x] Disclose group labels, collapsed state and unsupported group styles that cannot be represented
+- [x] Disclose explicit zone styles that are not represented by Thinoda frames
 - [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape loss
 - [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
@@ -349,6 +350,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 zone style diagnostics | Explicit unsupported zone styling requires import consent instead of being silently dropped. |
 | 2026-11-19 | D10 group loss diagnostics | Group labels, collapsed state and unsupported group styles require import consent rather than disappearing silently. |
 | 2026-11-19 | D10 group source identity | Representable flat groups own bounded source IDs through native v56, XMind and recovery; copies clear ownership, and flattened or undersized groups warn. |
 | 2026-11-19 | D10 topic source identity | Imported cards and converted Sankey nodes own bounded source IDs through native v55, XMind and recovery; moves retain identity, copies clear it, and exports avoid collisions. |
@@ -1279,6 +1281,12 @@ labels, collapsed state and group styles other than the supported lock flag.
 Duck check: this warns rather than preserving the original content or styles;
 group geometry and other container fidelity remain subject to further review,
 and in-place save stays disabled.
+
+**D10 zone style diagnostics (partial).** Explicit zone styles outside the
+represented frame subset now report formatting loss, including header size,
+orientation, collapsibility, stroke width and unknown styles. Duck check:
+styles are disclosed rather than preserved; implicit defaults, complete zone
+fidelity and source-preserving save still need further work.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

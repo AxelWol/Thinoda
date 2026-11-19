@@ -12086,6 +12086,37 @@ fn drawio_group_discloses_discarded_content_and_styles() {
 }
 
 #[test]
+fn drawio_zone_discloses_unsupported_explicit_styles() {
+    let document = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="zone" value="Lane" style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+    };
+    let baseline = "swimlane;whiteSpace=wrap;html=1;startSize=24;collapsible=0;";
+    let report = load(&document(baseline));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.workbook.active().zones.len(), 1);
+    for style in [
+        "swimlane;startSize=40;",
+        "swimlane;startSize=invalid;",
+        "swimlane;horizontal=0;",
+        "swimlane;collapsible=1;",
+        "swimlane;strokeWidth=4;",
+        "swimlane;custom=value;",
+        "swimlane;otherStyle;",
+        ";swimlane;",
+    ] {
+        let report = load(&document(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+        assert_eq!(report.workbook.active().zones.len(), 1, "{style}");
+    }
+}
+
+#[test]
 fn drawio_zone_source_id_survives_native_and_drawio_round_trips() {
     let xml = page(concat!(
         r#"<mxCell id="source-zone" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="300" height="200" as="geometry"/></mxCell>"#,

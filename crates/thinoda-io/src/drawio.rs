@@ -4148,6 +4148,24 @@ impl<'a> PageImport<'a> {
         if !swimlane {
             self.warn(ImportWarning::Formatting);
         }
+        if cell.style.suppress_defaults
+            || cell.style.tokens.iter().any(|token| token != "swimlane")
+            || cell
+                .style
+                .map
+                .iter()
+                .any(|(key, value)| !match key.as_str() {
+                    "strokeColor" | "strokeOpacity" | "swimlaneFillColor" | "fillOpacity" => true,
+                    "html" | "horizontal" => value == "1",
+                    "whiteSpace" => value == "wrap",
+                    "startSize" => value.parse::<f32>().is_ok_and(|size| size == 24.0),
+                    "collapsible" => value == "0",
+                    "thinodaClip" => matches!(value.as_str(), "0" | "1"),
+                    _ => false,
+                })
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         let stroke = cell.style.color("strokeColor", "strokeOpacity");
         let background = if swimlane {
             cell.style.color("swimlaneFillColor", "fillOpacity")

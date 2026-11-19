@@ -2133,7 +2133,7 @@ mod tests {
     }
 
     #[test]
-    fn drawio_group_loss_requires_consent_and_preserves_source() {
+    fn drawio_group_and_zone_loss_require_consent_and_preserve_source() {
         let directory = tempfile::tempdir().unwrap();
         for (name, attributes, style, warning) in [
             (
@@ -2152,6 +2152,12 @@ mod tests {
                 "style",
                 "",
                 "group;fillColor=#ff0000;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+            (
+                "zone-style",
+                r#"value="Lane""#,
+                "swimlane;startSize=40;",
                 thinoda_io::ImportWarning::Formatting,
             ),
         ] {
