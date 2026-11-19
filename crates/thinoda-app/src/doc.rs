@@ -2099,6 +2099,14 @@ mod tests {
                 "geometry",
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" vertex="1" parent="1"><mxGeometry width="60" height="40" future="data" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
             ),
+            (
+                "parentless",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" vertex="1"><mxGeometry width="60" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "layer",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="layer" value="Layer" style="custom=1;" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
+            ),
         ] {
             let path = directory.path().join(format!("{name}.drawio"));
             std::fs::write(&path, xml).unwrap();
