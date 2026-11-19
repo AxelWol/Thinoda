@@ -305,6 +305,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Disclose group labels, collapsed state and unsupported group styles that cannot be represented
 - [x] Disclose explicit zone styles that are not represented by Thinoda frames
 - [x] Disclose the default draw.io swimlane header size when conversion changes it
+- [x] Disclose default draw.io swimlane foldability when conversion removes it
 - [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape loss
 - [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
@@ -351,6 +352,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 default zone folding | draw.io swimlanes are foldable by default; their conversion to nonfoldable frames now warns. |
 | 2026-11-19 | D10 default zone header | The draw.io default header size of 40 is disclosed when conversion uses Thinoda's 24-unit frame header. |
 | 2026-11-19 | D10 zone style diagnostics | Explicit unsupported zone styling requires import consent instead of being silently dropped. |
 | 2026-11-19 | D10 group loss diagnostics | Group labels, collapsed state and unsupported group styles require import consent rather than disappearing silently. |
@@ -1294,6 +1296,12 @@ fidelity and source-preserving save still need further work.
 40-unit default, unlike Thinoda's 24-unit export; that difference now requires
 import consent. Duck check: this does not preserve the original header size or
 resolve other implicit defaults; source-preserving save remains disabled.
+
+**D10 default zone folding (partial).** draw.io normally treats a swimlane as
+a foldable container unless `collapsible=0`; Thinoda zones are not foldable.
+That lost interaction now triggers consent even when the source omits the
+style. Duck check: this diagnoses rather than implements folding, and does not
+cover every implicit style or interaction.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

@@ -2109,11 +2109,11 @@ mod tests {
             ),
             (
                 "container-link",
-                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" link="https://example.com"><mxCell style="swimlane;startSize=24;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" link="https://example.com"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
             ),
             (
                 "container-tooltip",
-                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" tooltip="Details"><mxCell style="swimlane;startSize=24;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" tooltip="Details"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
             ),
         ] {
             let path = directory.path().join(format!("{name}.drawio"));
@@ -2163,7 +2163,13 @@ mod tests {
             (
                 "zone-default-header",
                 r#"value="Lane""#,
-                "swimlane;",
+                "swimlane;collapsible=0;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+            (
+                "zone-default-foldable",
+                r#"value="Lane""#,
+                "swimlane;startSize=24;",
                 thinoda_io::ImportWarning::Formatting,
             ),
         ] {

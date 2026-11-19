@@ -546,7 +546,7 @@ mod tests {
             .replace("shape=rectangle;", "shape=unknown;")
             .replace(
                 "</root>",
-                r#"<mxCell id="frame2" value="Another frame" style="swimlane;startSize=24;" vertex="1" parent="1"><mxGeometry x="400" y="200" width="100" height="100" as="geometry"/></mxCell></root>"#,
+                r#"<mxCell id="frame2" value="Another frame" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="400" y="200" width="100" height="100" as="geometry"/></mxCell></root>"#,
             );
         let file = format!(
             "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Second\">{MODEL}</diagram><diagram name=\"Third\">{MODEL}</diagram></mxfile>"

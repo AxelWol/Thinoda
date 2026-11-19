@@ -4148,8 +4148,10 @@ impl<'a> PageImport<'a> {
         if !swimlane {
             self.warn(ImportWarning::Formatting);
         }
-        // draw.io defaults to 40; Thinoda exports its frame header at 24.
+        // draw.io defaults to a 40-unit header and foldable containers;
+        // Thinoda exports a 24-unit header without folding.
         if (swimlane && cell.style.get("startSize").is_none())
+            || (swimlane && cell.style.get("collapsible").is_none())
             || cell.style.suppress_defaults
             || cell.style.tokens.iter().any(|token| token != "swimlane")
             || cell

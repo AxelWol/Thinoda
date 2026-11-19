@@ -3192,7 +3192,7 @@ fn appearance_swimlane_body_colors_that_cannot_be_preserved_are_reported() {
 
     for value in ["none", "transparent"] {
         let xml = page(&format!(
-            r#"<mxCell id="lane" value="Lane" style="swimlane;startSize=24;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+            r#"<mxCell id="lane" value="Lane" style="swimlane;startSize=24;collapsible=0;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
         assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
@@ -12097,7 +12097,8 @@ fn drawio_zone_discloses_unsupported_explicit_styles() {
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert_eq!(report.workbook.active().zones.len(), 1);
     for style in [
-        "swimlane;",
+        "swimlane;collapsible=0;",
+        "swimlane;startSize=24;",
         "swimlane;startSize=40;",
         "swimlane;startSize=invalid;",
         "swimlane;horizontal=0;",
