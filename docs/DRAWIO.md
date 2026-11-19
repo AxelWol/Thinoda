@@ -303,6 +303,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
+- [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
@@ -341,6 +342,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 scene-container tombstones | Imported scene containers and represented table cells retain bounded source-ID tombstones, preventing generated IDs from reusing them after deletion. |
 | 2026-11-19 | D10 Sankey ID remapping | Sankey nodes and edges avoid source collisions while version 2 extensions retain flows, settings and inactive stage metadata, including in editable images. |
 | 2026-11-19 | D10 generated topic IDs | Non-Sankey topics avoid retained and live source IDs while maintaining connector references; conflicting fixed Sankey IDs refuse export. |
 | 2026-11-19 | D10 generated map-decoration IDs | Boundary, branch-edge, relationship and summary cells avoid retained tombstones and live source IDs. |
@@ -1204,6 +1206,15 @@ IDs avoid retained and live source IDs, with connector terminals and the version
 in the extension. Duck check: imported topic and zone source IDs are still not
 retained, so in-place save remains disabled; collapsed settings or endpoint
 topics must be expanded for export.
+
+**D10 scene-container tombstones (partial).** Imported scene containers and
+represented table cells now enter the bounded tombstone set, which survives
+native save/reopen and deletion. Their live source IDs continue to belong to
+the canvas objects. Duck check: the budget can omit a tombstone with a warning;
+the deleted ID is then not protected. Cards, zones, groups and unrepresented
+table rows still lack owner-bound source IDs. Adding their IDs as anonymous
+tombstones before adding ownership causes ID churn on every round trip, so that
+approach was rejected. In-place save remains disabled.
 
 ## 5. Rubber-duck findings
 

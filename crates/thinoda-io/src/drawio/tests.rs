@@ -11688,6 +11688,96 @@ fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip()
 }
 
 #[test]
+fn drawio_scene_container_ids_survive_as_page_tombstones() {
+    let xml = page(concat!(
+        r#"<mxCell id="card-source" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="zone-source" value="Zone" style="swimlane;" vertex="1" parent="1"><mxGeometry x="200" width="300" height="200" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-source" style="group;" vertex="1" parent="1"><mxGeometry x="600" width="200" height="100" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-child-a" vertex="1" parent="group-source"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-child-b" vertex="1" parent="group-source"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="scene-source" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry x="900" width="300" height="200" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    let sheet = report.workbook.active();
+    assert_eq!(cards(sheet).len(), 1);
+    assert_eq!(sheet.zones.len(), 1);
+    assert_eq!(sheet.canvas.groups.len(), 1);
+    assert_eq!(sheet.canvas.scene.containers.len(), 1);
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let ids = &reopened.active().drawio.as_ref().unwrap().cell_ids;
+    for id in ["group-child-a", "group-child-b", "scene-source"] {
+        assert!(ids.iter().any(|retained| retained == id), "missing {id}");
+    }
+    for id in ["card-source", "zone-source", "group-source"] {
+        assert!(
+            !ids.iter().any(|retained| retained == id),
+            "unexpected {id}"
+        );
+    }
+    let first = export(&reopened).unwrap();
+    assert!(String::from_utf8_lossy(&first).contains(r#"id="scene-source""#));
+    let second = export(&import(&first).unwrap().workbook).unwrap();
+    assert!(String::from_utf8_lossy(&second).contains(r#"id="scene-source""#));
+}
+
+#[test]
+fn drawio_deleted_scene_container_source_id_is_not_reused_by_new_objects() {
+    let document = |id: &str| {
+        page(&format!(
+            r#"<mxCell id="{id}" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+    };
+    let replace_container = |book: &mut Workbook| {
+        let sheet = book.active_mut();
+        let container = *sheet.canvas.scene.containers.iter().next().unwrap();
+        sheet.remove_canvas_objects(&[container]).unwrap();
+        sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(200.0, 100.0, 80.0, 60.0),
+                "New",
+            ))
+            .unwrap()
+    };
+    let mut probe = load(&document("old-container")).workbook;
+    let source = format!("o{}", replace_container(&mut probe).0);
+
+    let report = load(&document(&source));
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(format!("o{}", replace_container(&mut reopened).0), source);
+    let xml = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{source}-1""#)), "{xml}");
+    assert_eq!(shapes(load(&xml).workbook.active()).len(), 1);
+}
+
+#[test]
+fn drawio_scene_container_tombstones_warn_when_page_budget_is_exhausted() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="scene-source" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(report.workbook.active().canvas.scene.containers.len(), 1);
+    assert!(
+        !report
+            .workbook
+            .active()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "scene-source")
+    );
+    report.workbook.validate().unwrap();
+}
+
+#[test]
 fn drawio_deleted_layer_ids_are_not_reused_by_new_layers() {
     let document = |id: &str| {
         format!(
@@ -11852,6 +11942,10 @@ fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
     ))
     .replace("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#);
     let sheet = clean(&xml);
+    let retained = &sheet.drawio.as_ref().unwrap().cell_ids;
+    for source in ["t", "c00", "c02", "c10", "c11", "c12", "c20", "c21"] {
+        assert!(retained.iter().any(|id| id == source), "missing {source}");
+    }
     let summary = table_summary(&sheet);
     let label = |r: u16, c: u16, rs: u16, cs: u16, label: &str| (r, c, rs, cs, label.to_string());
     assert_eq!(summary.0, vec![40.0; 3]);

@@ -188,8 +188,9 @@ workbook-level attributes; use a masked copy when source metadata must be remove
 Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
 `THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
 recovery envelopes; older envelopes are rejected if they contain these attributes.
-Tombstones (`cell_ids`) cover represented canvas objects and named layers with retained
-source IDs; topic and zone source IDs are still regenerated. Generated object, layer,
+Tombstones (`cell_ids`) cover represented canvas objects, including scene containers
+and represented table cells, and named layers with retained source IDs; topic, zone
+and group source IDs are still regenerated. Generated object, layer,
 zone, group, topic, map-decoration and auxiliary cell IDs avoid retained tombstones.
 Zone, group, topic and map-decoration IDs also avoid live source IDs even when the
 tombstone budget omitted them. Sankey cell IDs use collision-free numeric IDs remapped

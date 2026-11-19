@@ -5528,10 +5528,10 @@ fn import_page(
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
     }
-    let object_cells: HashSet<usize> = import
+    let represented_cells: HashSet<usize> = import
         .items
         .iter()
-        .filter(|(_, item)| matches!(item, Item::Object(_)))
+        .filter(|(_, item)| matches!(item, Item::Object(_) | Item::Container(_)))
         .map(|(index, _)| *index)
         .collect();
     let layer_cells: HashSet<usize> = import
@@ -5546,7 +5546,7 @@ fn import_page(
                 .and_then(|id| import.index.get(id).copied())
         })
         .collect();
-    let (drawio, dropped) = page_passthrough(page, &cells, &object_cells, &layer_cells);
+    let (drawio, dropped) = page_passthrough(page, &cells, &represented_cells, &layer_cells);
     if dropped {
         import.warn(ImportWarning::Other);
     }
@@ -5555,12 +5555,12 @@ fn import_page(
     Ok(sheet)
 }
 
-/// Page-level passthrough. Record source IDs for represented objects and layers
-/// so generated object, layer and auxiliary cell IDs can avoid deleted ones.
+/// Record source IDs for represented objects, scene containers and layers so
+/// generated IDs cannot reuse them after their original owner is deleted.
 fn page_passthrough(
     page: &Page,
     cells: &[Cell],
-    object_cells: &HashSet<usize>,
+    represented_cells: &HashSet<usize>,
     layer_cells: &HashSet<usize>,
 ) -> (Option<Arc<DrawioPagePassthrough>>, bool) {
     let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
@@ -5591,7 +5591,7 @@ fn page_passthrough(
     }
     for (index, cell) in cells.iter().enumerate() {
         let id = &cell.id;
-        if !(object_cells.contains(&index) || layer_cells.contains(&index))
+        if !(represented_cells.contains(&index) || layer_cells.contains(&index))
             || id.starts_with('\u{0}')
         {
             continue;

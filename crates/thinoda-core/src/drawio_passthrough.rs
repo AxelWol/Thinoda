@@ -173,7 +173,7 @@ pub struct DrawioPagePassthrough {
     /// `mxGraphModel` attributes without a Thinoda field, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_attributes: Vec<(String, String)>,
-    /// Retained source IDs for imported objects and named layers. Generated
+    /// Retained source IDs for imported objects, scene containers and named layers. Generated
     /// object, layer, zone, group, topic, map-decoration and auxiliary IDs avoid
     /// these after deletion. Sankey IDs are remapped in their semantic extension.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
