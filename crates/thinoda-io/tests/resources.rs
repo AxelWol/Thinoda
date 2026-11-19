@@ -29,8 +29,9 @@ fn attachment_native_and_json_roundtrip_preserve_names_and_opaque_bytes() {
     assert_eq!(entries(&archive_bytes).len(), 3); // manifest, content, shared blob
     let json = serde_json::to_vec(&book).unwrap();
     assert_eq!(import_bytes(Format::Thinoda, &json).unwrap(), book);
+    let xmind = export_bytes(&book, Format::XMind, &ExportOptions::default()).unwrap();
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
     for format in [
-        Format::XMind,
         Format::Markdown,
         Format::Svg,
         Format::Png,

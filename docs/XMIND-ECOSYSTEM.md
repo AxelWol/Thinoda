@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 08:55:27 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 09:33:00 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind ecosystem research, gap analysis and phase plan
 
@@ -271,9 +271,28 @@ branch for per-phase critiques.
 | Phase | Status |
 |---|---|
 | X1 | Done. `xmind::import_with_report` reports categorized warnings; the manifest is optional and the archive is the inventory; encrypted packages fail with a dedicated message; callouts and nested detached topics become floating topics linked by a relationship (callouts stacked right of their owner, detached positions kept relative to the owner); notes fall back to visible HTML/delta text; lossy XMind opens never keep a writable path. Lossy XMind files cannot be merged (merge uses the strict import). |
-| X2 | Planned |
+| X2 | Done. Public projection 2 imports/exports style aliases and approximations, summary ranges, control points, numbering, custom widths, unbalanced branch sides, map background/tapering, and opaque topic attachments. Projection 1 still validates pre-X2 private snapshots; round-trip tests also remove Thinoda metadata to exercise public content. Attachments share bytes with image resources when deduplicated and are never decoded or opened. |
 | X3 | Planned |
 | X4 | Planned |
 | X5 | Planned |
 | X6 | Planned |
 | X7 | Planned |
+
+### 4.1 X2 review critique
+
+- **Compatibility:** Adding public fields changes the serialized content, so
+  snapshot validation is projection-versioned. A checked-in pre-X2 export proves
+  that older packages remain trusted; unknown projection versions fall back to
+  public parsing rather than restoring private state.
+- **Loss boundaries:** Exact supported style values are mapped directly.
+  Unsupported shapes use the documented nearest Thinoda shape and emit a
+  Formatting warning. Widths outside Thinoda's supported range, non-default
+  numbering options and unsupported relationship control-point shapes are
+  reported rather than silently coerced.
+- **Archive safety:** Attachments resolve only through validated archive entries
+  and safe single-component resource paths. Bytes remain opaque and are exported
+  with the existing resource budgets. A resource referenced as both an image
+  and attachment is stored once.
+- **Evidence limit:** The new public round trips, legacy projection fixture,
+  generator-style ranges, and the two supplied desktop fixtures are covered by
+  tests. Installed-XMind interoperability has not been claimed or verified.

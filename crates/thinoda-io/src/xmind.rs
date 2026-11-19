@@ -7,6 +7,7 @@ use std::io::{Cursor, Write};
 use thinoda_core::{
     Boundary, ChildRange, Color, LineShape, Sheet, Structure, Summary, TextAlign, TopicId,
     TopicShape, Vec2, Workbook, images,
+    numbering::{NumberFormat, Numbering},
     resources::{
         MAX_RESOURCE_BYTES, MAX_RESOURCES, MAX_SHEET_RESOURCE_BYTES, MAX_WORKBOOK_RESOURCE_BYTES,
         Resource,
@@ -172,8 +173,8 @@ const TOPIC_COLLECTIONS: [&str; 4] = ["attached", "summary", "detached", "callou
 struct ResourceReferences {
     /// Topic pictures (`image.src`).
     images: BTreeSet<String>,
-    /// Package files referenced by topic links (`href: xap:resources/...`).
-    linked: BTreeSet<String>,
+    /// Package files attached to topics (`href: xap:resources/...`).
+    attachments: BTreeSet<String>,
     warnings: BTreeSet<ImportWarning>,
 }
 
@@ -220,16 +221,14 @@ fn collect_topic_resource_paths(
     if let Some(href) = topic.get("href").and_then(Value::as_str)
         && href.starts_with("xap:")
     {
-        // Package attachments are imported by the attachment resolver; until
-        // then the link is kept as text and its payload is reported.
+        // XMind stores attached files in the package and links them from the topic.
         match href
             .starts_with("xap:resources/")
             .then(|| image_component(href).ok())
             .flatten()
         {
             Some((_, path)) => {
-                references.linked.insert(path);
-                references.warnings.insert(ImportWarning::Resources);
+                references.attachments.insert(path);
             }
             None => {
                 references.warnings.insert(ImportWarning::Links);
@@ -372,7 +371,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     }
     let ResourceReferences {
         images: referenced,
-        linked,
+        attachments,
         mut warnings,
     } = references;
 
@@ -409,7 +408,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     }
     if available
         .iter()
-        .any(|path| !referenced.contains(path) && !linked.contains(path))
+        .any(|path| !referenced.contains(path) && !attachments.contains(path))
     {
         warnings.insert(ImportWarning::Resources);
     }
@@ -430,6 +429,27 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
         let resource =
             Resource::new(component, decoded.media_type, bytes).map_err(IoError::Invalid)?;
         resources.insert(path, resource);
+    }
+    // Attachments are opaque: never decoded or sniffed. Paths that are also valid
+    // pictures reuse the image resource, which has the same bytes.
+    for path in attachments {
+        if resources.contains_key(&path) {
+            continue;
+        }
+        if !available.contains(&path) {
+            warnings.insert(ImportWarning::Resources);
+            continue;
+        }
+        let bytes = crate::zip_entry_with_limit(archive, &path, MAX_RESOURCE_BYTES as u64)?;
+        let component = path.strip_prefix("resources/").unwrap_or_default();
+        match Resource::new(component, "application/octet-stream", bytes) {
+            Ok(resource) => {
+                resources.insert(path, resource);
+            }
+            Err(_) => {
+                warnings.insert(ImportWarning::Resources);
+            }
+        }
     }
     Ok((resources, warnings))
 }
@@ -472,20 +492,80 @@ fn export_resource_files(book: &Workbook) -> Result<BTreeMap<String, Vec<u8>>, I
     let mut files = BTreeMap::new();
     let mut workbook_bytes = 0usize;
     for (sheet_index, sheet) in book.sheets.iter().enumerate() {
-        if sheet
+        // Attachments are opaque package files. Every other resource must be a
+        // visible picture, so validate the sheet as if its attachments were removed.
+        let attachment_refs: HashSet<&str> = sheet
             .topics
             .values()
-            .any(|topic| topic.attachment.is_some())
-        {
-            return Err(IoError::Invalid(
-                "XMind export does not support attachment topics; save as .thinoda to preserve them"
-                    .into(),
-            ));
-        }
-        images::validate_visual(sheet).map_err(IoError::Invalid)?;
+            .filter_map(|topic| topic.attachment.as_ref())
+            .map(|attachment| attachment.resource.as_str())
+            .collect();
+        let visual_only;
+        let visual = if attachment_refs.is_empty() {
+            sheet
+        } else {
+            let mut stripped = sheet.clone();
+            for topic in stripped.topics.values_mut() {
+                topic.attachment = None;
+            }
+            let image_refs: HashSet<String> = stripped
+                .topics
+                .values()
+                .filter_map(|topic| topic.image.clone())
+                .collect();
+            stripped.resources.entries.retain(|id, _| {
+                let reference = format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX);
+                image_refs.contains(&reference) || !attachment_refs.contains(reference.as_str())
+            });
+            visual_only = stripped;
+            &visual_only
+        };
+        images::validate_visual(visual).map_err(IoError::Invalid)?;
         let mut referenced = HashSet::new();
         let mut sheet_bytes = 0usize;
+        let mut add_file = |path: String, bytes: Vec<u8>| -> Result<(), IoError> {
+            if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
+                return Err(IoError::Invalid(
+                    "XMind resource must contain 1 byte to 8 MiB".into(),
+                ));
+            }
+            sheet_bytes = sheet_bytes.saturating_add(bytes.len());
+            workbook_bytes = workbook_bytes.saturating_add(bytes.len());
+            if sheet_bytes > MAX_SHEET_RESOURCE_BYTES {
+                return Err(IoError::Invalid(
+                    "XMind sheet embedded resources exceed the 32 MiB limit".into(),
+                ));
+            }
+            if workbook_bytes > MAX_WORKBOOK_RESOURCE_BYTES {
+                return Err(IoError::Invalid(
+                    "XMind embedded resources exceed the 64 MiB workbook limit".into(),
+                ));
+            }
+            files.insert(path, bytes);
+            if files.len() > MAX_RESOURCES {
+                return Err(IoError::Invalid(
+                    "XMind workbook exceeds the 128 embedded resource limit".into(),
+                ));
+            }
+            Ok(())
+        };
         for (id, topic) in &sheet.topics {
+            if let Some(attachment) = &topic.attachment {
+                attachment.validate(sheet).map_err(IoError::Invalid)?;
+                referenced.insert(attachment.resource.as_str());
+                let resource = sheet
+                    .resources
+                    .get(&attachment.resource)
+                    .map_err(IoError::Invalid)?;
+                let path = format!(
+                    "resources/{}",
+                    attachment_component(
+                        &format!("topic-{sheet_index}-{}", id.0),
+                        &attachment.name
+                    )
+                );
+                add_file(path, resource.bytes().to_vec())?;
+            }
             let Some(reference) = topic.image.as_deref() else {
                 if topic.image_size.is_some() || topic.image_below {
                     return Err(IoError::Invalid(
@@ -511,30 +591,7 @@ fn export_resource_files(book: &Workbook) -> Result<BTreeMap<String, Vec<u8>>, I
                 ));
             }
             let path = format!("resources/topic-{sheet_index}-{}", id.0);
-            let bytes = resource.bytes().to_vec();
-            if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
-                return Err(IoError::Invalid(
-                    "XMind image must contain 1 byte to 8 MiB".into(),
-                ));
-            }
-            sheet_bytes = sheet_bytes.saturating_add(bytes.len());
-            workbook_bytes = workbook_bytes.saturating_add(bytes.len());
-            if sheet_bytes > MAX_SHEET_RESOURCE_BYTES {
-                return Err(IoError::Invalid(
-                    "XMind sheet embedded images exceed the 32 MiB limit".into(),
-                ));
-            }
-            if workbook_bytes > MAX_WORKBOOK_RESOURCE_BYTES {
-                return Err(IoError::Invalid(
-                    "XMind embedded images exceed the 64 MiB workbook limit".into(),
-                ));
-            }
-            files.insert(path, bytes);
-            if files.len() > MAX_RESOURCES {
-                return Err(IoError::Invalid(
-                    "XMind workbook exceeds the 128 embedded image limit".into(),
-                ));
-            }
+            add_file(path, resource.bytes().to_vec())?;
         }
         if referenced.len() != sheet.resources.entries.len() {
             return Err(IoError::Invalid(
@@ -575,21 +632,28 @@ fn shape_class(shape: TopicShape) -> &'static str {
 }
 
 fn parse_shape_class(class: &str) -> Option<TopicShape> {
-    let suffix = class.rsplit('.').next().unwrap_or(class);
-    match suffix
-        .chars()
-        .filter(|ch| !ch.is_whitespace() && *ch != '-')
-        .flat_map(char::to_lowercase)
-        .collect::<String>()
-        .as_str()
-    {
+    match class_key(class).as_str() {
         "roundedrect" | "roundedrectangle" => Some(TopicShape::RoundedRect),
         "rect" | "rectangle" => Some(TopicShape::Rect),
-        "ellipse" | "ellipserect" => Some(TopicShape::Ellipse),
+        "ellipse" | "ellipserect" | "ellipticrectangle" => Some(TopicShape::Ellipse),
         "capsule" => Some(TopicShape::Capsule),
         "diamond" => Some(TopicShape::Diamond),
         "underline" => Some(TopicShape::Underline),
         "none" => Some(TopicShape::None),
+        _ => None,
+    }
+}
+
+/// Nearest Thinoda shape for XMind shapes it cannot draw; callers report the change.
+fn approximate_shape_class(class: &str) -> Option<TopicShape> {
+    let key = class_key(class);
+    match key.as_str() {
+        "circle" => Some(TopicShape::Ellipse),
+        "doubleunderline" => Some(TopicShape::Underline),
+        "parallelogram" | "hexagon" | "roundedhexagon" | "singlebreakangle" | "stack" | "cloud" => {
+            Some(TopicShape::RoundedRect)
+        }
+        _ if key.starts_with("fishhead") => Some(TopicShape::RoundedRect),
         _ => None,
     }
 }
@@ -603,19 +667,13 @@ fn line_class(shape: LineShape) -> &'static str {
     }
 }
 
+/// Includes the desktop names `bight`, `fold` and `roundedFold` for the same lines.
 fn parse_line_class(class: &str) -> Option<LineShape> {
-    let suffix = class.rsplit('.').next().unwrap_or(class);
-    match suffix
-        .chars()
-        .filter(|ch| !ch.is_whitespace() && *ch != '-')
-        .flat_map(char::to_lowercase)
-        .collect::<String>()
-        .as_str()
-    {
-        "curve" => Some(LineShape::Curve),
+    match class_key(class).as_str() {
+        "curve" | "bight" => Some(LineShape::Curve),
         "straight" => Some(LineShape::Straight),
-        "elbow" => Some(LineShape::Elbow),
-        "roundedelbow" => Some(LineShape::RoundedElbow),
+        "elbow" | "fold" => Some(LineShape::Elbow),
+        "roundedelbow" | "roundedfold" => Some(LineShape::RoundedElbow),
         // Earlier Thinoda builds wrote the UI label to this private property.
         _ => None,
     }
@@ -631,14 +689,55 @@ fn export_title<'a>(sheet: &Sheet, id: TopicId, title: &'a str) -> std::borrow::
     }
 }
 
-fn public_content(book: &Workbook) -> Result<Value, IoError> {
-    fn topic(sheet: &Sheet, id: TopicId, ids: &HashMap<TopicId, String>) -> Result<Value, IoError> {
+/// Version of the public `content.json` projection written by [`export`]. The private
+/// snapshot is trusted only if regenerating the projection it was written with gives
+/// the file's content, so earlier projections must keep producing identical output.
+///
+/// 1. Original projection (no `thinodaPublicProjection` metadata key).
+/// 2. Adds topic width, child numbering, attachments, unbalanced split counts,
+///    relationship control points and the sheet background/tapered-line theme.
+const PUBLIC_PROJECTION: u64 = 2;
+
+/// Package path of an exported attachment. The extension is kept (sanitized) so
+/// XMind shows a matching file icon.
+fn attachment_component(topic_component: &str, name: &str) -> String {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| {
+            (1..=16).contains(&extension.len())
+                && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    format!(
+        "{}{extension}",
+        topic_component.replacen("topic-", "attachment-", 1)
+    )
+}
+
+/// XMind's unbalanced-map extension: the first `right` children go to the right.
+fn unbalanced_extension(right: usize) -> Value {
+    json!([{
+        "provider": UNBALANCED_PROVIDER,
+        "content": [{"name": "right-number", "content": right.to_string()}]
+    }])
+}
+
+fn public_content(book: &Workbook, projection: u64) -> Result<Value, IoError> {
+    struct Projection<'a> {
+        sheet: &'a Sheet,
+        ids: &'a HashMap<TopicId, String>,
+        version: u64,
+    }
+    fn topic(p: &Projection<'_>, id: TopicId) -> Result<Value, IoError> {
+        let (sheet, ids) = (p.sheet, p.ids);
         let model = &sheet.topics[&id];
         let mut children = serde_json::Map::new();
         let attached: Vec<_> = model
             .children
             .iter()
-            .map(|child| topic(sheet, *child, ids))
+            .map(|child| topic(p, *child))
             .collect::<Result<_, _>>()?;
         if !attached.is_empty() {
             children.insert("attached".into(), json!(attached));
@@ -650,7 +749,7 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
                 .map(|floating_id| -> Result<Value, IoError> {
                     let floating = &sheet.topics[floating_id];
                     let position = floating.position.unwrap_or(Vec2::ZERO);
-                    let mut value = topic(sheet, *floating_id, ids)?;
+                    let mut value = topic(p, *floating_id)?;
                     value["position"] = json!({"x": position.x, "y": position.y});
                     Ok(value)
                 })
@@ -753,6 +852,41 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
         if let Some(structure) = structure {
             value["structureClass"] = json!(structure.xmind_class());
         }
+        if p.version >= 2 {
+            if let Some(width) = model.style.width {
+                value["customWidth"] = json!(width);
+            }
+            if let Some(numbering) = &model.child_numbering {
+                value["numbering"] = json!({"numberFormat": xmind_number_format(numbering.format)});
+                if !numbering.tiered {
+                    value["numbering"]["prependingNumbers"] = json!("none");
+                }
+            }
+            // XMind shows package files on the topic itself; the attachment replaces any
+            // web link publicly (the private snapshot keeps both).
+            if let Some(attachment) = &model.attachment {
+                value["href"] = json!(format!(
+                    "xap:resources/{}",
+                    attachment_component(&ids[&id], &attachment.name)
+                ));
+            }
+            if structure == Some(Structure::MapUnbalanced)
+                && !model.children.is_empty()
+                && model
+                    .children
+                    .iter()
+                    .all(|child| sheet.topics[child].branch_side.is_some())
+            {
+                let right = model
+                    .children
+                    .iter()
+                    .filter(|child| {
+                        sheet.topics[*child].branch_side == Some(thinoda_core::BranchSide::Right)
+                    })
+                    .count();
+                value["extensions"] = unbalanced_extension(right);
+            }
+        }
         let boundaries: Vec<_> = sheet.boundaries.iter().filter(|boundary| boundary.parent == id).map(|boundary| {
             json!({
                 "id": format!("{}-boundary-{}", ids[&id], boundary.id.0),
@@ -785,7 +919,7 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
             value["children"]["summary"] = json!(
                 sheet_summaries
                     .iter()
-                    .map(|summary| topic(sheet, summary.topic, ids))
+                    .map(|summary| topic(p, summary.topic))
                     .collect::<Result<Vec<_>, _>>()?
             );
         }
@@ -801,17 +935,43 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
                 .keys()
                 .map(|id| (*id, format!("topic-{sheet_index}-{}", id.0)))
                 .collect();
-            Ok(json!({
+            let p = Projection {
+                sheet,
+                ids: &ids,
+                version: projection,
+            };
+            let mut value = json!({
                 "id": format!("sheet-{sheet_index}"), "class": "sheet", "title": sheet.title,
-                "rootTopic": topic(sheet, sheet.root, &ids)?,
-                "relationships": sheet.relationships.iter().map(|relationship| json!({
-                    "id": format!("rel-{sheet_index}-{}", relationship.id.0),
-                    "class": "relationship",
-                    "end1Id": ids.get(&relationship.from), "end2Id": ids.get(&relationship.to),
-                    "title": relationship.title,
-                    "style": {"properties": relationship.color.map(|color| json!({"line-color": color.to_hex()})).unwrap_or_else(|| json!({}))}
-                })).collect::<Vec<_>>()
-            }))
+                "rootTopic": topic(&p, sheet.root)?,
+                "relationships": sheet.relationships.iter().map(|relationship| {
+                    let mut value = json!({
+                        "id": format!("rel-{sheet_index}-{}", relationship.id.0),
+                        "class": "relationship",
+                        "end1Id": ids.get(&relationship.from), "end2Id": ids.get(&relationship.to),
+                        "title": relationship.title,
+                        "style": {"properties": relationship.color.map(|color| json!({"line-color": color.to_hex()})).unwrap_or_else(|| json!({}))}
+                    });
+                    if projection >= 2
+                        && let Some([a, b]) = relationship.control_points
+                    {
+                        value["controlPoints"] =
+                            json!({"0": {"x": a.x, "y": a.y}, "1": {"x": b.x, "y": b.y}});
+                    }
+                    value
+                }).collect::<Vec<_>>()
+            });
+            if projection >= 2 {
+                let mut properties = serde_json::Map::new();
+                if let Some(background) = sheet.theme.background {
+                    properties.insert("svg:fill".into(), json!(background.to_hex()));
+                }
+                properties.insert(
+                    "line-tapered".into(),
+                    json!(if sheet.theme.tapered_lines { "tapered" } else { "none" }),
+                );
+                value["theme"] = json!({"map": {"properties": properties}});
+            }
+            Ok(value)
         })
         .collect::<Result<_, _>>()?;
     Ok(json!(sheets))
@@ -1839,12 +1999,13 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     let resource_files = export_resource_files(book)?;
     let stable = private_snapshot(book)?;
-    let sheets = public_content(book)?;
+    let sheets = public_content(book, PUBLIC_PROJECTION)?;
     let content = serde_json::to_vec(&sheets)?;
     let metadata = serde_json::to_vec(&json!({
         "creator": {"name": "Thinoda", "version": env!("CARGO_PKG_VERSION")},
         "dataStructureVersion": "2",
         "thinodaWorkbook": stable,
+        "thinodaPublicProjection": PUBLIC_PROJECTION,
         "thinodaContentSha256": content_digest(&sheets)?
     }))?;
     let mut file_entries = serde_json::Map::new();
@@ -2042,6 +2203,243 @@ fn parse_number(value: &Value) -> Option<f32> {
             .as_str()
             .and_then(|x| x.trim().trim_end_matches("pt").parse().ok())
     })
+}
+
+/// Trimmed explicit style value. Blank values and XMind's `inherited` keyword defer
+/// to the default, exactly as if the property were absent.
+fn style_value<'a>(props: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    props
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("inherited"))
+}
+
+fn style_number(props: &serde_json::Map<String, Value>, key: &str) -> Option<f32> {
+    match props.get(key)? {
+        Value::String(_) => style_value(props, key).and_then(|text| {
+            text.trim_end_matches("pt")
+                .trim_end_matches("px")
+                .trim()
+                .parse()
+                .ok()
+        }),
+        value => parse_number(value),
+    }
+    .filter(|number: &f32| number.is_finite())
+}
+
+/// CSS weights: keywords or numbers, where 600 and above render bold.
+fn parse_font_weight(value: &str) -> Option<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "bold" | "bolder" => Some(true),
+        "normal" | "lighter" => Some(false),
+        number => number
+            .parse::<f32>()
+            .ok()
+            .filter(|weight| weight.is_finite())
+            .map(|weight| weight >= 600.0),
+    }
+}
+
+/// Lower-cased class suffix without separators, so `roundedRect`, `rounded-rect`
+/// and `org.xmind.topicShape.roundedRect` compare equal.
+fn class_key(class: &str) -> String {
+    class
+        .rsplit('.')
+        .next()
+        .unwrap_or(class)
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '-' && *ch != '_')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Clamps an XMind child range to the parent's attached children. Reversed ranges
+/// (as written by some generators) are swapped; out-of-range ends are reported.
+fn normalize_range(
+    range: ChildRange,
+    children: usize,
+    context: &TopicImportContext<'_>,
+) -> Option<ChildRange> {
+    if children == 0 {
+        context.warn(ImportWarning::Other);
+        return None;
+    }
+    let (start, end) = if range.start <= range.end {
+        (range.start, range.end)
+    } else {
+        (range.end, range.start)
+    };
+    let last = children - 1;
+    if end > last {
+        context.warn(ImportWarning::Other);
+    }
+    let end = end.min(last);
+    Some(ChildRange {
+        start: start.min(end),
+        end,
+    })
+}
+
+const XMIND_NUMBER_FORMATS: [(&str, NumberFormat); 4] = [
+    ("org.xmind.numbering.arabic", NumberFormat::Decimal),
+    ("org.xmind.numbering.roman", NumberFormat::UpperRoman),
+    ("org.xmind.numbering.lowercase", NumberFormat::LowerAlpha),
+    ("org.xmind.numbering.uppercase", NumberFormat::UpperAlpha),
+];
+
+/// XMind has no lower-case Roman numbering; it is written as upper-case Roman.
+fn xmind_number_format(format: NumberFormat) -> &'static str {
+    match format {
+        NumberFormat::Decimal => "org.xmind.numbering.arabic",
+        NumberFormat::UpperRoman | NumberFormat::LowerRoman => "org.xmind.numbering.roman",
+        NumberFormat::LowerAlpha => "org.xmind.numbering.lowercase",
+        NumberFormat::UpperAlpha => "org.xmind.numbering.uppercase",
+    }
+}
+
+/// Reads `numbering` (which numbers the topic's children). Prefixes, suffixes,
+/// custom separators, depth settings and unknown formats cannot be represented
+/// and are reported; an unknown format falls back to decimal numbers.
+fn import_numbering(value: &Value, context: &TopicImportContext<'_>) -> Option<Numbering> {
+    let numbering = value.as_object()?;
+    for (key, field) in numbering {
+        let default = match key.as_str() {
+            "numberFormat" | "prependingNumbers" => continue,
+            "numberSeparator" => field.as_str().is_some_and(|text| text.trim() == "."),
+            _ => !non_empty(Some(field)),
+        };
+        if !default {
+            context.warn(ImportWarning::Formatting);
+        }
+    }
+    let format = numbering
+        .get("numberFormat")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|format| !format.is_empty())?;
+    if format == "org.xmind.numbering.none" {
+        return None;
+    }
+    let format = XMIND_NUMBER_FORMATS
+        .iter()
+        .find(|(id, _)| *id == format)
+        .map(|(_, format)| *format)
+        .unwrap_or_else(|| {
+            context.warn(ImportWarning::Formatting);
+            NumberFormat::Decimal
+        });
+    let tiered = numbering
+        .get("prependingNumbers")
+        .and_then(Value::as_str)
+        .is_none_or(|prepend| prepend.trim() != "none");
+    Some(Numbering {
+        format,
+        tiered,
+        start: 1,
+    })
+}
+
+/// Thinoda's topic width bounds (the Style panel's "Topic Width" range).
+const TOPIC_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.0..=10_000.0;
+
+/// `customWidth` is a number or numeric string; 0 means automatic, as in XMind.
+fn import_custom_width(value: &Value, context: &TopicImportContext<'_>) -> Option<f32> {
+    let width = match value {
+        Value::Null => return None,
+        Value::String(text) if text.trim().is_empty() => return None,
+        value => parse_number(value).filter(|width| width.is_finite()),
+    };
+    match width {
+        Some(0.0) => None,
+        Some(width) if TOPIC_WIDTH_RANGE.contains(&width) => Some(width),
+        _ => {
+            context.warn(ImportWarning::Formatting);
+            None
+        }
+    }
+}
+
+const UNBALANCED_PROVIDER: &str = "org.xmind.ui.map.unbalanced";
+
+/// Number of leading children placed on the right of an unbalanced map.
+fn unbalanced_right_number(topic: &Value) -> Option<usize> {
+    topic
+        .get("extensions")?
+        .as_array()?
+        .iter()
+        .filter(|extension| {
+            extension.get("provider").and_then(Value::as_str) == Some(UNBALANCED_PROVIDER)
+        })
+        .filter_map(|extension| extension.get("content")?.as_array())
+        .flatten()
+        .find(|entry| entry.get("name").and_then(Value::as_str) == Some("right-number"))
+        .and_then(|entry| match entry.get("content")? {
+            Value::String(text) => text.trim().parse().ok(),
+            value => value
+                .as_u64()
+                .and_then(|number| usize::try_from(number).ok()),
+        })
+}
+
+/// Map-level theme properties: a non-white background and tapered branch lines.
+/// White is XMind's default canvas and keeps Thinoda's light/dark-mode background.
+fn import_sheet_theme(theme: &Value, sheet: &mut Sheet) {
+    let Some(props) = theme
+        .get("map")
+        .and_then(|map| map.get("properties"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    if let Some(background) = style_value(props, "svg:fill").and_then(color)
+        && !matches!(
+            background
+                .to_hex()
+                .trim_start_matches('#')
+                .to_ascii_uppercase()
+                .as_str(),
+            "FFFFFF" | "FFFFFFFF"
+        )
+    {
+        sheet.theme.background = Some(background);
+    }
+    match style_value(props, "line-tapered")
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("none") => sheet.theme.tapered_lines = false,
+        Some("tapered") => sheet.theme.tapered_lines = true,
+        _ => {}
+    }
+}
+
+/// XMind's Cartesian `controlPoints` (offsets from each end topic). The polar
+/// `{angle, amount}` form and incomplete or invalid values use automatic routing.
+fn import_control_points(
+    relationship: &Value,
+    context: &TopicImportContext<'_>,
+) -> Option<[Vec2; 2]> {
+    let points = relationship.get("controlPoints")?;
+    if !non_empty(Some(points)) {
+        return None;
+    }
+    let point = |key: &str| -> Option<Vec2> {
+        let point = points.get(key)?;
+        Some(Vec2::new(
+            parse_number(point.get("x")?)?,
+            parse_number(point.get("y")?)?,
+        ))
+    };
+    let parsed = point("0")
+        .zip(point("1"))
+        .map(|(a, b)| [a, b])
+        .filter(|points| thinoda_core::Relationship::valid_control_points(Some(*points)));
+    if parsed.is_none() {
+        context.warn(ImportWarning::Formatting);
+    }
+    parsed
 }
 
 /// Visible text of an XMind `realHTML` note. Tags are dropped (never interpreted)
@@ -2305,9 +2703,38 @@ fn parse_topic(
     let notes = v
         .get("notes")
         .and_then(|notes| import_notes(notes, context));
+    // Package files linked from the topic become Thinoda attachments; when the
+    // file was skipped by the inventory the link is kept as text.
+    let attachment = v
+        .get("href")
+        .and_then(Value::as_str)
+        .filter(|href| href.starts_with("xap:resources/"))
+        .and_then(|href| image_component(href).ok())
+        .and_then(|(_, path)| context.resources.get(&path))
+        .map(|resource| -> Result<_, IoError> {
+            let reference = s
+                .resources
+                .insert(resource.clone())
+                .map_err(IoError::Invalid)?;
+            // XMind titles attachment topics with the file name; Thinoda's own
+            // exports prefix it with the attachment glyph.
+            let name = title
+                .strip_prefix('📎')
+                .map(str::trim_start)
+                .unwrap_or(title);
+            Ok(thinoda_core::attachments::Attachment {
+                resource: reference,
+                name: thinoda_core::attachments::safe_name(name),
+            })
+        })
+        .transpose()?;
     let t = s.topic_mut(id).unwrap();
     t.collapsed = v.get("branch").and_then(Value::as_str) == Some("folded");
     t.hyperlink = v.get("href").and_then(Value::as_str).map(str::to_owned);
+    if attachment.is_some() {
+        t.hyperlink = None;
+        t.attachment = attachment;
+    }
     if let Some(n) = notes {
         t.notes = Some(n.into());
     }
@@ -2349,37 +2776,25 @@ fn parse_topic(
     }
     if !props.is_empty() {
         let style = &mut s.topic_mut(id).unwrap().style;
-        style.fill = props
-            .get("svg:fill")
-            .and_then(Value::as_str)
-            .and_then(color);
-        style.text_color = props
-            .get("fo:color")
-            .and_then(Value::as_str)
-            .and_then(color);
-        style.border_color = props
-            .get("border-line-color")
-            .or_else(|| props.get("svg:stroke"))
-            .and_then(Value::as_str)
-            .and_then(color);
-        style.border_width = props
-            .get("border-line-width")
-            .or_else(|| props.get("svg:stroke-width"))
-            .and_then(parse_number);
-        style.bold = props
-            .get("fo:font-weight")
-            .and_then(Value::as_str)
-            .map(|v| v == "bold" || v == "600" || v == "700" || v == "800" || v == "900");
-        style.italic = props
-            .get("fo:font-style")
-            .and_then(Value::as_str)
-            .map(|v| v == "italic");
-        style.font_size = props.get("fo:font-size").and_then(parse_number);
-        style.font_family = props
-            .get("fo:font-family")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if let Some(decoration) = props.get("fo:text-decoration").and_then(Value::as_str) {
+        let color_value = |key: &str| style_value(&props, key).and_then(color);
+        style.fill = color_value("svg:fill");
+        style.text_color = color_value("fo:color");
+        style.border_color = color_value("border-line-color").or_else(|| color_value("svg:stroke"));
+        style.border_width = style_number(&props, "border-line-width")
+            .or_else(|| style_number(&props, "svg:stroke-width"));
+        style.bold = style_value(&props, "fo:font-weight").and_then(|weight| {
+            let bold = parse_font_weight(weight);
+            if bold.is_none() {
+                context.warn(ImportWarning::Formatting);
+            }
+            bold
+        });
+        style.italic = style_value(&props, "fo:font-style")
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "italic" | "oblique"));
+        style.font_size = style_number(&props, "fo:font-size");
+        style.font_family = style_value(&props, "fo:font-family").map(str::to_owned);
+        if let Some(decoration) = style_value(&props, "fo:text-decoration") {
+            let decoration = decoration.to_ascii_lowercase();
             if decoration == "none" {
                 style.underline = Some(false);
                 style.strikethrough = None;
@@ -2388,35 +2803,47 @@ fn parse_topic(
                 style.strikethrough = decoration.contains("line-through").then_some(true);
             }
         }
-        style.align = props
-            .get("fo:text-align")
-            .and_then(Value::as_str)
-            .and_then(|value| match value {
+        style.align = style_value(&props, "fo:text-align").and_then(|value| {
+            match value.to_ascii_lowercase().as_str() {
                 "left" => Some(TextAlign::Left),
                 "center" => Some(TextAlign::Center),
                 "right" => Some(TextAlign::Right),
                 _ => None,
+            }
+        });
+        style.line_color = color_value("line-color");
+        style.line_width = style_number(&props, "line-width");
+        style.shape = style_value(&props, "shape-class").and_then(|class| {
+            parse_shape_class(class).or_else(|| {
+                context.warn(ImportWarning::Formatting);
+                approximate_shape_class(class)
+            })
+        });
+        style.line_shape = style_value(&props, "line-class")
+            .or_else(|| style_value(&props, "line-shape"))
+            .and_then(|class| {
+                let shape = parse_line_class(class);
+                if shape.is_none() {
+                    context.warn(ImportWarning::Formatting);
+                }
+                shape
             });
-        style.line_color = props
-            .get("line-color")
-            .and_then(Value::as_str)
-            .and_then(color);
-        style.line_width = props.get("line-width").and_then(parse_number);
-        style.shape = props
-            .get("shape-class")
-            .and_then(Value::as_str)
-            .and_then(parse_shape_class);
-        style.line_shape = props
-            .get("line-class")
-            .or_else(|| props.get("line-shape"))
-            .and_then(Value::as_str)
-            .and_then(parse_line_class);
+    }
+    if let Some(width) = v.get("customWidth") {
+        s.topic_mut(id).unwrap().style.width = import_custom_width(width, context);
+    }
+    if let Some(numbering) = v.get("numbering") {
+        s.topic_mut(id).unwrap().child_numbering = import_numbering(numbering, context);
     }
     // Resource availability, decoding, and warnings were settled by the package
     // inventory; topics whose picture was skipped there import without it.
     if let Some((attributes, resource)) = image.and_then(|attributes| {
         let path = image_reference(&attributes.src).ok().flatten()?;
-        let resource = context.resources.get(&path)?;
+        // Opaque attachment payloads at the same path are not pictures.
+        let resource = context
+            .resources
+            .get(&path)
+            .filter(|resource| resource.media_type != "application/octet-stream")?;
         Some((attributes, resource))
     }) {
         let decoded = images::decode(resource.bytes()).map_err(IoError::Invalid)?;
@@ -2438,6 +2865,15 @@ fn parse_topic(
             .resources
             .insert(resource.clone())
             .map_err(IoError::Invalid)?;
+        // An attachment may already own these exact bytes as an opaque file; the
+        // successful decode above establishes the picture type (as in `set_image`).
+        if let Some(stored) = reference
+            .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+            .and_then(|stored| s.resources.entries.get_mut(stored))
+            && stored.media_type == "application/octet-stream"
+        {
+            stored.media_type = resource.media_type.clone();
+        }
         let topic = s.topic_mut(id).unwrap();
         topic.image = Some(reference);
         topic.image_size = Some(size);
@@ -2457,9 +2893,48 @@ fn parse_topic(
         };
         parse_topic(&child, s, Some(id), depth + 1, idmap, context, child_role)?;
     }
+    let children = s.topic(id).map_or(0, |topic| topic.children.len());
+    let unbalanced = v
+        .get("structureClass")
+        .and_then(Value::as_str)
+        .and_then(Structure::from_xmind_class)
+        == Some(Structure::MapUnbalanced);
+    if unbalanced
+        && children > 0
+        && let Some(right) = unbalanced_right_number(v)
+    {
+        let right = right.min(children);
+        let kids = s.topic(id).unwrap().children.clone();
+        for (index, child) in kids.into_iter().enumerate() {
+            s.topic_mut(child).unwrap().branch_side = Some(if index < right {
+                thinoda_core::BranchSide::Right
+            } else {
+                thinoda_core::BranchSide::Left
+            });
+        }
+    }
     if let Some(boundaries) = v.get("boundaries").and_then(Value::as_array) {
         for boundary in boundaries {
-            let range = boundary.get("range").and_then(parse_range);
+            let range = match boundary.get("range") {
+                None | Some(Value::Null) => None,
+                Some(value)
+                    if value
+                        .as_str()
+                        .is_some_and(|text| text.trim().eq_ignore_ascii_case("master")) =>
+                {
+                    None
+                }
+                Some(value) => match parse_range(value) {
+                    Some(range) => match normalize_range(range, children, context) {
+                        Some(range) => Some(range),
+                        None => continue,
+                    },
+                    None => {
+                        context.warn(ImportWarning::Other);
+                        None
+                    }
+                },
+            };
             let boundary_id = s.alloc_boundary_id();
             s.boundaries.push(Boundary {
                 id: boundary_id,
@@ -2478,6 +2953,7 @@ fn parse_topic(
             });
         }
     }
+    let mut summary_topics = Vec::new();
     if let Some(summaries) = v
         .get("children")
         .and_then(|x| x.get("summary"))
@@ -2498,23 +2974,45 @@ fn parse_topic(
                 .children
                 .retain(|child| *child != summary_id);
             s.topic_mut(summary_id).unwrap().parent = None;
+            summary_topics.push(summary_id);
         }
     }
     if let Some(summaries) = v.get("summaries").and_then(Value::as_array) {
         for summary in summaries {
+            // Only this topic's unused summary topics can be bracket labels.
             let topic_id = summary
                 .get("topicId")
                 .and_then(Value::as_str)
                 .and_then(|key| idmap.get(key))
-                .copied();
+                .copied()
+                .filter(|topic| summary_topics.contains(topic));
             let Some(topic_id) = topic_id else {
                 context.warn(ImportWarning::Other);
                 continue;
             };
-            let range = summary
-                .get("range")
-                .and_then(parse_range)
-                .unwrap_or(ChildRange { start: 0, end: 0 });
+            let full = ChildRange {
+                start: 0,
+                end: children.saturating_sub(1),
+            };
+            let range = match summary.get("range") {
+                None | Some(Value::Null) => Some(full),
+                Some(value)
+                    if value
+                        .as_str()
+                        .is_some_and(|text| text.trim().eq_ignore_ascii_case("master")) =>
+                {
+                    Some(full)
+                }
+                Some(value) => Some(parse_range(value).unwrap_or_else(|| {
+                    context.warn(ImportWarning::Other);
+                    full
+                })),
+            }
+            .and_then(|range| normalize_range(range, children, context));
+            let Some(range) = range else {
+                continue;
+            };
+            summary_topics.retain(|topic| *topic != topic_id);
             let summary_id = s.alloc_summary_id();
             s.summaries.push(Summary {
                 id: summary_id,
@@ -2523,6 +3021,13 @@ fn parse_topic(
                 topic: topic_id,
             });
         }
+    }
+    // Summary topics without a usable bracket stay visible as linked floating topics.
+    for topic in summary_topics {
+        s.floating.push(topic);
+        s.topic_mut(topic).unwrap().position = Some(Vec2::ZERO);
+        context.floating_links.borrow_mut().push((id, topic, None));
+        context.warn(ImportWarning::Other);
     }
     let collection = |kind: &str| {
         v.get("children")
@@ -2721,11 +3226,29 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                             }
                             log::warn!("Ignoring invalid private XMind snapshot: {e}");
                         } else {
-                            let public_matches = match public_content(&workbook) {
-                                Ok(content) => content == doc,
-                                Err(e) => {
+                            // Files without the key predate projection 2.
+                            let projection = match meta
+                                .as_ref()
+                                .and_then(|m| m.get("thinodaPublicProjection"))
+                            {
+                                None => Some(1),
+                                Some(value) => value
+                                    .as_u64()
+                                    .filter(|version| (1..=PUBLIC_PROJECTION).contains(version)),
+                            };
+                            let public_matches = match projection
+                                .map(|projection| public_content(&workbook, projection))
+                            {
+                                Some(Ok(content)) => content == doc,
+                                Some(Err(e)) => {
                                     log::warn!(
                                         "Ignoring private XMind snapshot that cannot be serialized: {e}"
+                                    );
+                                    false
+                                }
+                                None => {
+                                    log::warn!(
+                                        "Ignoring private XMind snapshot with an unknown public projection"
                                     );
                                     false
                                 }
@@ -2789,6 +3312,7 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                     floating_links: Default::default(),
                 };
                 parse_topic(root, &mut s, None, 0, &mut ids, &context, "centralTopic")?;
+                import_sheet_theme(&v["theme"], &mut s);
                 if non_empty(v.get("zones")) {
                     context.warn(ImportWarning::Other);
                 }
@@ -2810,7 +3334,7 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                                 id: rid,
                                 from: a,
                                 to: b,
-                                control_points: None,
+                                control_points: import_control_points(r, &context),
                                 title: r.get("title").and_then(Value::as_str).unwrap_or("").into(),
                                 color: r
                                     .get("style")
@@ -5378,9 +5902,22 @@ mod tests {
             vec![1, 2, 3],
         )
         .unwrap();
-        let error = export(&Workbook::new(with_attachment)).unwrap_err();
-        assert!(error.to_string().contains("attachment topics"));
+        let (imported, warnings) = public_report(&Workbook::new(with_attachment));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let topic = imported.active().root_topic().children[0];
+        let attachment = imported.active().topics[&topic].attachment.clone().unwrap();
+        assert_eq!(attachment.name, "evidence.bin");
+        assert_eq!(
+            imported
+                .active()
+                .resources
+                .get(&attachment.resource)
+                .unwrap()
+                .bytes(),
+            [1, 2, 3]
+        );
 
+        // The structured `attachment` object is not XMind's link model and stays unsupported.
         let mut attachment_content = archive_entries(&export(&book).unwrap());
         update_content(&mut attachment_content, |content| {
             content[0]["rootTopic"]["attachment"] = json!({"src": "xap:resources/anything"});
@@ -5623,5 +6160,448 @@ mod tests {
             import(&make_archive(&entries)),
             Err(IoError::ImportNeedsConfirmation(_))
         ));
+    }
+
+    /// The map stored in `tests/fixtures/thinoda-pre-x2-export.xmind`, written by the
+    /// exporter before public projection 2. Its private-only fields (numbering, width,
+    /// control points, branch sides) were absent from that file's public content.
+    fn pre_x2_workbook() -> Workbook {
+        let mut sheet = Sheet::new("Projection", "Root");
+        let root = sheet.root;
+        sheet.structure = Structure::MapUnbalanced;
+        let a = sheet.add_child(root, None, "Alpha");
+        let b = sheet.add_child(root, None, "Beta");
+        let c = sheet.add_child(root, None, "Gamma");
+        let a1 = sheet.add_child(a, None, "Alpha one");
+        sheet.add_child(a, None, "Alpha two");
+        let summary = sheet.add_child(a, None, "Alpha summary");
+        sheet
+            .topic_mut(a)
+            .unwrap()
+            .children
+            .retain(|id| *id != summary);
+        sheet.topic_mut(summary).unwrap().parent = None;
+        let summary_id = sheet.alloc_summary_id();
+        sheet.summaries.push(Summary {
+            id: summary_id,
+            parent: a,
+            range: ChildRange { start: 0, end: 1 },
+            topic: summary,
+        });
+        let boundary_id = sheet.alloc_boundary_id();
+        sheet.boundaries.push(Boundary {
+            id: boundary_id,
+            parent: root,
+            range: Some(ChildRange { start: 1, end: 2 }),
+            title: Some("Group".into()),
+            color: Color::from_hex("#336699"),
+        });
+        let relationship_id = sheet.alloc_relationship_id();
+        sheet.relationships.push(thinoda_core::Relationship {
+            id: relationship_id,
+            from: a1,
+            to: c,
+            title: "relates".into(),
+            color: Color::from_hex("#AA0000"),
+            control_points: Some([Vec2::new(40.0, -30.0), Vec2::new(-20.0, 15.5)]),
+        });
+        let reference = sheet
+            .resources
+            .insert(Resource::new("dot.png", "image/png", png([10, 200, 90], 8, 6)).unwrap())
+            .unwrap();
+        let topic = sheet.topic_mut(a).unwrap();
+        topic.child_numbering = Some(thinoda_core::numbering::Numbering {
+            format: thinoda_core::numbering::NumberFormat::UpperRoman,
+            tiered: true,
+            start: 1,
+        });
+        topic.style.width = Some(180.0);
+        topic.style.fill = Color::from_hex("#FFEEAA");
+        topic.style.bold = Some(true);
+        topic.notes = Some("Plain note".to_owned().into());
+        topic.labels = vec!["label".into()];
+        topic.markers = vec!["priority-1".into()];
+        topic.hyperlink = Some("https://example.com/".into());
+        let topic = sheet.topic_mut(b).unwrap();
+        topic.branch_side = Some(thinoda_core::BranchSide::Left);
+        topic.image = Some(reference);
+        topic.image_size = Some(Vec2::new(16.0, 12.0));
+        sheet.topic_mut(c).unwrap().collapsed = false;
+        let floating = sheet.add_child(root, None, "Floating");
+        sheet
+            .topic_mut(root)
+            .unwrap()
+            .children
+            .retain(|id| *id != floating);
+        let topic = sheet.topic_mut(floating).unwrap();
+        topic.parent = None;
+        topic.position = Some(Vec2::new(300.0, -120.0));
+        sheet.floating.push(floating);
+        Workbook::new(sheet)
+    }
+
+    #[test]
+    fn pre_projection_2_exports_still_restore_their_private_snapshot() {
+        let fixture = include_bytes!("../tests/fixtures/thinoda-pre-x2-export.xmind");
+        let entries = archive_entries(fixture);
+        let metadata: Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        assert!(metadata.get("thinodaPublicProjection").is_none());
+        assert_eq!(
+            import_with_report(fixture).unwrap(),
+            (pre_x2_workbook(), Vec::new())
+        );
+    }
+
+    fn strip_snapshot(entries: &mut [(String, Vec<u8>)]) {
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata.as_object_mut().unwrap().remove("thinodaWorkbook");
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+    }
+
+    /// Imports only the public XMind content another application would see.
+    fn public_report(book: &Workbook) -> (Workbook, Vec<ImportWarning>) {
+        let mut entries = archive_entries(&export(book).unwrap());
+        strip_snapshot(&mut entries);
+        report(&entries)
+    }
+
+    #[test]
+    fn projection_2_fields_survive_without_the_private_snapshot() {
+        let book = pre_x2_workbook();
+        let entries = archive_entries(&export(&book).unwrap());
+        let metadata: Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        assert_eq!(
+            metadata["thinodaPublicProjection"],
+            json!(PUBLIC_PROJECTION)
+        );
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+
+        let mut sheet = book.sheets[0].clone();
+        sheet.theme.background = Color::from_hex("#102030");
+        sheet.theme.tapered_lines = false;
+        let alpha = sheet.root_topic().children[0];
+        let file =
+            thinoda_core::attachments::insert(&mut sheet, alpha, "plan.pdf", vec![7; 9]).unwrap();
+        // All root children have explicit sides so the unbalanced split is representable.
+        for (index, child) in sheet.root_topic().children.clone().into_iter().enumerate() {
+            sheet.topic_mut(child).unwrap().branch_side = Some(if index < 2 {
+                thinoda_core::BranchSide::Right
+            } else {
+                thinoda_core::BranchSide::Left
+            });
+        }
+        let source = Workbook::new(sheet);
+        let (imported, warnings) = public_report(&source);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (before, after) = (source.active(), imported.active());
+        assert_eq!(after.theme.background, Color::from_hex("#102030"));
+        assert!(!after.theme.tapered_lines);
+        assert_eq!(after.root_topic().structure, Some(Structure::MapUnbalanced));
+        let sides: Vec<_> = after
+            .root_topic()
+            .children
+            .iter()
+            .map(|child| after.topics[child].branch_side)
+            .collect();
+        let expected: Vec<_> = before
+            .root_topic()
+            .children
+            .iter()
+            .map(|child| before.topics[child].branch_side)
+            .collect();
+        assert_eq!(sides, expected);
+        let alpha_after = after.root_topic().children[0];
+        let topic = &after.topics[&alpha_after];
+        assert_eq!(topic.style.width, Some(180.0));
+        assert_eq!(topic.child_numbering, before.topics[&alpha].child_numbering);
+        let attached = *topic.children.last().unwrap();
+        assert_eq!(after.topics[&attached].title, before.topics[&file].title);
+        let attachment = after.topics[&attached].attachment.clone().unwrap();
+        assert_eq!(attachment.name, "plan.pdf");
+        assert_eq!(
+            after.resources.get(&attachment.resource).unwrap().bytes(),
+            [7; 9]
+        );
+        assert_eq!(
+            after.relationships[0].control_points,
+            before.relationships[0].control_points
+        );
+        let summary = &after.summaries[0];
+        assert_eq!(summary.range, ChildRange { start: 0, end: 1 });
+        assert_eq!(
+            after.boundaries[0].range,
+            Some(ChildRange { start: 1, end: 2 })
+        );
+    }
+
+    #[test]
+    fn attachments_sharing_image_bytes_keep_one_resource() {
+        let (mut book, bytes) = image_workbook();
+        let sheet = &mut book.sheets[0];
+        let root = sheet.root;
+        thinoda_core::attachments::insert(sheet, root, "copy.png", bytes.clone()).unwrap();
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let (imported, warnings) = public_report(&book);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let sheet = imported.active();
+        assert_eq!(sheet.resources.entries.len(), 1);
+        let child = *sheet.root_topic().children.last().unwrap();
+        let attachment = sheet.topics[&child].attachment.clone().unwrap();
+        assert_eq!(
+            Some(attachment.resource.clone()),
+            sheet.root_topic().image.clone()
+        );
+        assert_eq!(
+            sheet.resources.get(&attachment.resource).unwrap().bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn unknown_public_projection_falls_back_to_public_content() {
+        let book = pre_x2_workbook();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaPublicProjection"] = json!(PUBLIC_PROJECTION + 1);
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        let (imported, _) = report(&entries);
+        // Private-only data (the hyperlink beside notes, labels) is still public; the
+        // snapshot is ignored so per-topic ids are freshly allocated.
+        assert_eq!(imported.active().root_topic().title, "Root");
+        let alpha = imported.active().root_topic().children[0];
+        assert_eq!(imported.active().topics[&alpha].style.width, Some(180.0));
+    }
+
+    #[test]
+    fn generator_style_ranges_are_normalized() {
+        let children = json!({"attached": [
+            {"id": "a", "title": "A"}, {"id": "b", "title": "B"}, {"id": "c", "title": "C"}
+        ], "summary": [
+            {"id": "s1", "title": "Reversed"},
+            {"id": "s2", "title": "Master"},
+            {"id": "s3", "title": "Past the end"},
+            {"id": "s4", "title": "Orphan"}
+        ]});
+        let (workbook, warnings) = content_report(json!({"rootTopic": {
+            "id": "root", "title": "Root", "children": children,
+            "summaries": [
+                {"id": "x1", "range": "(2,0)", "topicId": "s1"},
+                {"id": "x2", "range": "master", "topicId": "s2"},
+                {"id": "x3", "range": "(1,10)", "topicId": "s3"},
+                {"id": "x4", "range": "(0,0)", "topicId": "missing"}
+            ],
+            "boundaries": [
+                {"id": "b1", "range": "(10,2)"},
+                {"id": "b2", "range": "master"}
+            ]
+        }}));
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let sheet = workbook.active();
+        let ranges: Vec<_> = sheet
+            .summaries
+            .iter()
+            .map(|summary| summary.range)
+            .collect();
+        assert_eq!(
+            ranges,
+            vec![
+                ChildRange { start: 0, end: 2 },
+                ChildRange { start: 0, end: 2 },
+                ChildRange { start: 1, end: 2 },
+            ]
+        );
+        let boundaries: Vec<_> = sheet
+            .boundaries
+            .iter()
+            .map(|boundary| boundary.range)
+            .collect();
+        assert_eq!(
+            boundaries,
+            vec![Some(ChildRange { start: 2, end: 2 }), None]
+        );
+        // The summary topic without a valid bracket stays visible as a floating topic.
+        let orphan = sheet
+            .floating
+            .iter()
+            .find(|id| sheet.topics[id].title == "Orphan");
+        assert!(orphan.is_some());
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn summaries_on_leaf_topics_become_floating_topics() {
+        let (workbook, warnings) = content_report(json!({"rootTopic": {
+            "id": "root", "title": "Root",
+            "children": {"summary": [{"id": "s", "title": "Lonely"}]},
+            "summaries": [{"id": "x", "range": "(0,0)", "topicId": "s"}]
+        }}));
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let sheet = workbook.active();
+        assert!(sheet.summaries.is_empty());
+        assert_eq!(sheet.floating.len(), 1);
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn style_aliases_and_approximations_are_classified() {
+        let topic = |properties: Value| {
+            content_report(json!({"rootTopic": {
+                "title": "Root",
+                "style": {"properties": properties}
+            }}))
+        };
+        for (shape, expected) in [
+            (
+                "org.xmind.topicShape.ellipticrectangle",
+                TopicShape::Ellipse,
+            ),
+            ("org.xmind.topicShape.ELLIPSE-RECT", TopicShape::Ellipse),
+        ] {
+            let (workbook, warnings) = topic(json!({"shape-class": shape}));
+            assert!(warnings.is_empty(), "{shape}: {warnings:?}");
+            assert_eq!(
+                workbook.active().root_topic().style.shape,
+                Some(expected),
+                "{shape}"
+            );
+        }
+        for (shape, expected) in [
+            ("org.xmind.topicShape.circle", TopicShape::Ellipse),
+            ("org.xmind.topicShape.hexagon", TopicShape::RoundedRect),
+            ("org.xmind.topicShape.cloud", TopicShape::RoundedRect),
+        ] {
+            let (workbook, warnings) = topic(json!({"shape-class": shape}));
+            assert_eq!(warnings, vec![ImportWarning::Formatting], "{shape}");
+            assert_eq!(
+                workbook.active().root_topic().style.shape,
+                Some(expected),
+                "{shape}"
+            );
+        }
+        for (line, expected) in [
+            ("org.xmind.branchConnection.bight", LineShape::Curve),
+            ("org.xmind.branchConnection.fold", LineShape::Elbow),
+            (
+                "org.xmind.branchConnection.roundedfold",
+                LineShape::RoundedElbow,
+            ),
+        ] {
+            let (workbook, warnings) = topic(json!({"line-class": line}));
+            assert!(warnings.is_empty(), "{line}: {warnings:?}");
+            assert_eq!(
+                workbook.active().root_topic().style.line_shape,
+                Some(expected),
+                "{line}"
+            );
+        }
+        for (weight, bold) in [
+            ("700", true),
+            ("bolder", true),
+            ("400", false),
+            ("normal", false),
+        ] {
+            let (workbook, warnings) = topic(json!({"fo:font-weight": weight}));
+            assert!(warnings.is_empty(), "{weight}: {warnings:?}");
+            assert_eq!(
+                workbook.active().root_topic().style.bold,
+                Some(bold),
+                "{weight}"
+            );
+        }
+        let (_, warnings) = topic(json!({"fo:font-weight": "heavy-ish"}));
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        let (workbook, warnings) = topic(json!({"fo:font-weight": "inherited"}));
+        assert!(warnings.is_empty());
+        assert_eq!(workbook.active().root_topic().style.bold, None);
+    }
+
+    #[test]
+    fn numbering_widths_and_control_points_import_from_public_xmind() {
+        let (workbook, warnings) = content_report(json!({
+            "rootTopic": {
+                "id": "root", "title": "Root", "customWidth": 240,
+                "numbering": {"numberFormat": "org.xmind.numbering.lowercase", "prependingNumbers": "none"},
+                "children": {"attached": [{"id": "a", "title": "A", "customWidth": 0}, {"id": "b", "title": "B"}]}
+            },
+            "relationships": [{
+                "id": "r", "end1Id": "a", "end2Id": "b",
+                "controlPoints": {"0": {"x": 10, "y": -5}, "1": {"x": -3, "y": 4.5}}
+            }]
+        }));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let sheet = workbook.active();
+        assert_eq!(sheet.root_topic().style.width, Some(240.0));
+        assert_eq!(
+            sheet.root_topic().child_numbering,
+            Some(Numbering {
+                format: NumberFormat::LowerAlpha,
+                tiered: false,
+                start: 1
+            })
+        );
+        assert_eq!(
+            sheet.topics[&sheet.root_topic().children[0]].style.width,
+            None
+        );
+        assert_eq!(
+            sheet.relationships[0].control_points,
+            Some([Vec2::new(10.0, -5.0), Vec2::new(-3.0, 4.5)])
+        );
+
+        let (workbook, warnings) = content_report(json!({
+            "rootTopic": {
+                "id": "root", "title": "Root", "customWidth": 99999,
+                "numbering": {"numberFormat": "org.xmind.numbering.unknown", "suffix": ")"},
+                "children": {"attached": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}]}
+            },
+            "relationships": [{
+                "id": "r", "end1Id": "a", "end2Id": "b",
+                "controlPoints": {"0": {"amount": 0.3, "angle": 1.2}}
+            }]
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        let sheet = workbook.active();
+        assert_eq!(sheet.root_topic().style.width, None);
+        assert_eq!(
+            sheet
+                .root_topic()
+                .child_numbering
+                .map(|numbering| numbering.format),
+            Some(NumberFormat::Decimal)
+        );
+        assert_eq!(sheet.relationships[0].control_points, None);
+    }
+
+    #[test]
+    fn white_xmind_canvas_keeps_the_thinoda_background() {
+        let (workbook, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root"},
+            "theme": {"map": {"properties": {"svg:fill": "#ffffff", "line-tapered": "tapered"}}}
+        }));
+        assert!(warnings.is_empty());
+        assert_eq!(workbook.active().theme.background, None);
+        assert!(workbook.active().theme.tapered_lines);
     }
 }
