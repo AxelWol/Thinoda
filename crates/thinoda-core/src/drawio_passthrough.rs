@@ -175,8 +175,7 @@ pub struct DrawioPagePassthrough {
     pub model_attributes: Vec<(String, String)>,
     /// Retained source IDs for imported objects and named layers. Generated
     /// object, layer, zone, group, topic, map-decoration and auxiliary IDs avoid
-    /// these after deletion. Fixed Sankey IDs reject conflicting exports instead
-    /// of being reassigned.
+    /// these after deletion. Sankey IDs are remapped in their semantic extension.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cell_ids: Vec<String>,
 }

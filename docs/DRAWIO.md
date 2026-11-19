@@ -305,7 +305,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
 - [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
-- [x] Generate non-Sankey topic IDs without source collisions; refuse conflicting fixed Sankey node and edge IDs
+- [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -341,6 +341,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 Sankey ID remapping | Sankey nodes and edges avoid source collisions while version 2 extensions retain flows, settings and inactive stage metadata, including in editable images. |
 | 2026-11-19 | D10 generated topic IDs | Non-Sankey topics avoid retained and live source IDs while maintaining connector references; conflicting fixed Sankey IDs refuse export. |
 | 2026-11-19 | D10 generated map-decoration IDs | Boundary, branch-edge, relationship and summary cells avoid retained tombstones and live source IDs. |
 | 2026-11-19 | D10 generated zone/group IDs | Zone and group IDs avoid retained tombstones and live source IDs, with remapped parent links preserving nested geometry. |
@@ -521,9 +522,8 @@ back. Only canvas objects carry passthrough; cards, topics and zones are
 regenerated, so their ids and unknown keys are lost, as before. At D6,
 tombstones covered only cells that became objects; D10 later added named-layer
 IDs, while topic and zone ids still change on every import. Export gives a
-source id priority over a generated `o{id}`
-(except for Sankey connectors, whose extension addresses `o{id}`), so a
-renumbered re-import is idempotent. Unmappable cells are still dropped with a
+source id priority over a generated `o{id}`. D10 subsequently added numeric
+Sankey ID remapping while retaining the version 2 extension. Unmappable cells are still dropped with a
 warning; storing them as opaque objects and cut-once provenance belong to D10.
 D10 later added bounded workbook-level `mxfile` attributes. Named style tokens are not kept.
 Because almost every imported cell has an id, a file saved after a draw.io
@@ -1176,36 +1176,34 @@ exhaustive semantic audit. Complete layer and source fidelity remain open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot
-silently inherit a deleted imported object's ID. Duck check: fixed Sankey IDs
-refuse collisions rather than being remapped;
+silently inherit a deleted imported object's ID. Duck check: topic and zone
+source IDs are not retained;
 topic and zone tombstones are not yet retained. This is not sufficient
 to enable in-place save.
 
 **D10 layer tombstones (partial).** Named layers with retained source IDs now
 participate in the bounded page tombstone set, which survives native save and
 undo snapshots. A budget omission warns instead of claiming retention. Duck
-check: tombstones do not survive a draw.io export as deleted cells, and fixed
-Sankey IDs cannot yet be remapped; neither source overwrite nor complete ID
+check: tombstones do not survive a draw.io export as deleted cells; neither
+source overwrite nor complete ID
 fidelity is enabled.
 
 **D10 zone/group ID allocation (partial).** Generated zone and group IDs avoid
 retained tombstones and live source IDs, including when a page budget dropped
 the corresponding tombstone. Parent references use the allocated IDs and nested
 geometry remains relative to the correct parent. Duck check: source IDs for
-zones and groups themselves are still regenerated; fixed Sankey IDs refuse
-conflicts rather than being remapped.
+zones and groups themselves are still regenerated.
 
 **D10 map-decoration IDs (partial).** Generated boundaries, branch edges,
 relationships and summaries now avoid retained tombstones and live source IDs.
-Duck check: their own source IDs are not retained; fixed Sankey IDs refuse
-conflicts rather than being remapped.
+Duck check: their own source IDs are not retained.
 
-**D10 topic ID allocation (partial).** Generated non-Sankey topic IDs avoid
-retained and live source IDs, and connector terminals use the allocated IDs.
-Fixed Sankey node and edge collisions produce an explicit export error rather
-than retargeting another cell. Duck check: Sankey collisions still require a
-non-destructive remapping strategy; imported topic and zone source IDs are not
-retained, so in-place save remains disabled.
+**D10 topic and Sankey ID allocation (partial).** Generated topic and Sankey
+IDs avoid retained and live source IDs, with connector terminals and the version
+2 Sankey extension remapped together. Settings-only stage nodes are included
+in the extension. Duck check: imported topic and zone source IDs are still not
+retained, so in-place save remains disabled; collapsed settings or endpoint
+topics must be expanded for export.
 
 ## 5. Rubber-duck findings
 

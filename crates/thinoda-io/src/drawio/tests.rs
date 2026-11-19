@@ -10954,20 +10954,82 @@ fn drawio_generated_topic_ids_avoid_sources_and_keep_connector_targets() {
 }
 
 #[test]
-fn drawio_refuses_sankey_source_id_collisions() {
-    let mut book = thinoda_core::templates::instantiate("sankey-budget");
-    let node = *thinoda_core::sankey::evaluate(book.active())
-        .unwrap()
-        .nodes
-        .iter()
-        .next()
-        .unwrap();
-    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
-        cell_ids: vec![format!("t{}", node.0)],
-        ..Default::default()
-    }));
-    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
+fn drawio_sankey_source_id_collisions_remap_without_losing_semantics() {
+    for template in [
+        "sankey-budget",
+        "sankey-probability",
+        "sankey-learning",
+        "sankey-circular",
+    ] {
+        let mut book = thinoda_core::templates::instantiate(template);
+        let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+        let node = *before.nodes.iter().next().unwrap();
+        let edge = book
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()))
+            .unwrap()
+            .id;
+        let node_id = format!("t{}", node.0);
+        let edge_id = format!("o{}", edge.0);
+        book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+            cell_ids: vec![node_id.clone(), edge_id.clone()],
+            ..Default::default()
+        }));
+        let object = book
+            .active_mut()
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(800.0, 800.0, 80.0, 60.0),
+                "Source object",
+            ))
+            .unwrap();
+        book.active_mut().canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+            source_id: Some(edge_id.clone()),
+            ..Default::default()
+        }));
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert!(!xml.contains(&format!(r#"id="{node_id}""#)), "{template}");
+        assert_eq!(xml.matches(&format!(r#"id="{edge_id}""#)).count(), 1);
+        let report = load(&xml);
+        assert!(
+            !report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{template}: {:?}",
+            report.warnings
+        );
+        assert!(report.workbook.has_sankey(), "{template}");
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(after_mass, before_mass, "{template}");
+        assert_eq!(before.nodes.len(), after.nodes.len(), "{template}");
+        if template == "sankey-budget" {
+            for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+                let bytes = crate::export_bytes_with_consent(
+                    &book,
+                    format,
+                    &ExportOptions::default(),
+                    true,
+                )
+                .unwrap();
+                let restored = import(&bytes).unwrap();
+                assert!(restored.workbook.has_sankey(), "{format:?}");
+                assert!(
+                    !restored
+                        .warnings
+                        .contains(&ImportWarning::DrawioSankeyStale),
+                    "{format:?}: {:?}",
+                    restored.warnings
+                );
+            }
+        }
+    }
 
+    // A live Sankey edge may keep its own numeric source ID.
     let mut book = thinoda_core::templates::instantiate("sankey-budget");
     let edge = book
         .active()
@@ -10982,12 +11044,12 @@ fn drawio_refuses_sankey_source_id_collisions() {
         cell_ids: vec![id.clone()],
         ..Default::default()
     }));
-    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
     book.active_mut().canvas.object_mut(edge).unwrap().drawio = Some(Arc::new(Passthrough {
-        source_id: Some(id),
+        source_id: Some(id.clone()),
         ..Default::default()
     }));
     let bytes = export(&book).unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains(&format!(r#"id="{id}""#)));
     assert!(import(&bytes).unwrap().workbook.has_sankey());
 
     let duplicate = book
@@ -11006,7 +11068,59 @@ fn drawio_refuses_sankey_source_id_collisions() {
         source_id: Some(format!("o{}", edge.0)),
         ..Default::default()
     }));
-    assert!(export(&book).unwrap_err().to_string().contains("Sankey"));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(&format!(r#"id="{id}""#)).count(), 1);
+    assert!(load(&xml).workbook.has_sankey());
+}
+
+#[test]
+fn drawio_sankey_extension_preserves_inactive_stage_settings() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let extra = book
+        .active_mut()
+        .add_card(
+            "Stored stage",
+            Vec2::new(900.0, 900.0),
+            Card::new(CardKind::Text, Vec2::new(100.0, 60.0)),
+        )
+        .unwrap();
+    book.active_mut()
+        .sankey
+        .as_mut()
+        .unwrap()
+        .stages
+        .insert(extra, 3);
+    assert!(
+        !thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .contains(&extra)
+    );
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![format!("t{}", extra.0)],
+        ..Default::default()
+    }));
+    let report = import(&export(&book).unwrap()).unwrap();
+    assert!(
+        !report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.active();
+    assert!(
+        sheet
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stages
+            .iter()
+            .any(|(id, stage)| {
+                *stage == 3
+                    && sheet
+                        .topic(*id)
+                        .is_some_and(|topic| topic.title == "Stored stage")
+            })
+    );
 }
 
 #[test]

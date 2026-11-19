@@ -5679,22 +5679,26 @@ struct SankeyLinkExtension {
 }
 
 impl SankeyExtension {
-    fn from_sheet(sheet: &Sheet) -> Result<Self, IoError> {
+    fn from_sheet(
+        sheet: &Sheet,
+        node_ids: &HashMap<TopicId, TopicId>,
+        edge_ids: &HashMap<CanvasObjectId, CanvasObjectId>,
+    ) -> Result<Self, IoError> {
         let values = thinoda_core::sankey::evaluate(sheet).map_err(IoError::Invalid)?;
         let layout = layout_sheet(sheet, &ApproxMeasure, false);
         let exported = exported_topics(sheet, &layout);
-        if values.nodes.iter().any(|id| !exported.contains(id)) {
+        if node_ids.keys().any(|id| !exported.contains(id)) {
             return Err(invalid(
-                "Expand all Sankey endpoint topics before exporting to draw.io.",
+                "Expand all Sankey endpoint and settings topics before exporting to draw.io.",
             ));
         }
-        Ok(Self {
+        let mut extension = Self {
             version: 2,
             settings: sheet.sankey.clone().unwrap_or_default(),
             nodes: sheet
                 .topics
                 .iter()
-                .filter(|(id, _)| values.nodes.contains(id))
+                .filter(|(id, _)| node_ids.contains_key(id))
                 .map(|(id, topic)| (*id, topic.notes.clone()))
                 .collect(),
             links: sheet
@@ -5728,7 +5732,44 @@ impl SankeyExtension {
                     _ => None,
                 })
                 .collect(),
-        })
+        };
+        let node = |id: TopicId| {
+            node_ids
+                .get(&id)
+                .copied()
+                .ok_or_else(|| invalid("Missing exported Sankey node ID"))
+        };
+        extension.nodes = extension
+            .nodes
+            .into_iter()
+            .map(|(id, notes)| Ok((node(id)?, notes)))
+            .collect::<Result<_, IoError>>()?;
+        extension.settings.sources = extension
+            .settings
+            .sources
+            .into_iter()
+            .map(|(id, value)| Ok((node(id)?, value)))
+            .collect::<Result<_, IoError>>()?;
+        extension.settings.stages = extension
+            .settings
+            .stages
+            .into_iter()
+            .map(|(id, value)| Ok((node(id)?, value)))
+            .collect::<Result<_, IoError>>()?;
+        extension.links = extension
+            .links
+            .into_iter()
+            .map(|(id, mut link)| {
+                link.from = node(link.from)?;
+                link.to = node(link.to)?;
+                let id = edge_ids
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| invalid("Missing exported Sankey edge ID"))?;
+                Ok((id, link))
+            })
+            .collect::<Result<_, IoError>>()?;
+        Ok(extension)
     }
 }
 
@@ -6371,6 +6412,8 @@ struct PageWriter<'a> {
     zone_cells: HashMap<ZoneId, String>,
     group_cells: HashMap<CanvasGroupId, String>,
     topic_cells: HashMap<TopicId, String>,
+    sankey_topic_ids: HashMap<TopicId, TopicId>,
+    sankey_edge_ids: HashMap<CanvasObjectId, CanvasObjectId>,
     /// Generated IDs for mind-map boundaries, links, relationships and summaries.
     map_cells: HashMap<String, String>,
     /// Row cell ids and absolute row origins of each written table.
@@ -6416,21 +6459,23 @@ fn layer_cell_ids(
 
 /// Cell ids of canvas objects: the imported draw.io id when it is still unique
 /// and not one of the ids generated for other cells (`reserved`), otherwise
-/// `o{id}`. Generated object IDs avoid retained source IDs, apart from Sankey
-/// edges, which keep `o{id}` for their native extension.
-fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasObjectId, String> {
+/// `o{id}`. Sankey edge IDs are allocated with their semantic extension.
+fn object_cell_ids(
+    sheet: &Sheet,
+    reserved: &HashSet<String>,
+    sankey_ids: &HashMap<CanvasObjectId, CanvasObjectId>,
+) -> HashMap<CanvasObjectId, String> {
     let tombstones: HashSet<&str> = sheet
         .drawio
         .iter()
         .flat_map(|page| page.cell_ids.iter().map(String::as_str))
         .collect();
-    let sankey = |object: &CanvasObject| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some());
     let mut ids = HashMap::new();
     let mut used = reserved.clone();
-    for object in sheet.canvas.objects.iter().filter(|object| sankey(object)) {
-        let id = format!("o{}", object.id.0);
+    for (object, exported) in sankey_ids {
+        let id = format!("o{}", exported.0);
         used.insert(id.clone());
-        ids.insert(object.id, id);
+        ids.insert(*object, id);
     }
     for object in &sheet.canvas.objects {
         let Some(source) = object
@@ -6459,6 +6504,25 @@ fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasO
         ids.insert(object.id, id);
     }
     ids
+}
+
+fn next_numeric_cell_id(
+    prefix: &str,
+    cursor: &mut u64,
+    reserved: &mut HashSet<String>,
+    unavailable: &HashSet<String>,
+) -> Result<u64, IoError> {
+    loop {
+        let candidate = *cursor;
+        let id = format!("{prefix}{candidate}");
+        if !unavailable.contains(&id) && reserved.insert(id) {
+            *cursor = candidate.saturating_add(1);
+            return Ok(candidate);
+        }
+        *cursor = candidate
+            .checked_add(1)
+            .ok_or_else(|| invalid("draw.io cell ID space exhausted"))?;
+    }
 }
 
 impl<'a> PageWriter<'a> {
@@ -6552,6 +6616,8 @@ impl<'a> PageWriter<'a> {
             zone_cells: HashMap::new(),
             group_cells: HashMap::new(),
             topic_cells: HashMap::new(),
+            sankey_topic_ids: HashMap::new(),
+            sankey_edge_ids: HashMap::new(),
             map_cells: HashMap::new(),
             table_rows: HashMap::new(),
         };
@@ -6575,14 +6641,30 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .filter_map(|layer| layer.source_id.clone()),
         );
-        for id in &writer.flows.nodes {
+        let mut sankey_nodes = writer.flows.nodes.clone();
+        if let Some(settings) = &sheet.sankey {
+            sankey_nodes.extend(settings.sources.keys().copied());
+            sankey_nodes.extend(settings.stages.keys().copied());
+        }
+        for id in &sankey_nodes {
             let cell = format!("t{}", id.0);
-            if unavailable.contains(&cell) {
-                return Err(invalid(
-                    "Cannot export Sankey: a node cell ID conflicts with retained draw.io source data",
-                ));
+            if !unavailable.contains(&cell) && reserved.insert(cell) {
+                writer.sankey_topic_ids.insert(*id, *id);
             }
-            reserved.insert(cell);
+        }
+        let mut topic_unavailable = unavailable.clone();
+        topic_unavailable.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
+        let mut topic_cursor = 1;
+        for id in &sankey_nodes {
+            if !writer.sankey_topic_ids.contains_key(id) {
+                let new = next_numeric_cell_id(
+                    "t",
+                    &mut topic_cursor,
+                    &mut reserved,
+                    &topic_unavailable,
+                )?;
+                writer.sankey_topic_ids.insert(*id, TopicId(new));
+            }
         }
         let mut object_sources: HashMap<&str, usize> = HashMap::new();
         for source in sheet
@@ -6599,29 +6681,49 @@ impl<'a> PageWriter<'a> {
             .iter()
             .filter_map(|layer| layer.source_id.as_deref())
             .collect();
-        let tombstones: HashSet<&str> = sheet
-            .drawio
+        let sankey_objects: Vec<_> = sheet
+            .canvas
+            .objects
             .iter()
-            .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+            .filter(|object| {
+                matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some())
+            })
             .collect();
-        for object in &sheet.canvas.objects {
-            if !matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()) {
-                continue;
-            }
-            let cell = format!("o{}", object.id.0);
-            let own_source = object
+        for object in &sankey_objects {
+            let source = object
                 .drawio
                 .as_ref()
-                .and_then(|passthrough| passthrough.source_id.as_deref())
-                == Some(cell.as_str());
-            let other_owner = layer_sources.contains(cell.as_str())
-                || object_sources.get(cell.as_str()).copied().unwrap_or(0)
-                    > usize::from(own_source);
-            let remembered = tombstones.contains(cell.as_str());
-            if other_owner || (remembered && !own_source) {
-                return Err(invalid(
-                    "Cannot export Sankey: an edge cell ID conflicts with retained draw.io source data",
-                ));
+                .and_then(|passthrough| passthrough.source_id.as_deref());
+            if let Some(source) = source
+                && let Some(number) = source
+                    .strip_prefix('o')
+                    .and_then(|id| id.parse::<u64>().ok())
+                && format!("o{number}") == source
+                && object_sources.get(source) == Some(&1)
+                && !layer_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer
+                    .sankey_edge_ids
+                    .insert(object.id, CanvasObjectId(number));
+            }
+        }
+        for object in &sankey_objects {
+            let cell = format!("o{}", object.id.0);
+            if !writer.sankey_edge_ids.contains_key(&object.id)
+                && !unavailable.contains(&cell)
+                && reserved.insert(cell)
+            {
+                writer.sankey_edge_ids.insert(object.id, object.id);
+            }
+        }
+        let mut edge_cursor = 1;
+        for object in &sankey_objects {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                writer.sankey_edge_ids.entry(object.id)
+            {
+                let new = next_numeric_cell_id("o", &mut edge_cursor, &mut reserved, &unavailable)?;
+                entry.insert(CanvasObjectId(new));
             }
         }
         let mut generated_id = |base: String| {
@@ -6636,8 +6738,8 @@ impl<'a> PageWriter<'a> {
         };
         for id in sheet.topics.keys() {
             let base = format!("t{}", id.0);
-            let cell = if writer.flows.nodes.contains(id) {
-                base
+            let cell = if let Some(mapped) = writer.sankey_topic_ids.get(id) {
+                format!("t{}", mapped.0)
             } else {
                 generated_id(base)
             };
@@ -6678,7 +6780,7 @@ impl<'a> PageWriter<'a> {
         }
         writer.layer_cells = layer_cell_ids(sheet, &reserved);
         reserved.extend(writer.layer_cells.values().cloned());
-        writer.cell_ids = object_cell_ids(sheet, &reserved);
+        writer.cell_ids = object_cell_ids(sheet, &reserved, &writer.sankey_edge_ids);
         reserved.extend(writer.cell_ids.values().cloned());
         reserved.extend(
             sheet
@@ -7979,8 +8081,13 @@ fn export_sheets<'a>(
             GridKind::Lines => (1, "lines"),
         };
         let thinoda_snap = u8::from(sheet.board.snap);
+        let writer = PageWriter::new(sheet)?;
         let sankey = if sheet.has_sankey() {
-            let extension = SankeyExtension::from_sheet(sheet)?;
+            let extension = SankeyExtension::from_sheet(
+                sheet,
+                &writer.sankey_topic_ids,
+                &writer.sankey_edge_ids,
+            )?;
             format!(
                 " thinodaSankey=\"{}\"",
                 esc(&serde_json::to_string(&extension)?)
@@ -8002,7 +8109,6 @@ fn export_sheets<'a>(
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));
-        let writer = PageWriter::new(sheet)?;
         for layer in &sheet.canvas.layers {
             let id = writer
                 .layer_cells
