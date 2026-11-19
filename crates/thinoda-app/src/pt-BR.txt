@@ -91,7 +91,9 @@ Grid or snapping may differ in draw.io|A grade ou o encaixe na grade podem ser d
 Page background may differ in draw.io|O fundo da página pode ser diferente no draw.io
 Cards may show folded corners in draw.io|Os cartões podem exibir cantos dobrados no draw.io
 Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
-Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
+Topic details omitted|Detalhes dos tópicos omitidos
+Boundary and relationship styling or routing omitted|Estilo ou roteamento de limites e relações omitidos
+Other sheets omitted|Outras planilhas omitidas
 Presentation slides omitted|Slides de apresentação omitidos
 Thinoda on GitHub|Thinoda no GitHub
 Click empty space to add · Esc to finish|Clique em um espaço vazio para adicionar · Esc para concluir
@@ -677,6 +679,25 @@ Boring|Tédio
 Red star|Estrela vermelha
 Gray flag|Bandeira cinza
 Gray star|Estrela cinza
+Paused|Pausado
+Dark blue flag|Bandeira azul-escura
+Dark blue star|Estrela azul-escura
+Embarrassed|Envergonhado
+People|Pessoas
+Red person|Pessoa vermelha
+Orange person|Pessoa laranja
+Yellow person|Pessoa amarela
+Green person|Pessoa verde
+Blue person|Pessoa azul
+Purple person|Pessoa roxa
+Dark blue person|Pessoa azul-escura
+Arrow left|Seta para a esquerda
+Arrow right|Seta para a direita
+Arrow up|Seta para cima
+Arrow down|Seta para baixo
+Arrow left and right|Seta para a esquerda e para a direita
+Arrow up and down|Seta para cima e para baixo
+Refresh arrow|Seta de atualização
 Grayscale|Escala de cinza
 Could not write this MindManager file. The map may be too large or contain invalid data.|Não foi possível gravar este arquivo MindManager. O mapa pode ser grande demais ou conter dados inválidos.
 Starting…|Iniciando…

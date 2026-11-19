@@ -302,7 +302,9 @@ impl OpenDoc {
     ) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
         let format = report.format;
         let mut d = Self::new(report.workbook);
-        if is_native(format) {
+        // A lossy import must never keep a writable path: saving would overwrite
+        // source content that Thinoda could not represent.
+        if is_native(format) && report.warnings.is_empty() {
             d.path = Some(path.to_path_buf());
             d.format = format;
             let observed = (|| {
@@ -339,7 +341,7 @@ impl OpenDoc {
     ) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
         let format = loaded.report.format;
         let mut doc = Self::new(loaded.report.workbook);
-        if is_native(format) {
+        if is_native(format) && loaded.report.warnings.is_empty() {
             doc.path = Some(path.to_path_buf());
             doc.format = format;
             doc.fingerprint = loaded.fingerprint;
@@ -2317,6 +2319,38 @@ mod tests {
         assert!(document.fingerprint.is_some());
         assert!(!document.changed_on_disk());
         document.save_to(&path, false).unwrap();
+    }
+
+    #[test]
+    fn lossy_xmind_imports_never_keep_a_writable_source_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let lossy = directory.path().join("desktop.xmind");
+        let bytes = include_bytes!("../../thinoda-io/tests/fixtures/sample-map-no-thumbnail.xmind");
+        std::fs::write(&lossy, bytes).unwrap();
+        let report = thinoda_io::import_named_bytes_with_report(&lossy, bytes).unwrap();
+        assert!(!report.warnings.is_empty());
+        let (document, warnings) = OpenDoc::from_import_report(&lossy, report).unwrap();
+        assert!(!warnings.is_empty());
+        assert!(document.path.is_none());
+        assert_eq!(
+            document.import_source,
+            Some(pfs::canonicalize(&lossy).unwrap())
+        );
+        assert!(document.doc.is_dirty());
+
+        let clean = directory.path().join("clean.xmind");
+        let bytes = thinoda_io::export_bytes(
+            &Workbook::default(),
+            Format::XMind,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        std::fs::write(&clean, &bytes).unwrap();
+        let report = thinoda_io::import_named_bytes_with_report(&clean, &bytes).unwrap();
+        let (document, warnings) = OpenDoc::from_import_report(&clean, report).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(document.path.as_deref(), Some(clean.as_path()));
+        assert!(document.import_source.is_none());
     }
 
     #[test]

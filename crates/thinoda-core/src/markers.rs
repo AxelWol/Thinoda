@@ -18,6 +18,7 @@ pub fn default_color(id: &str) -> Color {
         "yellow" => Color::rgb(0xF2, 0xC0, 0x1E),
         "green" => Color::rgb(0x3C, 0xB3, 0x71),
         "blue" => Color::rgb(0x2E, 0x7C, 0xF6),
+        "dark-blue" => Color::rgb(0x23, 0x45, 0x78),
         "purple" => Color::rgb(0x8E, 0x5C, 0xE6),
         _ => Color::rgb(0x8A, 0x8F, 0x98),
     };
@@ -28,7 +29,7 @@ pub fn default_color(id: &str) -> Color {
             named(["red", "orange", "blue", "green", "purple"][(n.saturating_sub(1)) % 5])
         }
         "task" => named("green"),
-        "flag" | "star" => named(rest),
+        "flag" | "people" | "star" => named(rest),
         _ => Color::rgb(0x44, 0x4C, 0x58),
     }
 }
@@ -95,6 +96,7 @@ pub const GROUPS: &[MarkerGroup] = &[
             m("task-5oct", "◕", "5/8 done"),
             m("task-3quar", "◕", "3/4 done"),
             m("task-7oct", "◕", "7/8 done"),
+            m("task-pause", "Ⅱ", "Paused"),
             m("task-done", "●", "Done"),
         ],
     },
@@ -109,6 +111,7 @@ pub const GROUPS: &[MarkerGroup] = &[
             m("flag-blue", "🏳", "Blue flag"),
             m("flag-purple", "🏳", "Purple flag"),
             m("flag-gray", "🏳", "Gray flag"),
+            m("flag-dark-blue", "🏳", "Dark blue flag"),
         ],
     },
     MarkerGroup {
@@ -122,6 +125,7 @@ pub const GROUPS: &[MarkerGroup] = &[
             m("star-blue", "★", "Blue star"),
             m("star-purple", "★", "Purple star"),
             m("star-gray", "☆", "Gray star"),
+            m("star-dark-blue", "★", "Dark blue star"),
         ],
     },
     MarkerGroup {
@@ -134,6 +138,33 @@ pub const GROUPS: &[MarkerGroup] = &[
             m("smiley-cry", "😢", "Cry"),
             m("smiley-surprise", "😮", "Surprise"),
             m("smiley-boring", "😐", "Boring"),
+            m("smiley-embarrass", "😳", "Embarrassed"),
+        ],
+    },
+    MarkerGroup {
+        id: "people",
+        name: "People",
+        markers: &[
+            m("people-red", "♟", "Red person"),
+            m("people-orange", "♟", "Orange person"),
+            m("people-yellow", "♟", "Yellow person"),
+            m("people-green", "♟", "Green person"),
+            m("people-blue", "♟", "Blue person"),
+            m("people-purple", "♟", "Purple person"),
+            m("people-dark-blue", "♟", "Dark blue person"),
+        ],
+    },
+    MarkerGroup {
+        id: "arrow",
+        name: "Arrow",
+        markers: &[
+            m("arrow-left", "←", "Arrow left"),
+            m("arrow-right", "→", "Arrow right"),
+            m("arrow-up", "↑", "Arrow up"),
+            m("arrow-down", "↓", "Arrow down"),
+            m("arrow-left-right", "↔", "Arrow left and right"),
+            m("arrow-up-down", "↕", "Arrow up and down"),
+            m("arrow-refresh", "⟳", "Refresh arrow"),
         ],
     },
     MarkerGroup {
@@ -246,5 +277,30 @@ mod tests {
         assert_eq!(v, vec!["priority-3", "flag-red"]);
         toggle(&mut v, "priority-3");
         assert_eq!(v, vec!["flag-red"]);
+    }
+
+    #[test]
+    fn new_xmind_marker_ids_have_color_and_pause_semantics() {
+        assert_eq!(
+            default_color("people-dark-blue"),
+            Color::rgb(0x23, 0x45, 0x78)
+        );
+        assert_eq!(
+            default_color("flag-dark-blue"),
+            Color::rgb(0x23, 0x45, 0x78)
+        );
+        for id in [
+            "task-pause",
+            "flag-dark-blue",
+            "star-dark-blue",
+            "smiley-embarrass",
+            "people-red",
+            "people-dark-blue",
+            "arrow-left",
+            "arrow-refresh",
+        ] {
+            assert!(find(id).is_some(), "{id}");
+            assert!(!glyph(id).is_empty(), "{id}");
+        }
     }
 }

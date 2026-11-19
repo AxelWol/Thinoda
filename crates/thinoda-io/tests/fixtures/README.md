@@ -17,3 +17,9 @@ The issue reports XMind desktop 26.03.04126. Both archives contain identical
 `Thumbnails/`, a manifest-declared `Thumbnails/thumbnail.png`, and an unlisted
 legacy `content.xml`. The cleaned package omits those entries and removes the
 thumbnail declaration. Tests must import both into the same workbook.
+
+# XMindMark fixtures
+
+The bounded XMindMark grammar and deterministic writer are tested with small
+in-source examples in `crates/thinoda-io/src/formats.rs`; no external renderer
+or generated `.xmindmark` artifact is required.
