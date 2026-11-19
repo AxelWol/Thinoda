@@ -304,6 +304,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
 - [x] Disclose group labels, collapsed state and unsupported group styles that cannot be represented
 - [x] Disclose explicit zone styles that are not represented by Thinoda frames
+- [x] Disclose the default draw.io swimlane header size when conversion changes it
 - [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape loss
 - [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
@@ -350,6 +351,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 default zone header | The draw.io default header size of 40 is disclosed when conversion uses Thinoda's 24-unit frame header. |
 | 2026-11-19 | D10 zone style diagnostics | Explicit unsupported zone styling requires import consent instead of being silently dropped. |
 | 2026-11-19 | D10 group loss diagnostics | Group labels, collapsed state and unsupported group styles require import consent rather than disappearing silently. |
 | 2026-11-19 | D10 group source identity | Representable flat groups own bounded source IDs through native v56, XMind and recovery; copies clear ownership, and flattened or undersized groups warn. |
@@ -1287,6 +1289,11 @@ represented frame subset now report formatting loss, including header size,
 orientation, collapsibility, stroke width and unknown styles. Duck check:
 styles are disclosed rather than preserved; implicit defaults, complete zone
 fidelity and source-preserving save still need further work.
+
+**D10 default zone header (partial).** A missing `startSize` uses draw.io's
+40-unit default, unlike Thinoda's 24-unit export; that difference now requires
+import consent. Duck check: this does not preserve the original header size or
+resolve other implicit defaults; source-preserving save remains disabled.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

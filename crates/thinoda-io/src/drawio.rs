@@ -4148,7 +4148,9 @@ impl<'a> PageImport<'a> {
         if !swimlane {
             self.warn(ImportWarning::Formatting);
         }
-        if cell.style.suppress_defaults
+        // draw.io defaults to 40; Thinoda exports its frame header at 24.
+        if (swimlane && cell.style.get("startSize").is_none())
+            || cell.style.suppress_defaults
             || cell.style.tokens.iter().any(|token| token != "swimlane")
             || cell
                 .style
