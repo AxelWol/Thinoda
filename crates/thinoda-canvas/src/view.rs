@@ -84,6 +84,33 @@ pub enum BoardTool {
     Lasso,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardTitleFormat {
+    Bold,
+    Italic,
+    Underline,
+    Strikethrough,
+    Subscript,
+    Superscript,
+    Bulleted,
+    Numbered,
+}
+
+impl CardTitleFormat {
+    fn label_format(self) -> label_format::Format {
+        match self {
+            Self::Bold => label_format::Format::Bold,
+            Self::Italic => label_format::Format::Italic,
+            Self::Underline => label_format::Format::Underline,
+            Self::Strikethrough => label_format::Format::Strike,
+            Self::Subscript => label_format::Format::Subscript,
+            Self::Superscript => label_format::Format::Superscript,
+            Self::Bulleted => label_format::Format::Bulleted,
+            Self::Numbered => label_format::Format::Numbered,
+        }
+    }
+}
+
 /// Drag-and-drop payload of a shape dragged from a host's shape library.
 ///
 /// Set it with [`egui::Response::dnd_set_drag_payload`]; releasing it over
@@ -1822,6 +1849,134 @@ impl MapCanvas {
     /// Focusable title editor, present only while a topic is being edited.
     pub fn title_editor_id() -> Id {
         Self::id().with("edit")
+    }
+
+    pub fn title_has_selection(ctx: &egui::Context) -> bool {
+        TextEdit::load_state(ctx, Self::title_editor_id())
+            .and_then(|state| state.cursor.char_range())
+            .is_some_and(|range| range.primary.index != range.secondary.index)
+    }
+
+    pub fn title_format_is_active(
+        ctx: &egui::Context,
+        doc: &Document,
+        view: &MapView,
+        format: CardTitleFormat,
+    ) -> bool {
+        let Some(selection) = TextEdit::load_state(ctx, Self::title_editor_id())
+            .and_then(|state| state.cursor.char_range())
+        else {
+            return false;
+        };
+        let Some(edit) = view.editing.as_ref() else {
+            return false;
+        };
+        let Some(topic) = doc.sheet().topic(edit.topic) else {
+            return false;
+        };
+        let resolved = thinoda_core::theme::resolve_style(doc.sheet(), edit.topic, view.dark);
+        label_format::active(
+            &edit.inline_text,
+            &edit.text,
+            selection.primary.index.0.min(selection.secondary.index.0)
+                ..selection.primary.index.0.max(selection.secondary.index.0),
+            &thinoda_core::label_style::LabelStyle {
+                font_family: resolved.font_family,
+                font_size: Some(resolved.font_size),
+                bold: resolved.bold,
+                italic: resolved.italic,
+                underline: resolved.underline,
+                strikethrough: resolved.strikethrough,
+                ..Default::default()
+            },
+            format.label_format(),
+        ) && topic.title == edit.original
+            && topic.inline_text == edit.original_inline_text
+    }
+
+    pub fn format_title_selection(
+        ctx: &egui::Context,
+        doc: &Document,
+        view: &mut MapView,
+        format: CardTitleFormat,
+    ) -> Result<bool, String> {
+        let Some(selection) = TextEdit::load_state(ctx, Self::title_editor_id())
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| DraftSelection {
+                anchor: range.secondary.index.0,
+                focus: range.primary.index.0,
+            })
+        else {
+            return Ok(false);
+        };
+        let Some(edit) = view.editing.as_ref() else {
+            return Ok(false);
+        };
+        if edit.ime_composing || view.title_ime_active(ctx) {
+            return Err("Finish text composition before formatting the card title".into());
+        }
+        let topic = doc
+            .sheet()
+            .topic(edit.topic)
+            .ok_or_else(|| "Card title source is unavailable".to_owned())?;
+        if !matches!(
+            topic.card.as_ref().map(|card| card.kind),
+            Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+        ) {
+            return Err("Inline formatting requires a sticky or text card title".into());
+        }
+        if topic.title != edit.original || topic.inline_text != edit.original_inline_text {
+            return Err("Card title changed while editing; draft retained".into());
+        }
+        if !board_input::topic_is_unlocked(doc.sheet(), edit.topic) {
+            return Err("Card or group is locked; title formatting is unavailable".into());
+        }
+        if edit
+            .owner_document
+            .is_some_and(|owner| owner != doc.instance_id())
+        {
+            return Err("Card title belongs to a different document".into());
+        }
+        if edit.rich_history.is_none()
+            && (edit.plain_text_history_active || edit.text != edit.original)
+        {
+            return Err(
+                "Finish and reopen this card title before applying inline formatting".into(),
+            );
+        }
+        let resolved = thinoda_core::theme::resolve_style(doc.sheet(), edit.topic, view.dark);
+        let base = thinoda_core::label_style::LabelStyle {
+            font_family: resolved.font_family,
+            font_size: Some(resolved.font_size),
+            bold: resolved.bold,
+            italic: resolved.italic,
+            underline: resolved.underline,
+            strikethrough: resolved.strikethrough,
+            ..Default::default()
+        };
+        let mut formatting = edit.inline_text.clone();
+        let mut history = edit.rich_history.clone().unwrap_or(RichTextDraft::new(
+            edit.text.clone(),
+            formatting.clone(),
+            selection,
+        )?);
+        let range = selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus);
+        label_format::apply(
+            &mut formatting,
+            &edit.text,
+            range,
+            &base,
+            format.label_format(),
+        )?;
+        history.set_selection(selection)?;
+        history.replace_content(edit.text.clone(), formatting.clone(), selection)?;
+        let Some(edit) = view.editing.as_mut() else {
+            return Ok(false);
+        };
+        edit.owner_document = Some(doc.instance_id());
+        edit.inline_text = formatting;
+        edit.rich_history = Some(history);
+        Ok(true)
     }
 
     /// Focusable shape or connector label editor.
@@ -6062,6 +6217,83 @@ mod tests {
                 index: 0,
                 list: ListKind::Bulleted,
             }]
+        );
+    }
+
+    #[test]
+    fn formatted_card_toolbar_formats_runs_lists_and_graphemes_transactionally() {
+        use thinoda_core::{CardKind, InlineBaseline, ListKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "a\u{301}bc\ndef",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut editor = TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        editor
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        editor.store(&h.ctx, editor_id);
+        let ctx = h.ctx.clone();
+        {
+            let state = h.state_mut();
+            for format in [
+                CardTitleFormat::Strikethrough,
+                CardTitleFormat::Superscript,
+                CardTitleFormat::Bulleted,
+            ] {
+                assert!(
+                    MapCanvas::format_title_selection(&ctx, &state.doc, &mut state.view, format)
+                        .unwrap()
+                );
+            }
+            let rich = state.view.title_rich_formatting_draft().unwrap();
+            assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+            assert_eq!(rich.runs[0].style.strikethrough, Some(true));
+            assert_eq!(
+                rich.runs[0].style.baseline,
+                Some(InlineBaseline::Superscript)
+            );
+            assert_eq!(rich.paragraphs[0].list, ListKind::Bulleted);
+        }
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut restored = h.state().view.title_rich_formatting_draft().unwrap();
+        assert!(restored.paragraphs.is_empty());
+        assert_eq!(
+            restored.runs[0].style.baseline,
+            Some(InlineBaseline::Superscript)
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        restored = h.state().view.title_rich_formatting_draft().unwrap();
+        assert_eq!(restored.runs[0].style.baseline, None);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        restored = h.state().view.title_rich_formatting_draft().unwrap();
+        assert!(restored.is_empty());
+        assert_eq!(
+            h.state().doc.sheet().topic(id).unwrap().inline_text,
+            Default::default()
         );
     }
 

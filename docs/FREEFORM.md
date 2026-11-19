@@ -1937,10 +1937,13 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   programmatic view resets are not covered by this guarantee. IME updates
   received while the source is unavailable are not added to the draft.
 - Selected text in a formatted card title or a freshly opened plain title
-  supports Command/Ctrl+B, I and U with local undo/redo, using the card's
-  inherited style and whole-grapheme boundaries. Plain titles with active
-  text-edit history must be committed and reopened before formatting; caret
-  styles, discoverable controls and IME/platform acceptance remain open.
+  supports Command/Ctrl+B, I and U plus toolbar controls for strikethrough,
+  subscript/superscript and bulleted/numbered paragraphs. The controls use
+  grapheme-expanded ranges, show selected format state and write through
+  bounded local undo; whole-card style controls remain separate. Plain titles
+  with active plain-text edit history must be committed and reopened before
+  formatting. Inline font family/size/color, caret typing styles, other label
+  kinds, and real IME/accessibility acceptance remain open.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

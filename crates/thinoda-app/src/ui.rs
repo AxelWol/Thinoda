@@ -4,7 +4,7 @@ use egui::{
     Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense,
     TextEdit, Ui, vec2,
 };
-use thinoda_canvas::{Action, BoardTool, MapCanvas, MapView, ObjectSelection};
+use thinoda_canvas::{Action, BoardTool, CardTitleFormat, MapCanvas, MapView, ObjectSelection};
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
     CardKind, Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers,
@@ -3629,13 +3629,35 @@ impl ThinodaApp {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
             return false;
         }
-        let title_active = self
-            .doc()
-            .is_some_and(|doc| doc.view.editing_topic() == Some(target.topic));
-        let ime_active = title_active
-            && self
-                .doc()
-                .is_some_and(|doc| doc.view.title_ime_active(&ctx));
+        let doc = self.doc().unwrap();
+        let title_active = doc.view.editing_topic() == Some(target.topic);
+        let title_selection = title_active && MapCanvas::title_has_selection(&ctx);
+        let inline_formats = [
+            ("Inline bold", icons::BOLD, CardTitleFormat::Bold),
+            ("Inline italic", icons::ITALIC, CardTitleFormat::Italic),
+            (
+                "Inline underline",
+                icons::UNDERLINE,
+                CardTitleFormat::Underline,
+            ),
+            (
+                "Inline strikethrough",
+                icons::STRIKE,
+                CardTitleFormat::Strikethrough,
+            ),
+            ("Inline subscript", "x₂", CardTitleFormat::Subscript),
+            ("Inline superscript", "x²", CardTitleFormat::Superscript),
+            ("Inline bulleted list", "•", CardTitleFormat::Bulleted),
+            ("Inline numbered list", "1.", CardTitleFormat::Numbered),
+        ];
+        let inline_format_active = if title_selection {
+            inline_formats.map(|(_, _, format)| {
+                MapCanvas::title_format_is_active(&ctx, &doc.doc, &doc.view, format)
+            })
+        } else {
+            [false; 8]
+        };
+        let ime_active = title_active && doc.view.title_ime_active(&ctx);
         enabled &= !ime_active;
         let size_was_editing = ctx
             .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
@@ -3672,7 +3694,6 @@ impl ThinodaApp {
             return false;
         }
 
-        let doc = self.doc().unwrap();
         let sheet = doc.doc.sheet();
         let topic = sheet.topic(target.topic).unwrap();
         let style = topic.style.clone();
@@ -3687,6 +3708,7 @@ impl ThinodaApp {
             focus
         });
         let mut change = None;
+        let mut inline_format_change = None;
         let mut size_change = None;
         let mut close = false;
         let mut command = None;
@@ -3813,6 +3835,31 @@ impl ThinodaApp {
                                                 if activated {
                                                     change = Some(next);
                                                 }
+                                            }
+                                            if title_active {
+                                                widgets::vdivider(ui);
+                                                ui.label(
+                                                    RichText::new(t("Inline formatting")).small(),
+                                                );
+                                                ui.add_enabled_ui(
+                                                    title_selection && !ime_active,
+                                                    |ui| {
+                                                        for (index, (label, icon, format)) in
+                                                            inline_formats.into_iter().enumerate()
+                                                        {
+                                                            if card_text_owned_icon(
+                                                                ui,
+                                                                icon,
+                                                                t(label),
+                                                                inline_format_active[index],
+                                                                false,
+                                                                &mut owned_focus,
+                                                            ) {
+                                                                inline_format_change = Some(format);
+                                                            }
+                                                        }
+                                                    },
+                                                );
                                             }
                                             widgets::vdivider(ui);
                                             for (align, icon, label) in [
@@ -4038,7 +4085,8 @@ impl ThinodaApp {
         ctx.data_mut(|data| data.insert_temp(slot.with("owned_focus"), owned_focus.clone()));
         let focus = ctx.memory(|memory| memory.focused());
         let focused_in_companion = focus.is_some_and(|id| owned_focus.contains(&id));
-        let has_change = size_change.is_some() || change.is_some();
+        let has_change =
+            size_change.is_some() || change.is_some() || inline_format_change.is_some();
         let keyboard_finish = pointer_event.is_none()
             && ((size_was_editing && !size_is_editing && focus.is_none())
                 || (has_change && (focus.is_none() || (popup_was_open && !popup_open))));
@@ -4077,12 +4125,24 @@ impl ThinodaApp {
         }
         let mut updated_target = target.clone();
         let mut changed = false;
+        let mut inline_format_error = None;
+        if let Some(format) = inline_format_change
+            && let Some(doc) = self.doc_mut()
+        {
+            match MapCanvas::format_title_selection(&ctx, &doc.doc, &mut doc.view, format) {
+                Ok(applied) => changed |= applied,
+                Err(error) => inline_format_error = Some(error),
+            }
+        }
         for change in size_change.into_iter().chain(change) {
             let Some(updated) = self.apply_card_text_change(&updated_target, change) else {
                 break;
             };
             updated_target = updated;
             changed = true;
+        }
+        if let Some(error) = inline_format_error {
+            self.toasts.warning(error);
         }
         if close {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));

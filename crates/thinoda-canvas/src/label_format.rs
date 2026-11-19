@@ -577,7 +577,7 @@ fn paragraphs(text: &str, range: &Range<usize>) -> Range<usize> {
     first..last + 1
 }
 
-pub(super) fn active(
+pub(in crate::view) fn active(
     rich: &InlineText,
     text: &str,
     range: Range<usize>,

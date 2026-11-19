@@ -3497,6 +3497,53 @@ fn formatted_card_selection_shortcut_changes_only_selected_text() {
 }
 
 #[test]
+fn formatted_card_toolbar_applies_inline_run_and_list_formats_to_selection() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(3);
+    let editor_id = MapCanvas::title_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(4),
+            egui::text::CCursor::new(0),
+        )));
+    state.store(&h.ctx, editor_id);
+    assert!(MapCanvas::title_has_selection(&h.ctx));
+    scroll_and_click(&mut h, Role::Button, "Inline superscript");
+    let draft = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    assert_eq!(
+        draft.runs[0].style.baseline,
+        Some(thinoda_core::InlineBaseline::Superscript)
+    );
+    scroll_and_click(&mut h, Role::Button, "Inline bulleted list");
+    let draft = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    assert_eq!(draft.paragraphs[0].list, thinoda_core::ListKind::Bulleted);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let topic = h.state().doc().unwrap().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.inline_text, draft);
+}
+
+#[test]
 fn last_title_keystroke_and_window_close_in_one_frame_preserve_the_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fast-window-close.thinoda");

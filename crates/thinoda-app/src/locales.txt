@@ -488,6 +488,15 @@ Copies Markdown text without formatting or link/image destinations. The saved no
 Italic notes|Notas en cursiva|Notes en italique|Kursiv notetekst|Notities cursief|Notas em itálico|Note in corsivo|Kursywa notatek
 Bulleted list|Lista con viñetas|Liste à puces|Punktopstilling|Opsomming|Lista com marcas|Elenco puntato|Lista punktowana
 Numbered list|Lista numerada|Liste numérotée|Nummereret liste|Genummerde lijst|Lista numerada|Elenco numerato|Lista numerowana
+Inline formatting|Formato en línea|Mise en forme en ligne|Inlineformatering|Inline-opmaak|Formatação em linha|Formattazione in linea|Formatowanie znaków
+Inline bold|Negrita en línea|Gras en ligne|Fed inline|Vet inline|Negrito em linha|Grassetto in linea|Pogrubienie tekstu
+Inline italic|Cursiva en línea|Italique en ligne|Kursiv inline|Cursief inline|Itálico em linha|Corsivo in linea|Kursywa tekstu
+Inline underline|Subrayado en línea|Soulignement en ligne|Understregning inline|Onderstrepen inline|Sublinhado em linha|Sottolineato in linea|Podkreślenie tekstu
+Inline strikethrough|Tachado en línea|Barré en ligne|Gennemstreget inline|Doorhalen inline|Tachado em linha|Barrato in linea|Przekreślenie tekstu
+Inline subscript|Subíndice en línea|Indice en ligne|Sænket skrift inline|Subscript inline|Subscrito em linha|Pedice in linea|Indeks dolny tekstu
+Inline superscript|Superíndice en línea|Exposant en ligne|Hævet skrift inline|Superscript inline|Sobrescrito em linha|Apice in linea|Indeks górny tekstu
+Inline bulleted list|Lista con viñetas en línea|Liste à puces en ligne|Punktopstilling inline|Opsomming inline|Lista com marcas em linha|Elenco puntato in linea|Lista punktowana tekstu
+Inline numbered list|Lista numerada en línea|Liste numérotée en ligne|Nummereret liste inline|Genummerde lijst inline|Lista numerada em linha|Elenco numerato in linea|Lista numerowana tekstu
 Subscript|Subíndice|Indice|Sænket skrift|Subscript|Subscrito|Pedice|Indeks dolny
 Superscript|Superíndice|Exposant|Hævet skrift|Superscript|Sobrescrito|Apice|Indeks górny
 Label formatting (F6)|Formato de etiqueta (F6)|Mise en forme du libellé (F6)|Formatér etiket (F6)|Labelopmaak (F6)|Formatar rótulo (F6)|Formato etichetta (F6)|Formatowanie etykiety (F6)

@@ -284,6 +284,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Order eligible text, IME and title-targeted accessibility replacement around a single editor press; preserve ordered Tab transitions to new topics
   - [x] Retain a dirty formatted card-title draft when its source disappears; allow cancellation or restoration and reject recovery against the missing source
   - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
+  - [x] Add selection toolbar controls for strikethrough, subscript, superscript, bullets and numbering on card titles, with grapheme-safe ranges and local undo
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -326,6 +327,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D9 card-title selection formatting (partial) | The active card-title toolbar applies strikethrough, subscript/superscript and bulleted/numbered paragraphs to selected text. Selection state is grapheme-aware, whole-card styling remains distinct, and each action participates in bounded local undo. Inline font family/size/color, caret formatting, Office visual parity and real input acceptance remain open. |
 | 2026-11-18 | D9 accessible outside-click ordering (partial) | A synthetic SetValue before an outside click commits with the label; a request after the click does not modify the old label. Other pointer and assistive-technology paths remain open. |
 | 2026-11-18 | D9 ignored text input (partial) | Empty text/paste and standalone newline text events no longer expand a partial grapheme selection or move an interior caret when egui ignores the input. |
 | 2026-11-18 | D9 accessible toolbar ordering (partial) | Eligible SetValue batches beginning with toolbar focus preserve the new caret and process subsequent focus and formatting actions in order. Other unfocused controls, pointer/IME batches and physical accessibility clients remain open. |
@@ -815,17 +817,25 @@ undo/redo groups IME composition. Commits use the atomic rich card-title edit;
 recovery snapshots validate document ownership and the original title and
 formatting before preserving the draft. Existing unformatted title editing is
 unchanged. Focused native tests cover repeated text, style/list preservation,
-commit and undo. Real IME/accessibility acceptance and broader rich-title
-formatting controls remain open; this does not complete D9.
+commit and undo. Selected title text also has toolbar controls for
+strikethrough, subscript/superscript and bullet/number lists, alongside
+bold/italic/underline shortcuts. These use grapheme-expanded ranges and
+bounded local undo, and expose selected formatting state. Plain titles with
+active text-edit history must be committed and reopened before inline
+formatting. Inline font family/size/color, caret styles, other label kinds,
+unsupported HTML preservation, Office parity and real IME/accessibility
+acceptance remain open; D9 is not complete.
 
-**D9 card selection shortcuts (partial).** Command/Ctrl+B, I and U toggle
+**D9 card selection formatting (partial).** Command/Ctrl+B, I and U toggle
 bold, italic and underline for selected text in a formatted card title or a
-freshly opened plain title. Grapheme boundaries and inherited card styling
-are respected, and the change participates in draft and document undo.
-Duck check: caret typing styles and discoverable run-formatting controls are
-not yet implemented. A plain title with active text-edit history must be
-committed and reopened before applying a shortcut, so its existing undo history
-is not silently discarded. Formatting is refused during IME composition.
+freshly opened plain title. The active card-text toolbar now exposes
+strikethrough, sub/superscript and bullet/number list controls, with selected
+format state. Grapheme boundaries and inherited card styling are respected;
+each operation uses local undo and commits atomically with the title. Duck
+check: inline font family/size/color, caret typing styles and IME/platform
+acceptance remain open. A plain title with active text-edit history must be
+committed and reopened before formatting, so its existing undo history is not
+silently discarded. Formatting is refused during IME composition.
 
 **D9 formatted-card safety follow-up.** Deleting all or part of a formatted
 title no longer indexes stale run boundaries during intermediate layouts;
