@@ -11688,6 +11688,61 @@ fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip()
 }
 
 #[test]
+fn drawio_unrepresented_container_metadata_is_reported() {
+    for (style, children) in [
+        ("swimlane;", ""),
+        (
+            "group;",
+            r#"<mxCell id="child-a" vertex="1" parent="container"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="child-b" vertex="1" parent="container"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell>"#,
+        ),
+    ] {
+        let document = |attributes: &str| {
+            page(&format!(
+                r#"<UserObject id="container" label="Container" {attributes}><mxCell style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject>{children}"#
+            ))
+        };
+        assert!(
+            !load(&document("")).warnings.contains(&ImportWarning::Other),
+            "{style}"
+        );
+        for attribute in [
+            r#"link="https://example.com""#,
+            r#"tooltip="Important details""#,
+            r#"placeholders="1""#,
+        ] {
+            assert!(
+                load(&document(attribute))
+                    .warnings
+                    .contains(&ImportWarning::Other),
+                "{style}: {attribute}"
+            );
+        }
+    }
+
+    let card = page(
+        r#"<UserObject id="card" label="Card" link="https://example.com"><mxCell style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></UserObject>"#,
+    );
+    let report = load(&card);
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(
+        report
+            .workbook
+            .active()
+            .topics
+            .values()
+            .find(|topic| topic.card.is_some())
+            .unwrap()
+            .hyperlink
+            .as_deref(),
+        Some("https://example.com")
+    );
+    let object = page(
+        r#"<UserObject id="object" label="Object" link="https://example.com" tooltip="Details" placeholders="1"><mxCell vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></UserObject>"#,
+    );
+    assert!(!load(&object).warnings.contains(&ImportWarning::Other));
+}
+
+#[test]
 fn drawio_zone_source_id_survives_native_and_drawio_round_trips() {
     let xml = page(concat!(
         r#"<mxCell id="source-zone" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="300" height="200" as="geometry"/></mxCell>"#,

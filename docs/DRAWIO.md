@@ -301,6 +301,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Report ignored cell and geometry attributes, children, duplicate geometry parts and unsupported flags rather than silently discarding them
 - [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
+- [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
@@ -343,6 +344,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 container metadata diagnostics | Links, tooltips and enabled placeholder metadata on non-object containers are disclosed before conversion; supported card and object links remain intact. |
 | 2026-11-19 | D10 zone source identity | Imported zones retain source IDs through native, draw.io, XMind and recovery; copies clear ownership and deleted IDs remain reserved within the page budget. |
 | 2026-11-19 | D10 scene-container tombstones | Imported scene containers and represented table cells retain bounded source-ID tombstones, preventing generated IDs from reusing them after deletion. |
 | 2026-11-19 | D10 Sankey ID remapping | Sankey nodes and edges avoid source collisions while version 2 extensions retain flows, settings and inactive stage metadata, including in editable images. |
@@ -1227,6 +1229,12 @@ member parent references, falling back to a fresh ID for conflicts. Duck check:
 page-budget omissions warn and may leave deleted IDs unprotected; topic, group,
 table-row and unrepresented-cell ownership still need work. Unknown zone XML is
 not yet preserved. In-place save remains disabled.
+
+**D10 container metadata diagnostics (partial).** The importer now warns when
+non-object cells discard links, tooltips or enabled placeholder metadata.
+Card links and object data remain supported. Duck check: this detects the loss
+rather than preserving the metadata; unknown container XML and complete loss
+preflight still block in-place save.
 
 ## 5. Rubber-duck findings
 

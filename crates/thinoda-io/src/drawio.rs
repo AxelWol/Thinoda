@@ -5509,14 +5509,17 @@ fn import_page(
     import.run();
     if import.cells.iter().enumerate().any(|(i, cell)| {
         !import.passthrough_cells.contains(&i)
-            && cell
-                .attributes
-                .iter()
-                .any(|(name, _)| !matches!(name.as_str(), "link" | "placeholders"))
+            && (cell.tooltip.is_some()
+                || cell
+                    .attributes
+                    .iter()
+                    .any(|(name, value)| match name.as_str() {
+                        "link" => !matches!(import.items.get(&i), Some(Item::Card(_))),
+                        "placeholders" => value != "0",
+                        _ => true,
+                    }))
     }) {
-        // Only canvas objects keep unknown attributes; topics and cards drop
-        // them. Their `link` becomes the hyperlink, and placeholders are
-        // reported below.
+        // Cards keep links, but other non-object cells lose them and tooltips.
         import.warn(ImportWarning::Other);
     }
     if import.cells.iter().enumerate().any(|(i, cell)| {
