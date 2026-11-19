@@ -1924,10 +1924,12 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   consuming later input; a rejected stale-source commit retains the draft.
   The app's native/web input splitter orders title input before host controls;
   synthetic formatted-title close-tab cases cover text and IME, not all host
-  actions. In-editor pointer batches and other accessibility targets still
-  need ordering parity. Single-event typing, deletion, cut, accessible
-  selected-text replacement and initial IME input share the shape-label
-  editor's grapheme-boundary rules.
+  actions. Eligible text, IME and title-targeted accessibility replacement
+  around one editor press now follow event order; Tab transitions preserve
+  subsequent input, with a 32-transition batch limit. Multiple presses and
+  other accessibility targets still need ordering parity. Single-event typing,
+  deletion, cut, accessible selected-text replacement and initial IME input
+  share the shape-label editor's grapheme-boundary rules.
 - A dirty formatted draft survives deletion or loss of its layout source.
   The view warns once, refuses to replace it with a new title edit, and allows
   cancellation or continuation after the source is restored. Recovery rejects

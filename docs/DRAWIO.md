@@ -281,6 +281,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
   - [x] Cover an AccessKit whole-value request before and after an outside click
   - [x] Apply eligible formatted card-title input before an outside canvas click, retaining subsequent input and rejected stale drafts
+  - [x] Order eligible text, IME and title-targeted accessibility replacement around a single editor press; preserve ordered Tab transitions to new topics
   - [x] Retain a dirty formatted card-title draft when its source disappears; allow cancellation or restoration and reject recovery against the missing source
   - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
@@ -839,9 +840,10 @@ processed event by event before the visible editor pass. IME candidate keys
 are protected, undo/redo during composition is refused, and a completed
 composition is one local undo step. Synthetic tests cover mixed input,
 undo-before-typing and accessible replacement around a partial grapheme
-selection. Before an outside canvas press, eligible preceding input is applied
-in order before pointer handling can commit the title. Synthetic cases cover
-batched text, IME candidates, an earlier Enter and stale-source rejection.
+selection. Eligible input before a canvas press is applied before pointer
+handling; for a single editor press, text, IME and title-targeted accessibility
+input after the press uses the clicked caret. Tab transitions to new topics
+keep subsequent input in order, including before an outside canvas press.
 Separate ordinary text events create separate local undo steps.
 
 **D9 card graphemes (partial).** Single-event text/paste, line-break,
@@ -853,10 +855,11 @@ an empty accessible replacement, caret snapping and initial IME insertion.
 Duck check: this outside-click protection runs at the canvas boundary. The
 app's existing native/web raw-input splitter separately orders title input
 before host controls; synthetic formatted-title text and IME tests now cover
-the close-tab path, not every host action. In-editor pointer batches and other
-accessibility targets still lack ordered parity, and input after a rejected
-commit needs broader acceptance testing. Full grapheme parity and real-platform
-IME, screen-reader and visual acceptance remain open.
+the close-tab path, not every host action. Multi-press batches, other
+accessibility targets, and input after a rejected commit still need broader
+coverage. Title transitions are capped at 32 per input batch with an error.
+Full grapheme parity and real-platform IME, screen-reader and visual acceptance
+remain open.
 
 **D9 unavailable card source (partial).** A dirty formatted title draft is no
 longer discarded when its card is deleted or becomes unavailable to layout.

@@ -1959,7 +1959,7 @@ impl MapCanvas {
         if let Some(r) = view.pending_reveal.take() {
             view.do_reveal(doc.sheet(), &layout, r);
         }
-        let scene = build_scene(doc.sheet(), &layout);
+        let mut scene = build_scene(doc.sheet(), &layout);
         if matches!(view.drag, Drag::None)
             && !view.board_input.is_active()
             && let Some(id) = view.pending_board_reveal.take()
@@ -1970,7 +1970,33 @@ impl MapCanvas {
         let minimap_rect = view.minimap_rect(rect, ui.clip_rect());
         if ctx.input(|input| input.pointer.any_pressed()) {
             if ui.is_enabled() {
-                process_title_input_before_pointer_press(ui, doc, view, &layout, &mut out);
+                let mut transitions = 0;
+                loop {
+                    let serial = view.title_edit_serial();
+                    process_title_input_before_pointer_press(
+                        ui,
+                        doc,
+                        view,
+                        &layout,
+                        &mut out,
+                        transitions > 0,
+                    );
+                    if view.title_edit_serial() == serial {
+                        break;
+                    }
+                    layout = view.layout_with(&ctx, doc);
+                    scene = build_scene(doc.sheet(), &layout);
+                    if view.editing.is_none() {
+                        break;
+                    }
+                    transitions += 1;
+                    if transitions >= 32 {
+                        view.title_error =
+                            Some("Too many title transitions in one input batch".into());
+                        break;
+                    }
+                    initialize_title_editor(ui, doc, view, &layout, &mut out);
+                }
             }
             let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(&ctx) {
                 minimap_rect
@@ -3230,21 +3256,18 @@ fn process_title_input_before_pointer_press(
     view: &mut MapView,
     layout: &Layout,
     out: &mut CanvasOutput,
+    allow_plain: bool,
 ) {
     let edit_id = MapCanvas::title_editor_id();
     let Some(edit) = &view.editing else {
         return;
     };
-    if edit.rich_history.is_none() && edit.original_inline_text.is_empty() {
+    if !allow_plain && edit.rich_history.is_none() && edit.original_inline_text.is_empty() {
         return;
     }
-    let Some(topic_layout) = layout.topics.get(&edit.topic) else {
+    if !layout.topics.contains_key(&edit.topic) {
         return;
-    };
-    let rect = view
-        .xf()
-        .rect(topic_editor_rect(doc.sheet(), topic_layout))
-        .expand(2.0);
+    }
     if !ui.memory(|memory| {
         memory.has_focus(edit_id)
             || (memory.focused().is_none() && memory.had_focus_last_frame(edit_id))
@@ -3259,13 +3282,9 @@ fn process_title_input_before_pointer_press(
             .events
             .iter()
             .position(|event| matches!(event, egui::Event::PointerButton { pressed: true, .. }))?;
-        let egui::Event::PointerButton { pos, .. } = &input.events[index] else {
-            return None;
-        };
-        if rect.contains(*pos)
-            || !input.events[..index]
-                .iter()
-                .any(|event| card_title_input_event(event, edit_id))
+        if !input.events[..index]
+            .iter()
+            .any(|event| card_title_input_event(event, edit_id))
         {
             return None;
         }
@@ -3292,6 +3311,7 @@ fn process_title_input_before_pointer_press(
     }
     let prefix = ui.input_mut(|input| std::mem::take(&mut input.events));
     let mut processed = vec![false; prefix.len()];
+    let serial = view.title_edit_serial();
     for (index, event) in prefix.iter().enumerate() {
         if !card_title_input_event(event, edit_id) {
             continue;
@@ -3309,7 +3329,7 @@ fn process_title_input_before_pointer_press(
         child.set_clip_rect(Rect::NOTHING);
         show_editor_pass(&mut child, doc, view, layout, out);
         processed[index] = true;
-        if view.editing.is_none() {
+        if view.title_edit_serial() != serial {
             break;
         }
     }
@@ -3329,6 +3349,37 @@ fn process_title_input_before_pointer_press(
         } else {
             memory.surrender_focus(edit_id);
         }
+    });
+}
+
+fn initialize_title_editor(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    out: &mut CanvasOutput,
+) {
+    let edit_id = MapCanvas::title_editor_id();
+    let (events, pointer) = ui.input_mut(|input| {
+        (
+            std::mem::take(&mut input.events),
+            std::mem::take(&mut input.pointer),
+        )
+    });
+    let mut child = Ui::new(
+        ui.ctx().clone(),
+        edit_id.with("next-editor-init"),
+        egui::UiBuilder::new()
+            .layer_id(ui.layer_id())
+            .max_rect(ui.max_rect())
+            .layout(*ui.layout())
+            .style(ui.style().clone()),
+    );
+    child.set_clip_rect(Rect::NOTHING);
+    show_editor_pass(&mut child, doc, view, layout, out);
+    ui.input_mut(|input| {
+        input.events = events;
+        input.pointer = pointer;
     });
 }
 
@@ -3368,11 +3419,114 @@ fn show_editor(
     layout: &Layout,
     out: &mut CanvasOutput,
 ) {
+    show_editor_ordered(ui, doc, view, layout, out, 0);
+}
+
+fn show_editor_ordered(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    out: &mut CanvasOutput,
+    transitions: usize,
+) {
     let edit_id = MapCanvas::title_editor_id();
+    let editor_press = view.editing.as_ref().and_then(|edit| {
+        if !ui.is_enabled()
+            || out.minimap_blocks_keyboard
+            || (edit.rich_history.is_none() && edit.original_inline_text.is_empty())
+        {
+            return None;
+        }
+        let topic = layout.topics.get(&edit.topic)?;
+        let rect = view
+            .xf()
+            .rect(topic_editor_rect(doc.sheet(), topic))
+            .expand(2.0);
+        ui.input(|input| {
+            if !input.focused
+                || input
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event, egui::Event::PointerButton { pressed: true, .. }))
+                    .count()
+                    != 1
+            {
+                return None;
+            }
+            let index = input.events.iter().position(|event| {
+                matches!(event, egui::Event::PointerButton { pressed: true, .. })
+            })?;
+            if !matches!(&input.events[index], egui::Event::PointerButton { pos, .. } if rect.contains(*pos)) {
+                return None;
+            }
+            input.events[index + 1..]
+                .iter()
+                .any(|event| card_title_input_event(event, edit_id))
+                .then_some(index)
+        })
+    });
+    if let Some(editor_press) = editor_press {
+        let events = ui.input_mut(|input| {
+            let events = std::mem::take(&mut input.events);
+            input.events = events
+                .iter()
+                .filter(|event| !card_title_input_event(event, edit_id))
+                .cloned()
+                .collect();
+            events
+        });
+        let serial = view.title_edit_serial();
+        let mut child = Ui::new(
+            ui.ctx().clone(),
+            edit_id.with("editor-press"),
+            egui::UiBuilder::new()
+                .layer_id(ui.layer_id())
+                .max_rect(ui.max_rect())
+                .layout(*ui.layout())
+                .style(ui.style().clone()),
+        );
+        child.set_clip_rect(ui.clip_rect());
+        child.set_opacity(0.0);
+        show_editor_pass(&mut child, doc, view, layout, out);
+        let pointer = ui.input_mut(|input| {
+            input.events = events
+                .iter()
+                .skip(editor_press)
+                .filter(|event| !matches!(event, egui::Event::PointerButton { .. }))
+                .cloned()
+                .collect();
+            std::mem::take(&mut input.pointer)
+        });
+        if view.title_edit_serial() == serial {
+            show_editor_ordered(ui, doc, view, layout, out, transitions);
+        }
+        ui.input_mut(|input| {
+            let mut remaining = std::mem::take(&mut input.events).into_iter().peekable();
+            for (index, event) in events.into_iter().enumerate() {
+                if index < editor_press {
+                    input.events.push(event);
+                    continue;
+                }
+                if matches!(event, egui::Event::PointerButton { .. }) {
+                    input.events.push(event);
+                } else if remaining.peek() == Some(&event) {
+                    input.events.extend(remaining.next());
+                }
+            }
+            input.events.extend(remaining);
+            input.pointer = pointer;
+        });
+        if view.title_edit_serial() != serial {
+            ui.ctx().request_repaint();
+        }
+        return;
+    }
     let split_input = !out.minimap_blocks_keyboard
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.editing.as_ref().is_some_and(|edit| {
-            edit.rich_history.is_some()
+            transitions > 0
+                || edit.rich_history.is_some()
                 || !edit.original_inline_text.is_empty()
                 || (doc.sheet().topic(edit.topic).is_some_and(|topic| {
                     matches!(
@@ -3421,6 +3575,7 @@ fn show_editor(
             )
         });
         let mut processed = vec![false; events.len()];
+        let serial = view.title_edit_serial();
         for (index, event) in events.iter().enumerate() {
             if !board_input::label_keyboard_event(event)
                 && card_title_accessible_value(event, edit_id).is_none()
@@ -3440,7 +3595,7 @@ fn show_editor(
             child.set_clip_rect(Rect::NOTHING);
             show_editor_pass(&mut child, doc, view, layout, out);
             processed[index] = true;
-            if view.editing.is_none() {
+            if view.title_edit_serial() != serial {
                 break;
             }
         }
@@ -3452,6 +3607,19 @@ fn show_editor(
                 .filter_map(|(index, event)| (!processed[index]).then_some(event))
                 .collect();
         });
+        if view.title_edit_serial() != serial {
+            if view.editing.is_some() {
+                if transitions >= 31 {
+                    view.title_error = Some("Too many title transitions in one input batch".into());
+                    return;
+                }
+                let new_layout = view.layout_with(ui.ctx(), doc);
+                initialize_title_editor(ui, doc, view, &new_layout, out);
+                show_editor_ordered(ui, doc, view, &new_layout, out, transitions + 1);
+            }
+            ui.ctx().request_repaint();
+            return;
+        }
     }
     show_editor_pass(ui, doc, view, layout, out);
 }
@@ -4986,6 +5154,250 @@ mod tests {
                 assert_eq!(topic.title, expected);
                 assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
                 assert_eq!(h.state().view.editing_topic(), None);
+            }
+        }
+    }
+
+    #[test]
+    fn formatted_card_input_around_editor_click_follows_event_order() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let run = |batched: bool, mode: u8| {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic
+                .inline_text
+                .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            let editor = h.get_by_label("Topic title").rect();
+            let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+            h.input_mut().events.push(egui::Event::Text("X".into()));
+            if !batched {
+                h.run_steps(1);
+            }
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(position));
+            for pressed in [true, false] {
+                h.input_mut().events.push(egui::Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            if !batched {
+                h.run_steps(1);
+            }
+            if mode == 1 {
+                h.input_mut().events.extend([
+                    egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: "n".into(),
+                        active_range_chars: None,
+                    }),
+                    egui::Event::Ime(egui::ImeEvent::Commit("Y".into())),
+                ]);
+            } else if mode == 2 {
+                h.input_mut()
+                    .events
+                    .push(egui::Event::AccessKitActionRequest(
+                        egui::accesskit::ActionRequest {
+                            action: egui::accesskit::Action::ReplaceSelectedText,
+                            target_node: MapCanvas::title_editor_id().accesskit_id(),
+                            target_tree: egui::accesskit::TreeId::ROOT,
+                            data: Some(egui::accesskit::ActionData::Value("Y".into())),
+                        },
+                    ));
+            } else {
+                h.input_mut().events.push(egui::Event::Text("Y".into()));
+            }
+            h.run_steps(2);
+            (
+                h.state().view.editing_text().unwrap().to_owned(),
+                h.state().view.title_rich_formatting_draft().unwrap(),
+            )
+        };
+        for mode in 0..3 {
+            let separate = run(false, mode);
+            assert_eq!(separate.0, "aYbX");
+            assert_eq!(run(true, mode), separate);
+        }
+    }
+
+    #[test]
+    fn formatted_card_tab_does_not_drop_the_new_child_draft() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        for click in [false, true] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic
+                .inline_text
+                .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.select_only(id);
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            h.input_mut().events.extend([
+                egui::Event::Text("X".into()),
+                egui::Event::Key {
+                    key: Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::Text("Y".into()),
+            ]);
+            if click {
+                let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+                h.input_mut().events.extend([
+                    egui::Event::PointerMoved(outside),
+                    egui::Event::PointerButton {
+                        pos: outside,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: outside,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+            }
+            h.run_steps(1);
+            let state = h.state();
+            assert_eq!(state.doc.sheet().topic(id).unwrap().title, "abX");
+            let child = state.doc.sheet().children(id)[0];
+            assert_ne!(child, id);
+            if click {
+                assert_eq!(state.doc.sheet().topic(child).unwrap().title, "Y");
+            } else {
+                assert_eq!(state.view.editing_topic(), Some(child));
+                assert_eq!(state.view.editing_text(), Some("Y"));
+            }
+        }
+    }
+
+    #[test]
+    fn formatted_card_multiple_tab_transitions_keep_text_in_order() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        for click in [false, true] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic
+                .inline_text
+                .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.select_only(id);
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            for event in [
+                egui::Event::Text("X".into()),
+                egui::Event::Key {
+                    key: Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::Text("Y".into()),
+                egui::Event::Key {
+                    key: Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::Text("Z".into()),
+            ] {
+                h.input_mut().events.push(event);
+            }
+            if click {
+                let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+                h.input_mut().events.extend([
+                    egui::Event::PointerMoved(outside),
+                    egui::Event::PointerButton {
+                        pos: outside,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: outside,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+            }
+            h.run_steps(1);
+            let state = h.state();
+            let child = state.doc.sheet().children(id)[0];
+            let grandchild = state.doc.sheet().children(child)[0];
+            assert_eq!(state.doc.sheet().topic(id).unwrap().title, "abX");
+            assert_eq!(state.doc.sheet().topic(child).unwrap().title, "Y");
+            if click {
+                assert_eq!(state.doc.sheet().topic(grandchild).unwrap().title, "Z");
+            } else {
+                assert_eq!(state.view.editing_topic(), Some(grandchild));
+                assert_eq!(state.view.editing_text(), Some("Z"));
             }
         }
     }
