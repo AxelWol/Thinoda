@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 08:10:37 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 08:55:27 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind ecosystem research, gap analysis and phase plan
 
@@ -216,7 +216,8 @@ Fatal (the whole import fails):
 
 - unsafe or duplicate archive paths;
 - too many entries, oversized entries, entries declared in the manifest but missing;
-- ZIP or JSON syntax errors in `content.json`, `metadata.json` or `manifest.json`;
+- ZIP or JSON syntax errors in `content.json` or `manifest.json` (an invalid
+  `metadata.json` is only Thinoda's sidecar: it is ignored and the public content is read);
 - image or resource byte/count budgets exceeded, counting unused resources too
   (unused resources are size-checked but never decoded);
 - a protected (versioned) private snapshot that fails validation;
@@ -269,7 +270,7 @@ branch for per-phase critiques.
 
 | Phase | Status |
 |---|---|
-| X1 | Planned |
+| X1 | Done. `xmind::import_with_report` reports categorized warnings; the manifest is optional and the archive is the inventory; encrypted packages fail with a dedicated message; callouts and nested detached topics become floating topics linked by a relationship (callouts stacked right of their owner, detached positions kept relative to the owner); notes fall back to visible HTML/delta text; lossy XMind opens never keep a writable path. Lossy XMind files cannot be merged (merge uses the strict import). |
 | X2 | Planned |
 | X3 | Planned |
 | X4 | Planned |

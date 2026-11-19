@@ -544,10 +544,17 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
         Format::FreeMind => formats::freemind_import_with_report(bytes)?,
         Format::DrawIo | Format::DrawIoSvg | Format::DrawIoPng => drawio::import(bytes)?,
         Format::DrawIoHtml => drawio::import_html(bytes)?,
+        Format::XMind => {
+            let (workbook, warnings) = xmind::import_with_report(bytes)?;
+            ImportReport {
+                format,
+                workbook,
+                warnings,
+            }
+        }
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
-                Format::XMind => xmind::import(bytes)?,
                 Format::Opml => formats::opml_import(bytes)?,
                 Format::Markdown => formats::markdown_import(bytes)?,
                 Format::PlainText => formats::text_import(bytes)?,

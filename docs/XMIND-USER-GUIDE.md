@@ -1,4 +1,4 @@
-_Last updated: 2026-11-04 05:03:38 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 08:55:27 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind user guide digest (verification checklist)
 
@@ -73,9 +73,10 @@ documents/macros/scripts are never interpreted or executed. This is safe saving,
 not XMind's click-to-open/system-default-app behavior or attachment preview parity.
 All ten locales and Light/Dark/System share the same commands and inspector.
 Native v3/recovery/clipboard/undo retain attachments; other exports explicitly
-refuse them. Thinoda rejects XMind attachment topics because their package
-schema has not been verified; image-only XMind support does not imply
-attachment interoperability or installed-app compatibility (XV4 partial).
+refuse them. XMind attachment topics open through the lossy-import consent
+dialog (Resources); their payloads are not imported yet. Image-only XMind
+support does not imply attachment interoperability or installed-app
+compatibility (XV4 partial).
 
 ## Audio Note
 - Desktop: select a topic > Insert > Audio Note; recording requires an enabled microphone. Select the audio-note child to play it; right-click > Save As exports it.
@@ -385,10 +386,25 @@ ignored rather than imported or preserved on export. Their payloads are not
 decoded or executed. Manifest entries still require safe relative paths,
 object metadata, and a matching archive entry. All ZIP entries retain path,
 duplicate-name, and per-entry size checks; packages allow at most 1,024 entries,
-independently of the unchanged 128 embedded-image limit. Image references and
-`resources/*` entries still undergo strict declaration, usage, and decode
-validation; this does not add attachment support or claim general desktop
-interoperability.
+independently of the unchanged 128 embedded-image limit. Every `resources/*`
+entry still counts towards the byte and count budgets, even when unused.
+
+**Opening maps with unsupported content (X1):** XMind files that contain
+content Thinoda cannot represent open through the same consent dialog as other
+lossy imports. The dialog lists the affected categories: Formatting (for
+example bold or italic runs inside a title, or unusable picture sizes),
+Resources (external, missing, undecodable or unused pictures, attachments and
+note images), Notes (HTML or formatted notes; their visible text is kept),
+Markers (unknown markers and task progress), Links (`xmind:#` topic links,
+kept as text), and Other (callouts, comments, zones, unknown child
+collections, and relationships or summaries whose target is missing).
+Callouts, and detached topics placed under a non-central topic, become
+floating topics joined to their owner by a relationship. After you accept,
+the map opens as an import: Save asks for a new file name, so the original
+XMind file is never overwritten with less content. Maps without such content
+still open in place. Password-protected XMind files are refused with a message
+asking you to remove the password in XMind first. This is reported loss, not
+attachment support or a claim of general desktop interoperability.
 
 ## Pitch Mode
 - Enter with the Pitch Mode toolbar button; full-screen, windowed, and Presenter View modes are documented. Presenter View shows the presentation alongside the map.

@@ -1,4 +1,4 @@
-use crate::{IoError, zip_entry};
+use crate::{ImportWarning, IoError, zip_entry};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -59,9 +59,29 @@ const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
 
 type PackageResources = HashMap<String, Resource>;
 
+const ENCRYPTED_PACKAGE_ERROR: &str = "This XMind file is password-protected. Remove the password in XMind, save the map again, and then import it.";
+
 struct TopicImportContext<'a> {
     resources: &'a PackageResources,
     theme: &'a Value,
+    warnings: std::cell::RefCell<BTreeSet<ImportWarning>>,
+    /// Callouts and nested detached topics: (owner, floating topic, offset from the owner).
+    floating_links: std::cell::RefCell<Vec<(TopicId, TopicId, Option<Vec2>)>>,
+}
+
+impl TopicImportContext<'_> {
+    fn warn(&self, warning: ImportWarning) {
+        self.warnings.borrow_mut().insert(warning);
+    }
+}
+
+/// `Ok(None)` for picture sources outside the package (reported, never fetched).
+/// Unsafe package references stay fatal.
+fn image_reference(src: &str) -> Result<Option<String>, IoError> {
+    if !src.starts_with("xap:resources/") {
+        return Ok(None);
+    }
+    image_component(src).map(|(_, path)| Some(path))
 }
 
 fn image_component(src: &str) -> Result<(&str, String), IoError> {
@@ -90,39 +110,49 @@ struct ImageAttributes {
     below: bool,
 }
 
-fn image_dimensions(image: &Value) -> Result<ImageAttributes, IoError> {
-    let src = image
-        .get("src")
-        .and_then(Value::as_str)
-        .ok_or_else(|| IoError::Invalid("XMind image is missing a string src".into()))?;
-    let dimension = |name| -> Result<Option<f32>, IoError> {
-        let Some(value) = image.get(name) else {
-            return Ok(None);
-        };
-        let number = value.as_f64().filter(|number| {
-            number.is_finite() && *number > 0.0 && *number <= f64::from(images::MAX_DISPLAY_SIZE)
-        });
-        number
-            .map(|number| Some(number as f32))
-            .ok_or_else(|| IoError::Invalid(format!("invalid XMind image {name}")))
-    };
-    let below = match image.get("align") {
-        None => false,
-        Some(Value::String(align)) if align == "top" => false,
-        Some(Value::String(align)) if align == "bottom" => true,
-        Some(Value::String(_)) => {
-            return Err(IoError::Invalid(
-                "unsupported XMind image alignment; expected top or bottom".into(),
-            ));
+/// Reads picture attributes. Invalid presentation values are reported and replaced
+/// by defaults; a missing source is reported by the resource inventory.
+fn image_attributes(image: &Value, context: &TopicImportContext<'_>) -> Option<ImageAttributes> {
+    let src = image.get("src").and_then(Value::as_str)?;
+    let dimension = |name| -> Option<f32> {
+        let value = image.get(name).filter(|value| !value.is_null())?;
+        let number = value
+            .as_f64()
+            .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+            .map(|number| number as f32)
+            .filter(|number| number.is_finite() && *number > 0.0);
+        if number.is_none() {
+            context.warn(ImportWarning::Formatting);
         }
-        Some(_) => return Err(IoError::Invalid("invalid XMind image alignment".into())),
+        number
     };
-    Ok(ImageAttributes {
+    let below = match image.get("align").and_then(Value::as_str) {
+        None if image.get("align").is_none_or(Value::is_null) => false,
+        Some("top") => false,
+        Some("bottom") => true,
+        _ => {
+            context.warn(ImportWarning::Formatting);
+            false
+        }
+    };
+    Some(ImageAttributes {
         src: src.to_owned(),
-        width: dimension("width")?,
-        height: dimension("height")?,
+        width: dimension("width"),
+        height: dimension("height"),
         below,
     })
+}
+
+/// Proportionally fits a requested picture size into Thinoda's display bounds.
+fn fit_display_size(size: Vec2) -> Option<Vec2> {
+    if !(size.x.is_finite() && size.y.is_finite() && size.x > 0.0 && size.y > 0.0) {
+        return None;
+    }
+    let scale = (images::MAX_DISPLAY_SIZE / size.x)
+        .min(images::MAX_DISPLAY_SIZE / size.y)
+        .min(1.0);
+    let fitted = Vec2::new(size.x * scale, size.y * scale);
+    images::valid_size(fitted).then_some(fitted)
 }
 
 fn contains_key(value: &Value, key: &str) -> bool {
@@ -135,57 +165,83 @@ fn contains_key(value: &Value, key: &str) -> bool {
     }
 }
 
+/// Child collections that Thinoda imports as topics.
+const TOPIC_COLLECTIONS: [&str; 4] = ["attached", "summary", "detached", "callout"];
+
+#[derive(Default)]
+struct ResourceReferences {
+    /// Topic pictures (`image.src`).
+    images: BTreeSet<String>,
+    /// Package files referenced by topic links (`href: xap:resources/...`).
+    linked: BTreeSet<String>,
+    warnings: BTreeSet<ImportWarning>,
+}
+
+/// One traversal over every imported topic collection. Unsafe package references
+/// are fatal; everything else that cannot be imported is reported.
 fn collect_topic_resource_paths(
     topic: &Value,
-    paths: &mut BTreeSet<String>,
+    references: &mut ResourceReferences,
+    depth: usize,
 ) -> Result<(), IoError> {
+    if depth > 2000 {
+        return Err(IoError::Invalid("XMind topic nesting exceeds 2000".into()));
+    }
     if topic.get("attachment").is_some() || topic.get("attachments").is_some() {
-        return Err(IoError::Invalid(
-            "XMind attachment topics are not supported; their package schema is unverified".into(),
-        ));
+        references.warnings.insert(ImportWarning::Resources);
     }
     if topic
         .get("extensions")
         .is_some_and(|extensions| contains_key(extensions, "resourceRefs"))
     {
-        return Err(IoError::Invalid(
-            "unsupported XMind extension resource references".into(),
-        ));
+        references.warnings.insert(ImportWarning::Resources);
     }
     if topic
         .get("notes")
         .is_some_and(|notes| contains_key(notes, "image"))
     {
-        return Err(IoError::Invalid(
-            "unsupported inline XMind note images".into(),
-        ));
+        references.warnings.insert(ImportWarning::Resources);
     }
     if let Some(image) = topic.get("image") {
-        if !image.is_object() {
-            return Err(IoError::Invalid(
-                "unsupported XMind topic image representation".into(),
-            ));
-        }
-        let attributes = image_dimensions(image)?;
-        let (_, path) = image_component(&attributes.src)?;
-        paths.insert(path);
-    }
-    if let Some(children) = topic.get("children").and_then(Value::as_object) {
-        for kind in ["attached", "summary", "detached"] {
-            if let Some(values) = children.get(kind).and_then(Value::as_array) {
-                for child in values {
-                    collect_topic_resource_paths(child, paths)?;
+        match image.get("src").and_then(Value::as_str) {
+            Some(src) => match image_reference(src)? {
+                Some(path) => {
+                    references.images.insert(path);
                 }
+                None => {
+                    references.warnings.insert(ImportWarning::Resources);
+                }
+            },
+            None => {
+                references.warnings.insert(ImportWarning::Resources);
             }
         }
-        for (kind, values) in children {
-            if !matches!(kind.as_str(), "attached" | "summary" | "detached")
-                && values.is_array()
-                && contains_key(values, "image")
-            {
-                return Err(IoError::Invalid(
-                    "unsupported XMind image in an unrecognized topic collection".into(),
-                ));
+    }
+    if let Some(href) = topic.get("href").and_then(Value::as_str)
+        && href.starts_with("xap:")
+    {
+        // Package attachments are imported by the attachment resolver; until
+        // then the link is kept as text and its payload is reported.
+        match href
+            .starts_with("xap:resources/")
+            .then(|| image_component(href).ok())
+            .flatten()
+        {
+            Some((_, path)) => {
+                references.linked.insert(path);
+                references.warnings.insert(ImportWarning::Resources);
+            }
+            None => {
+                references.warnings.insert(ImportWarning::Links);
+            }
+        }
+    }
+    if let Some(children) = topic.get("children").and_then(Value::as_object) {
+        for kind in TOPIC_COLLECTIONS {
+            if let Some(values) = children.get(kind).and_then(Value::as_array) {
+                for child in values {
+                    collect_topic_resource_paths(child, references, depth + 1)?;
+                }
             }
         }
     }
@@ -235,120 +291,147 @@ fn archive_names<R: std::io::Read + std::io::Seek>(
     Ok(names)
 }
 
+/// Reads and validates `manifest.json` when present. The manifest is an inventory:
+/// declared entries must exist and be safe, but ancillary payloads are never read.
+fn manifest_entries<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    names: &BTreeSet<String>,
+) -> Result<Option<serde_json::Map<String, Value>>, IoError> {
+    if !names.contains("manifest.json") {
+        return Ok(None);
+    }
+    let manifest: Value = serde_json::from_slice(&crate::zip_entry_with_limit(
+        archive,
+        "manifest.json",
+        4 * 1024 * 1024,
+    )?)?;
+    let entries = manifest
+        .get("file-entries")
+        .and_then(Value::as_object)
+        .ok_or_else(|| IoError::Invalid("XMind manifest is missing file-entries".into()))?;
+    // Encrypted packages declare per-entry key derivation data; their content
+    // cannot be parsed, so report the actionable cause instead of a JSON error.
+    if entries
+        .values()
+        .any(|metadata| metadata.get("encryption-data").is_some())
+    {
+        return Err(IoError::Invalid(ENCRYPTED_PACKAGE_ERROR.into()));
+    }
+    if !entries.contains_key("content.json") {
+        return Err(IoError::Invalid(
+            "XMind manifest does not declare content.json".into(),
+        ));
+    }
+    let mut declared_resources = 0usize;
+    for (path, metadata) in entries {
+        if !safe_manifest_path(path) || !metadata.is_object() {
+            return Err(IoError::Invalid(format!(
+                "unsafe or invalid XMind manifest path {path}"
+            )));
+        }
+        if let Some(component) = path.strip_prefix("resources/") {
+            let (_, expected) = image_component(&format!("xap:resources/{component}"))?;
+            if expected != *path {
+                return Err(IoError::Invalid(format!(
+                    "unsafe XMind manifest resource path {path}"
+                )));
+            }
+            declared_resources += 1;
+        }
+        // Ancillary entries (for example desktop thumbnails) are not map resources.
+        // Validate their manifest envelope, but never read or decode their payloads.
+        if !names.contains(path) {
+            return Err(IoError::Invalid(format!(
+                "XMind manifest entry is missing from archive: {path}"
+            )));
+        }
+        if declared_resources > MAX_RESOURCES {
+            return Err(IoError::Invalid(
+                "XMind archive exceeds the 128 embedded image limit".into(),
+            ));
+        }
+    }
+    Ok(Some(entries.clone()))
+}
+
+/// Resolves topic pictures against the archive inventory. Budgets count every
+/// package resource, including unused ones, which are size-checked but never read.
 fn package_resources<R: std::io::Read + std::io::Seek>(
     content: &Value,
     archive: &mut ZipArchive<R>,
     names: &BTreeSet<String>,
-) -> Result<PackageResources, IoError> {
-    let mut references = BTreeSet::new();
+) -> Result<(PackageResources, BTreeSet<ImportWarning>), IoError> {
+    let mut references = ResourceReferences::default();
     for sheet in content
         .as_array()
         .ok_or_else(|| IoError::Invalid("XMind content must be an array".into()))?
     {
         if let Some(root) = sheet.get("rootTopic") {
-            collect_topic_resource_paths(root, &mut references)?;
+            collect_topic_resource_paths(root, &mut references, 0)?;
         }
     }
+    let ResourceReferences {
+        images: referenced,
+        linked,
+        mut warnings,
+    } = references;
 
-    let mut declared = BTreeSet::new();
-    if names.contains("manifest.json") {
-        let manifest: Value = serde_json::from_slice(&crate::zip_entry_with_limit(
-            archive,
-            "manifest.json",
-            4 * 1024 * 1024,
-        )?)?;
-        let entries = manifest
-            .get("file-entries")
-            .and_then(Value::as_object)
-            .ok_or_else(|| IoError::Invalid("XMind manifest is missing file-entries".into()))?;
-        if !entries.contains_key("content.json") {
-            return Err(IoError::Invalid(
-                "XMind manifest does not declare content.json".into(),
-            ));
-        }
-        for (path, metadata) in entries {
-            if !safe_manifest_path(path) || !metadata.is_object() {
-                return Err(IoError::Invalid(format!(
-                    "unsafe or invalid XMind manifest path {path}"
-                )));
-            }
-            if let Some(component) = path.strip_prefix("resources/") {
-                let (_, expected) = image_component(&format!("xap:resources/{component}"))?;
-                if expected != *path {
-                    return Err(IoError::Invalid(format!(
-                        "unsafe XMind manifest resource path {path}"
-                    )));
-                }
-                declared.insert(path.clone());
-            }
-            // Ancillary entries (for example desktop thumbnails) are not map resources.
-            // Validate their manifest envelope, but never read or decode their payloads.
-            if !names.contains(path) {
-                return Err(IoError::Invalid(format!(
-                    "XMind manifest entry is missing from archive: {path}"
-                )));
-            }
-            if declared.len() > MAX_RESOURCES {
-                return Err(IoError::Invalid(
-                    "XMind archive exceeds the 128 embedded image limit".into(),
-                ));
-            }
-        }
-    } else if !references.is_empty() {
-        return Err(IoError::Invalid(
-            "XMind image resources require manifest.json file-entries".into(),
-        ));
-    }
-
+    let mut available = BTreeSet::new();
+    let mut package_bytes = 0u64;
     for path in names {
-        if path == "resources/" {
+        let Some(component) = path.strip_prefix("resources/") else {
+            continue;
+        };
+        if component.is_empty() {
             continue;
         }
-        if path.starts_with("resources/") {
-            let component = path.strip_prefix("resources/").unwrap_or_default();
-            let (_, expected) = image_component(&format!("xap:resources/{component}"))?;
-            if expected != *path || !declared.contains(path) {
-                return Err(IoError::Invalid(format!(
-                    "unlisted or unsafe XMind resource archive entry {path}"
-                )));
+        // Archive paths are already validated; nested or unusual names can
+        // never be referenced by a flat `xap:resources/` reference.
+        match image_component(&format!("xap:resources/{component}")) {
+            Ok((_, expected)) if expected == *path => {
+                available.insert(path.clone());
+            }
+            _ => {
+                warnings.insert(ImportWarning::Resources);
             }
         }
+        package_bytes = package_bytes.saturating_add(archive.by_name(path)?.size());
     }
-    if references != declared {
-        let missing: Vec<_> = references.difference(&declared).cloned().collect();
-        if !missing.is_empty() {
-            return Err(IoError::Invalid(format!(
-                "XMind image resource is not declared in manifest: {}",
-                missing.join(", ")
-            )));
-        }
+    if available.len() > MAX_RESOURCES {
         return Err(IoError::Invalid(
-            "XMind package contains unreferenced image resources".into(),
+            "XMind archive exceeds the 128 embedded image limit".into(),
         ));
+    }
+    if package_bytes > MAX_WORKBOOK_RESOURCE_BYTES as u64 {
+        return Err(IoError::Invalid(
+            "XMind embedded images exceed the 64 MiB workbook limit".into(),
+        ));
+    }
+    if available
+        .iter()
+        .any(|path| !referenced.contains(path) && !linked.contains(path))
+    {
+        warnings.insert(ImportWarning::Resources);
     }
 
     let mut resources = HashMap::new();
-    let mut total_bytes = 0usize;
-    for path in declared {
+    for path in referenced {
+        if !available.contains(&path) {
+            warnings.insert(ImportWarning::Resources);
+            continue;
+        }
         let bytes = crate::zip_entry_with_limit(archive, &path, MAX_RESOURCE_BYTES as u64)?;
-        if bytes.is_empty() {
-            return Err(IoError::Invalid(
-                "XMind image resource must contain at least one byte".into(),
-            ));
-        }
-        total_bytes = total_bytes.saturating_add(bytes.len());
-        if total_bytes > MAX_WORKBOOK_RESOURCE_BYTES {
-            return Err(IoError::Invalid(
-                "XMind embedded images exceed the 64 MiB workbook limit".into(),
-            ));
-        }
-        let decoded = images::decode(&bytes).map_err(IoError::Invalid)?;
+        // The decoder checks headers and dimensions before allocating pixels.
+        let Ok(decoded) = images::decode(&bytes) else {
+            warnings.insert(ImportWarning::Resources);
+            continue;
+        };
         let component = path.strip_prefix("resources/").unwrap_or_default();
         let resource =
             Resource::new(component, decoded.media_type, bytes).map_err(IoError::Invalid)?;
         resources.insert(path, resource);
     }
-    Ok(resources)
+    Ok((resources, warnings))
 }
 
 fn topic_image_model(
@@ -1961,6 +2044,237 @@ fn parse_number(value: &Value) -> Option<f32> {
     })
 }
 
+/// Visible text of an XMind `realHTML` note. Tags are dropped (never interpreted)
+/// and block boundaries become line breaks.
+fn html_note_text(html: &str) -> String {
+    let mut text = String::new();
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        text.push_str(&decode_html_entities(&rest[..start]));
+        let Some(end) = rest[start..].find('>') else {
+            rest = "";
+            break;
+        };
+        let tag = rest[start + 1..start + end]
+            .trim_start_matches('/')
+            .split(|c: char| c.is_ascii_whitespace() || c == '/')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let closing = rest[start + 1..].starts_with('/');
+        if tag == "br" || (closing && matches!(tag.as_str(), "p" | "div" | "li" | "tr")) {
+            text.push('\n');
+        }
+        rest = &rest[start + end + 1..];
+    }
+    text.push_str(&decode_html_entities(rest));
+    let lines: Vec<_> = text.lines().map(str::trim_end).collect();
+    lines.join("\n").trim().to_owned()
+}
+
+fn decode_html_entities(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let decoded = rest[1..]
+            .find(';')
+            .filter(|end| *end <= 10)
+            .and_then(|end| {
+                let entity = &rest[1..=end];
+                let character = match entity {
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
+                    "quot" => Some('"'),
+                    "apos" | "#39" => Some('\''),
+                    "nbsp" => Some(' '),
+                    _ => entity
+                        .strip_prefix("#x")
+                        .or_else(|| entity.strip_prefix("#X"))
+                        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                        .or_else(|| entity.strip_prefix('#').and_then(|n| n.parse().ok()))
+                        .and_then(char::from_u32)
+                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t')),
+                }?;
+                Some((character, end + 2))
+            });
+        match decoded {
+            Some((character, length)) => {
+                output.push(character);
+                rest = &rest[length..];
+            }
+            None => {
+                output.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Whether HTML carries more than paragraphs and line breaks (styles, lists, links).
+fn html_has_formatting(html: &str) -> bool {
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        let Some(end) = rest[start..].find('>') else {
+            return false;
+        };
+        let inner = rest[start + 1..start + end]
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+        let mut parts = inner.split_ascii_whitespace();
+        let name = parts.next().unwrap_or_default().to_ascii_lowercase();
+        if parts.next().is_some() || !matches!(name.as_str(), "p" | "div" | "br" | "span") {
+            return true;
+        }
+        rest = &rest[start + end + 1..];
+    }
+    false
+}
+
+/// Notes prefer `plain`; HTML or delta-only notes keep their visible text and are reported.
+fn import_notes(notes: &Value, context: &TopicImportContext<'_>) -> Option<String> {
+    let plain = notes
+        .get("plain")
+        .and_then(|x| x.get("content"))
+        .and_then(Value::as_str);
+    let html = notes
+        .get("realHTML")
+        .and_then(|x| x.get("content"))
+        .and_then(Value::as_str);
+    let ops = notes
+        .get("ops")
+        .and_then(|x| x.get("ops"))
+        .and_then(Value::as_array);
+    let ops_formatted = ops.is_some_and(|ops| {
+        ops.iter().any(|op| {
+            op.get("attributes")
+                .and_then(Value::as_object)
+                .is_some_and(|attributes| !attributes.is_empty())
+                || op.get("insert").is_some_and(|insert| !insert.is_string())
+        })
+    });
+    if let Some(plain) = plain {
+        if html.is_some_and(html_has_formatting) || (html.is_none() && ops_formatted) {
+            context.warn(ImportWarning::Notes);
+        }
+        return Some(plain.to_owned());
+    }
+    if let Some(html) = html {
+        context.warn(ImportWarning::Notes);
+        return Some(html_note_text(html)).filter(|text| !text.is_empty());
+    }
+    if let Some(ops) = ops {
+        context.warn(ImportWarning::Notes);
+        let text: String = ops
+            .iter()
+            .filter_map(|op| op.get("insert").and_then(Value::as_str))
+            .collect();
+        let text = text.trim_end_matches('\n').to_owned();
+        return Some(text).filter(|text| !text.is_empty());
+    }
+    if notes.as_object().is_some_and(|notes| !notes.is_empty()) {
+        context.warn(ImportWarning::Notes);
+    }
+    None
+}
+
+/// Reports source content that has no Thinoda equivalent yet.
+fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
+    if v.get("attributedTitle")
+        .and_then(Value::as_array)
+        .is_some_and(|runs| {
+            runs.iter().any(|run| {
+                run.as_object()
+                    .is_some_and(|run| run.keys().any(|key| key != "text"))
+            })
+        })
+    {
+        context.warn(ImportWarning::Formatting);
+    }
+    if v.get("taskInfo").is_some_and(|task| !task.is_null()) {
+        context.warn(ImportWarning::Markers);
+    }
+    if v.get("markers")
+        .and_then(Value::as_array)
+        .is_some_and(|markers| {
+            markers.iter().any(|marker| {
+                marker
+                    .get("markerId")
+                    .or_else(|| marker.get("id"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|id| thinoda_core::markers::find(id).is_none())
+            })
+        })
+    {
+        context.warn(ImportWarning::Markers);
+    }
+    if v.get("href")
+        .and_then(Value::as_str)
+        .is_some_and(|href| href.starts_with("xmind:"))
+    {
+        context.warn(ImportWarning::Links);
+    }
+    if ["comments", "audioNotes"]
+        .iter()
+        .any(|key| non_empty(v.get(key)))
+    {
+        context.warn(ImportWarning::Other);
+    }
+    if let Some(children) = v.get("children").and_then(Value::as_object)
+        && children.iter().any(|(kind, values)| {
+            !TOPIC_COLLECTIONS.contains(&kind.as_str()) && non_empty(Some(values))
+        })
+    {
+        context.warn(ImportWarning::Other);
+    }
+}
+
+fn non_empty(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Array(values)) => !values.is_empty(),
+        Some(Value::Object(object)) => !object.is_empty(),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// Parses a callout or nested detached topic as a floating topic linked to its owner.
+fn parse_linked_floating(
+    v: &Value,
+    s: &mut Sheet,
+    owner: TopicId,
+    depth: usize,
+    idmap: &mut HashMap<String, TopicId>,
+    context: &TopicImportContext<'_>,
+    role: &'static str,
+) -> Result<(), IoError> {
+    let position = v.get("position").and_then(|p| {
+        let x = p.get("x").and_then(Value::as_f64)? as f32;
+        let y = p.get("y").and_then(Value::as_f64)? as f32;
+        (x.is_finite() && y.is_finite()).then(|| Vec2::new(x, y))
+    });
+    let fid = parse_topic(v, s, Some(owner), depth + 1, idmap, context, role)?;
+    s.topic_mut(owner)
+        .unwrap()
+        .children
+        .retain(|child| *child != fid);
+    let floating = s.topic_mut(fid).unwrap();
+    floating.parent = None;
+    floating.position = Some(Vec2::ZERO);
+    s.floating.push(fid);
+    context
+        .floating_links
+        .borrow_mut()
+        .push((owner, fid, position));
+    context.warn(ImportWarning::Other);
+    Ok(())
+}
+
 fn parse_topic(
     v: &Value,
     s: &mut Sheet,
@@ -1981,19 +2295,20 @@ fn parse_topic(
     if parent.is_none() {
         s.topics.get_mut(&id).unwrap().title = title.to_string();
     }
-    let image = v.get("image").map(image_dimensions).transpose()?;
+    let image = v
+        .get("image")
+        .and_then(|image| image_attributes(image, context));
     if let Some(key) = v.get("id").and_then(Value::as_str) {
         idmap.insert(key.to_string(), id);
     }
+    report_unsupported_topic_data(v, context);
+    let notes = v
+        .get("notes")
+        .and_then(|notes| import_notes(notes, context));
     let t = s.topic_mut(id).unwrap();
     t.collapsed = v.get("branch").and_then(Value::as_str) == Some("folded");
     t.hyperlink = v.get("href").and_then(Value::as_str).map(str::to_owned);
-    if let Some(n) = v
-        .get("notes")
-        .and_then(|x| x.get("plain"))
-        .and_then(|x| x.get("content"))
-        .and_then(Value::as_str)
-    {
+    if let Some(n) = notes {
         t.notes = Some(n.into());
     }
     if let Some(a) = v.get("labels").and_then(Value::as_array) {
@@ -2097,30 +2412,28 @@ fn parse_topic(
             .and_then(Value::as_str)
             .and_then(parse_line_class);
     }
-    if let Some(attributes) = image {
-        let (_, path) = image_component(&attributes.src)?;
-        let resource = context
-            .resources
-            .get(&path)
-            .ok_or_else(|| IoError::Invalid(format!("missing XMind image resource {path}")))?;
+    // Resource availability, decoding, and warnings were settled by the package
+    // inventory; topics whose picture was skipped there import without it.
+    if let Some((attributes, resource)) = image.and_then(|attributes| {
+        let path = image_reference(&attributes.src).ok().flatten()?;
+        let resource = context.resources.get(&path)?;
+        Some((attributes, resource))
+    }) {
         let decoded = images::decode(resource.bytes()).map_err(IoError::Invalid)?;
-        if decoded.media_type != resource.media_type {
-            return Err(IoError::Invalid(
-                "XMind image media type does not match its content".into(),
-            ));
-        }
         let source_size = Vec2::new(decoded.width as f32, decoded.height as f32);
-        let size = match (attributes.width, attributes.height) {
+        let requested = match (attributes.width, attributes.height) {
             (Some(width), Some(height)) => Vec2::new(width, height),
             (Some(width), None) => Vec2::new(width, width * source_size.y / source_size.x),
             (None, Some(height)) => Vec2::new(height * source_size.x / source_size.y, height),
             (None, None) => images::default_size(decoded.width, decoded.height),
         };
-        if !images::valid_size(size) {
-            return Err(IoError::Invalid(
-                "XMind image display dimensions exceed limits".into(),
-            ));
-        }
+        let size = if images::valid_size(requested) {
+            requested
+        } else {
+            context.warn(ImportWarning::Formatting);
+            fit_display_size(requested)
+                .unwrap_or_else(|| images::default_size(decoded.width, decoded.height))
+        };
         let reference = s
             .resources
             .insert(resource.clone())
@@ -2195,6 +2508,7 @@ fn parse_topic(
                 .and_then(|key| idmap.get(key))
                 .copied();
             let Some(topic_id) = topic_id else {
+                context.warn(ImportWarning::Other);
                 continue;
             };
             let range = summary
@@ -2210,14 +2524,15 @@ fn parse_topic(
             });
         }
     }
-    if parent.is_none() {
-        let detached = v
-            .get("children")
-            .and_then(|x| x.get("detached"))
+    let collection = |kind: &str| {
+        v.get("children")
+            .and_then(|x| x.get(kind))
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default();
-        for d in detached {
+            .unwrap_or_default()
+    };
+    if parent.is_none() {
+        for d in collection("detached") {
             let p = d
                 .get("position")
                 .map(|p| {
@@ -2237,16 +2552,145 @@ fn parse_topic(
             floating.position = Some(p);
             s.floating.push(fid);
         }
+    } else {
+        // Thinoda has no topic-anchored floating children; keep them visible and linked.
+        for d in collection("detached") {
+            parse_linked_floating(&d, s, id, depth, idmap, context, "floatingTopic")?;
+        }
+    }
+    for callout in collection("callout") {
+        parse_linked_floating(&callout, s, id, depth, idmap, context, "calloutTopic")?;
     }
     Ok(id)
 }
+/// Positions callouts and nested detached topics beside their owner and links them
+/// with a relationship. Uses one layout pass: floating blocks are laid out at the
+/// origin and translated by their position, so owner rects shift with their block.
+fn place_linked_floating(s: &mut Sheet, links: &[(TopicId, TopicId, Option<Vec2>)]) {
+    if links.is_empty() {
+        return;
+    }
+    let layout = thinoda_core::layout::layout_sheet(s, &thinoda_core::layout::ApproxMeasure, false);
+    let floating_roots: HashSet<TopicId> = s.floating.iter().copied().collect();
+    let summary_parents: HashMap<TopicId, TopicId> = s
+        .summaries
+        .iter()
+        .map(|summary| (summary.topic, summary.parent))
+        .collect();
+    let mut block_roots: HashMap<TopicId, Option<TopicId>> = HashMap::new();
+    let mut block_root = |sheet: &Sheet, owner: TopicId| -> Option<TopicId> {
+        *block_roots.entry(owner).or_insert_with(|| {
+            let mut id = owner;
+            // Nesting depth is bounded at import; the loop bound guards malformed cycles.
+            for _ in 0..=sheet.topics.len() {
+                if floating_roots.contains(&id) {
+                    return Some(id);
+                }
+                id = match sheet.topic(id).and_then(|topic| topic.parent) {
+                    Some(parent) => parent,
+                    None => *summary_parents.get(&id)?,
+                };
+            }
+            None
+        })
+    };
+    // Owner rect without its block translation; hidden owners use the nearest visible ancestor.
+    let owner_rect = |sheet: &Sheet, mut id: TopicId| {
+        for _ in 0..=sheet.topics.len() {
+            if let Some(rect) = layout.rect(id) {
+                return Some(rect);
+            }
+            id = sheet.topic(id)?.parent?;
+        }
+        None
+    };
+    let linked: HashMap<TopicId, (TopicId, Option<Vec2>)> = links
+        .iter()
+        .map(|(owner, floating, offset)| (*floating, (*owner, *offset)))
+        .collect();
+    let mut placed: HashMap<TopicId, Vec2> = HashMap::new();
+    let mut callout_index: HashMap<TopicId, usize> = HashMap::new();
+    for (_, floating, _) in links {
+        // Resolve owners first; chains are bounded by the number of links.
+        let mut chain = vec![*floating];
+        while let Some((owner, _)) = chain.last().and_then(|id| linked.get(id)) {
+            match block_root(s, *owner) {
+                Some(root) if linked.contains_key(&root) && !placed.contains_key(&root) => {
+                    if chain.contains(&root) || chain.len() > links.len() {
+                        break;
+                    }
+                    chain.push(root);
+                }
+                _ => break,
+            }
+        }
+        for id in chain.into_iter().rev() {
+            if placed.contains_key(&id) {
+                continue;
+            }
+            let (owner, offset) = linked[&id];
+            let shift = block_root(s, owner)
+                .map(|root| {
+                    placed
+                        .get(&root)
+                        .copied()
+                        .or_else(|| s.topic(root).and_then(|topic| topic.position))
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            let rect = owner_rect(s, owner);
+            let position = match (offset, rect) {
+                (Some(offset), Some(rect)) => rect.min + shift + offset,
+                (Some(offset), None) => shift + offset,
+                (None, Some(rect)) => {
+                    let index = callout_index.entry(owner).or_default();
+                    let position = Vec2::new(
+                        rect.min.x + rect.size.x + 40.0,
+                        rect.min.y - 40.0 - 50.0 * *index as f32,
+                    ) + shift;
+                    *index += 1;
+                    position
+                }
+                (None, None) => shift,
+            };
+            placed.insert(id, position);
+        }
+    }
+    for (owner, floating, _) in links {
+        if let Some(topic) = s.topic_mut(*floating) {
+            topic.position = placed.get(floating).copied();
+        }
+        let id = s.alloc_relationship_id();
+        s.relationships.push(thinoda_core::Relationship {
+            id,
+            from: *owner,
+            to: *floating,
+            control_points: None,
+            title: String::new(),
+            color: None,
+        });
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
+    let (workbook, warnings) = import_with_report(bytes)?;
+    if warnings.is_empty() {
+        Ok(workbook)
+    } else {
+        Err(IoError::ImportNeedsConfirmation(warnings))
+    }
+}
+
+/// Imports an XMind workbook and reports source content that could not be kept.
+pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWarning>), IoError> {
     if bytes.starts_with(b"PK\x03\x04") {
         let mut z = ZipArchive::new(Cursor::new(bytes))?;
         let names = archive_names(&mut z)?;
         if names.contains("content.json") {
+            manifest_entries(&mut z, &names)?;
             let doc: Value = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
-            let resources = package_resources(&doc, &mut z, &names)?;
+            let (resources, mut warnings) = package_resources(&doc, &mut z, &names)?;
             let meta = if z
                 .file_names()
                 .any(|n| n.is_ok_and(|v| v == "metadata.json"))
@@ -2312,8 +2756,8 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                     false
                                 }
                             };
-                            if unchanged && resources_match {
-                                return Ok(workbook);
+                            if unchanged && resources_match && warnings.is_empty() {
+                                return Ok((workbook, Vec::new()));
                             }
                             log::warn!(
                                 "XMind public content or image resources changed; ignoring stale private snapshot"
@@ -2341,8 +2785,13 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 let context = TopicImportContext {
                     resources: &resources,
                     theme: &v["theme"],
+                    warnings: Default::default(),
+                    floating_links: Default::default(),
                 };
                 parse_topic(root, &mut s, None, 0, &mut ids, &context, "centralTopic")?;
+                if non_empty(v.get("zones")) {
+                    context.warn(ImportWarning::Other);
+                }
                 if let Some(rels) = v.get("relationships").and_then(Value::as_array) {
                     for r in rels {
                         let a = r
@@ -2370,25 +2819,32 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                     .and_then(Value::as_str)
                                     .and_then(color),
                             });
+                        } else {
+                            context.warn(ImportWarning::Other);
                         }
                     }
                 }
+                place_linked_floating(&mut s, &context.floating_links.borrow());
+                warnings.extend(context.warnings.into_inner());
                 sheets.push(s);
             }
             if sheets.is_empty() {
                 return Err(IoError::Invalid("XMind workbook has no sheets".into()));
             }
-            return Ok(Workbook {
-                sheets,
-                active_sheet: 0,
-                metadata: Default::default(),
-            });
+            return Ok((
+                Workbook {
+                    sheets,
+                    active_sheet: 0,
+                    metadata: Default::default(),
+                },
+                warnings.into_iter().collect(),
+            ));
         }
         let xml = zip_entry(&mut z, "content.xml")?;
-        return import_legacy_xml(&xml);
+        return import_legacy_xml(&xml).map(|workbook| (workbook, Vec::new()));
     }
     if bytes.starts_with(b"<") {
-        return import_legacy_xml(bytes);
+        return import_legacy_xml(bytes).map(|workbook| (workbook, Vec::new()));
     }
     Err(IoError::Invalid("not an XMind archive".into()))
 }
@@ -4558,10 +5014,19 @@ mod tests {
     fn desktop_sample_packages_import_the_same_map() {
         let without_thumbnail = include_bytes!("../tests/fixtures/sample-map-no-thumbnail.xmind");
         let with_thumbnail = include_bytes!("../tests/fixtures/sample-map-with-thumbnail.xmind");
-        let expected = import(without_thumbnail).unwrap();
+        let (expected, warnings) = import_with_report(without_thumbnail).unwrap();
+        // Desktop titles carry bold attributedTitle runs, which Thinoda titles cannot keep.
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
         assert_eq!(expected.sheets.len(), 1);
         assert_eq!(expected.active().root_topic().title, "Central Topic");
-        assert_eq!(import(with_thumbnail).unwrap(), expected);
+        assert_eq!(
+            import_with_report(with_thumbnail).unwrap(),
+            (expected.clone(), warnings)
+        );
+        assert!(matches!(
+            import(without_thumbnail),
+            Err(IoError::ImportNeedsConfirmation(_))
+        ));
         assert_eq!(import(&export(&expected).unwrap()).unwrap(), expected);
     }
 
@@ -4708,14 +5173,26 @@ mod tests {
         }
     }
 
+    fn report(entries: &[(String, Vec<u8>)]) -> (Workbook, Vec<ImportWarning>) {
+        import_with_report(&make_archive(entries)).unwrap()
+    }
+
     #[test]
-    fn package_resource_validation_rejects_unsafe_missing_mismatched_and_unsupported_data() {
+    fn package_resource_validation_rejects_unsafe_data_and_reports_unusable_pictures() {
         let (book, _) = image_workbook();
         let original = archive_entries(&export(&book).unwrap());
 
+        // External or non-package pictures are never fetched; the topic keeps its text.
+        for src in ["https://example.invalid/image.png", "resources/image.png"] {
+            let mut entries = original.clone();
+            update_content(&mut entries, |content| {
+                content[0]["rootTopic"]["image"]["src"] = json!(src);
+            });
+            let (workbook, warnings) = report(&entries);
+            assert_eq!(warnings, vec![ImportWarning::Resources], "{src}");
+            assert_eq!(workbook.active().root_topic().image, None, "{src}");
+        }
         for src in [
-            "https://example.invalid/image.png",
-            "resources/image.png",
             "xap:resources/",
             "xap:resources/../escape",
             "xap:resources/a/b",
@@ -4726,7 +5203,10 @@ mod tests {
             update_content(&mut entries, |content| {
                 content[0]["rootTopic"]["image"]["src"] = json!(src);
             });
-            assert!(import(&make_archive(&entries)).is_err(), "{src}");
+            assert!(
+                import_with_report(&make_archive(&entries)).is_err(),
+                "{src}"
+            );
         }
 
         for align in ["left", "center"] {
@@ -4734,34 +5214,25 @@ mod tests {
             update_content(&mut entries, |content| {
                 content[0]["rootTopic"]["image"]["align"] = json!(align);
             });
-            assert!(
-                import(&make_archive(&entries))
-                    .unwrap_err()
-                    .to_string()
-                    .contains("unsupported XMind image alignment"),
-                "{align}"
-            );
+            let (workbook, warnings) = report(&entries);
+            assert_eq!(warnings, vec![ImportWarning::Formatting], "{align}");
+            assert!(!workbook.active().root_topic().image_below, "{align}");
         }
 
+        // The manifest is optional: the archive itself is the inventory.
         let mut missing_manifest = original.clone();
         missing_manifest.retain(|(name, _)| name != "manifest.json");
-        assert!(
-            import(&make_archive(&missing_manifest))
-                .unwrap_err()
-                .to_string()
-                .contains("require manifest.json")
-        );
+        let (workbook, warnings) = report(&missing_manifest);
+        assert!(warnings.is_empty());
+        assert!(workbook.active().root_topic().image.is_some());
 
         let mut undeclared = original.clone();
         update_content(&mut undeclared, |content| {
             content[0]["rootTopic"]["image"]["src"] = json!("xap:resources/unknown");
         });
-        assert!(
-            import(&make_archive(&undeclared))
-                .unwrap_err()
-                .to_string()
-                .contains("not declared")
-        );
+        let (workbook, warnings) = report(&undeclared);
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(workbook.active().root_topic().image, None);
 
         let mut unsafe_manifest = original.clone();
         update_manifest(&mut unsafe_manifest, |manifest| {
@@ -4770,12 +5241,12 @@ mod tests {
             let value = entries.remove(&old).unwrap();
             entries.insert("resources/../escape".into(), value);
         });
-        assert!(import(&make_archive(&unsafe_manifest)).is_err());
+        assert!(import_with_report(&make_archive(&unsafe_manifest)).is_err());
 
         let mut missing = original.clone();
         missing.retain(|(name, _)| name != &image_resource_path(book.active().root));
         assert!(
-            import(&make_archive(&missing))
+            import_with_report(&make_archive(&missing))
                 .unwrap_err()
                 .to_string()
                 .contains("missing from archive")
@@ -4788,7 +5259,10 @@ mod tests {
             .find(|(name, _)| name == &path)
             .unwrap()
             .1 = b"GIF89a".to_vec();
-        assert!(import(&make_archive(&unsupported)).is_err());
+        let (workbook, warnings) = report(&unsupported);
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(workbook.active().root_topic().image, None);
+        assert_eq!(workbook.active().resources.entries.len(), 1);
 
         let mut mismatched_media_type = book.clone();
         mismatched_media_type
@@ -4834,12 +5308,18 @@ mod tests {
         let (book, _) = image_workbook();
         let original = archive_entries(&export(&book).unwrap());
 
-        for width in [0.0, -1.0, 1024.00001] {
+        for (width, expected) in [(0.0, None), (-1.0, None), (1500.0, Some(1024.0))] {
             let mut invalid_display = original.clone();
             update_content(&mut invalid_display, |content| {
                 content[0]["rootTopic"]["image"]["width"] = json!(width);
             });
-            assert!(import(&make_archive(&invalid_display)).is_err(), "{width}");
+            let (workbook, warnings) = report(&invalid_display);
+            assert_eq!(warnings, vec![ImportWarning::Formatting], "{width}");
+            let size = workbook.active().root_topic().image_size.unwrap();
+            assert!(images::valid_size(size), "{width}");
+            if let Some(expected) = expected {
+                assert_eq!(size.x, expected, "{width}");
+            }
         }
 
         let mut oversized_pixels = original.clone();
@@ -4849,7 +5329,9 @@ mod tests {
             .find(|(name, _)| name == &path)
             .unwrap()
             .1 = png([0, 0, 0], images::MAX_DIMENSION + 1, 1);
-        assert!(import(&make_archive(&oversized_pixels)).is_err());
+        let (workbook, warnings) = report(&oversized_pixels);
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(workbook.active().root_topic().image, None);
 
         let mut oversized_bytes = original;
         oversized_bytes
@@ -4866,7 +5348,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_archive_image_does_not_restore_stale_private_bytes_and_attachments_are_rejected() {
+    fn changed_archive_image_does_not_restore_stale_private_bytes_and_attachments_are_reported() {
         let (book, _) = image_workbook();
         let mut changed = archive_entries(&export(&book).unwrap());
         let path = image_resource_path(book.active().root);
@@ -4903,11 +5385,11 @@ mod tests {
         update_content(&mut attachment_content, |content| {
             content[0]["rootTopic"]["attachment"] = json!({"src": "xap:resources/anything"});
         });
-        assert!(
-            import(&make_archive(&attachment_content))
-                .unwrap_err()
-                .to_string()
-                .contains("attachment topics")
+        let (workbook, warnings) = report(&attachment_content);
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(
+            workbook.active().root_topic().title,
+            book.active().root_topic().title
         );
 
         assert!(
@@ -4918,5 +5400,228 @@ mod tests {
             .to_string()
             .contains("legacy XMind image")
         );
+    }
+
+    fn content_report(sheet: Value) -> (Workbook, Vec<ImportWarning>) {
+        let entries = vec![(
+            "content.json".to_owned(),
+            serde_json::to_vec(&json!([sheet])).unwrap(),
+        )];
+        report(&entries)
+    }
+
+    #[test]
+    fn encrypted_packages_fail_with_an_actionable_message() {
+        let entries = vec![
+            ("content.json".to_owned(), b"\x00\x01binary".to_vec()),
+            (
+                "manifest.json".to_owned(),
+                serde_json::to_vec(&json!({"file-entries": {
+                    "content.json": {"encryption-data": {"algorithm-name": "AES/CBC/PKCS5Padding"}},
+                }}))
+                .unwrap(),
+            ),
+        ];
+        let error = import_with_report(&make_archive(&entries)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            IoError::Invalid(ENCRYPTED_PACKAGE_ERROR.into()).to_string()
+        );
+    }
+
+    #[test]
+    fn callouts_and_nested_detached_topics_become_linked_floating_topics() {
+        let (workbook, warnings) = content_report(json!({
+            "rootTopic": {
+                "id": "root",
+                "title": "Root",
+                "children": {
+                    "attached": [{
+                        "id": "a",
+                        "title": "A",
+                        "children": {
+                            "callout": [{"id": "c1", "title": "Callout 1"}, {"id": "c2", "title": "Callout 2"}],
+                            "detached": [{"id": "d", "title": "Nested", "position": {"x": 10, "y": 20}}],
+                        },
+                    }],
+                    "callout": [{"id": "rc", "title": "Root callout",
+                        "children": {"callout": [{"id": "cc", "title": "Callout of callout"}]}}],
+                },
+            },
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let sheet = workbook.active();
+        let by_title = |title: &str| {
+            sheet
+                .topics
+                .values()
+                .find(|topic| topic.title == title)
+                .unwrap()
+                .id
+        };
+        let a = by_title("A");
+        assert_eq!(sheet.root_topic().children, vec![a]);
+        assert!(sheet.topic(a).unwrap().children.is_empty());
+        let layout =
+            thinoda_core::layout::layout_sheet(sheet, &thinoda_core::layout::ApproxMeasure, false);
+        let a_rect = layout.rect(a).unwrap();
+        for (owner, title) in [
+            (a, "Callout 1"),
+            (a, "Callout 2"),
+            (a, "Nested"),
+            (sheet.root, "Root callout"),
+            (by_title("Root callout"), "Callout of callout"),
+        ] {
+            let floating = by_title(title);
+            assert!(sheet.floating.contains(&floating), "{title}");
+            assert_eq!(sheet.topic(floating).unwrap().parent, None, "{title}");
+            assert!(
+                sheet
+                    .relationships
+                    .iter()
+                    .any(|relationship| relationship.from == owner && relationship.to == floating),
+                "{title}"
+            );
+        }
+        // Callouts stack beside their owner; detached positions are owner-relative.
+        let c1 = sheet
+            .topic(by_title("Callout 1"))
+            .unwrap()
+            .position
+            .unwrap();
+        let c2 = sheet
+            .topic(by_title("Callout 2"))
+            .unwrap()
+            .position
+            .unwrap();
+        assert_eq!(c1.x, a_rect.min.x + a_rect.size.x + 40.0);
+        assert_eq!(c2.y, c1.y - 50.0);
+        assert_eq!(
+            sheet.topic(by_title("Nested")).unwrap().position,
+            Some(a_rect.min + Vec2::new(10.0, 20.0))
+        );
+        // A callout of a callout is placed relative to its placed owner.
+        let rc = sheet
+            .topic(by_title("Root callout"))
+            .unwrap()
+            .position
+            .unwrap();
+        let cc = sheet
+            .topic(by_title("Callout of callout"))
+            .unwrap()
+            .position
+            .unwrap();
+        assert!(cc.x > rc.x);
+        workbook.validate().unwrap();
+    }
+
+    #[test]
+    fn note_fallbacks_keep_visible_text_and_report_lost_formatting() {
+        let note = |notes: Value| {
+            let (workbook, warnings) =
+                content_report(json!({"rootTopic": {"title": "Root", "notes": notes}}));
+            let text = workbook
+                .active()
+                .root_topic()
+                .notes
+                .as_ref()
+                .map(|notes| notes.to_string());
+            (text, warnings)
+        };
+        assert_eq!(
+            note(json!({"plain": {"content": "Plain"}, "realHTML": {"content": "<p>Plain</p>"}})),
+            (Some("Plain".into()), vec![])
+        );
+        assert_eq!(
+            note(
+                json!({"plain": {"content": "Plain"}, "realHTML": {"content": "<p><b>Plain</b></p>"}})
+            ),
+            (Some("Plain".into()), vec![ImportWarning::Notes])
+        );
+        assert_eq!(
+            note(
+                json!({"realHTML": {"content": "<div>One &amp; two</div><div>Three<br/>Four &#x263A;</div>"}})
+            ),
+            (
+                Some("One & two\nThree\nFour \u{263A}".into()),
+                vec![ImportWarning::Notes]
+            )
+        );
+        assert_eq!(
+            note(
+                json!({"ops": {"ops": [{"insert": "Bold", "attributes": {"bold": true}}, {"insert": " text\n"}]}})
+            ),
+            (Some("Bold text".into()), vec![ImportWarning::Notes])
+        );
+    }
+
+    #[test]
+    fn unsupported_topic_and_sheet_data_is_reported() {
+        let cases = [
+            (
+                json!({"title": "Root", "markers": [{"markerId": "vendor-unknown"}]}),
+                ImportWarning::Markers,
+            ),
+            (
+                json!({"title": "Root", "taskInfo": {"progress": 0.5}}),
+                ImportWarning::Markers,
+            ),
+            (
+                json!({"title": "Root", "href": "xmind:#other-topic"}),
+                ImportWarning::Links,
+            ),
+            (
+                json!({"title": "Root", "comments": [{"content": "Review"}]}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "children": {"future": [{"title": "X"}]}}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "attributedTitle": [{"text": "Root", "fo:font-style": "italic"}]}),
+                ImportWarning::Formatting,
+            ),
+            (
+                json!({"title": "Root", "summaries": [{"topicId": "nowhere", "range": "(0,0)"}]}),
+                ImportWarning::Other,
+            ),
+        ];
+        for (root, expected) in cases {
+            let (_, warnings) = content_report(json!({"rootTopic": root.clone()}));
+            assert_eq!(warnings, vec![expected], "{root}");
+        }
+        let (workbook, warnings) = content_report(json!({
+            "rootTopic": {"id": "r", "title": "Root"},
+            "relationships": [{"end1Id": "r", "end2Id": "missing"}],
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        assert!(workbook.active().relationships.is_empty());
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root"},
+            "zones": [{"id": "z"}],
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let (_, warnings) = content_report(json!({"rootTopic": {"title": "Root"}, "zones": []}));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn unreferenced_package_resources_are_reported_but_never_read() {
+        let entries = vec![
+            (
+                "content.json".to_owned(),
+                serde_json::to_vec(&json!([{"rootTopic": {"title": "Root"}}])).unwrap(),
+            ),
+            // Not a decodable image: proves unused resources are not decoded.
+            ("resources/unused.bin".to_owned(), b"not an image".to_vec()),
+        ];
+        let (workbook, warnings) = report(&entries);
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert!(workbook.active().resources.entries.is_empty());
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::ImportNeedsConfirmation(_))
+        ));
     }
 }
