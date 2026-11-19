@@ -273,7 +273,7 @@ branch for per-phase critiques.
 | X1 | Done. `xmind::import_with_report` reports categorized warnings; the manifest is optional and the archive is the inventory; encrypted packages fail with a dedicated message; callouts and nested detached topics become floating topics linked by a relationship (callouts stacked right of their owner, detached positions kept relative to the owner); notes fall back to visible HTML/delta text; lossy XMind opens never keep a writable path. Lossy XMind files cannot be merged (merge uses the strict import). |
 | X2 | Done. Public projection 2 imports/exports style aliases and approximations, summary ranges, control points, numbering, custom widths, unbalanced branch sides, map background/tapering, and opaque topic attachments. Projection 1 still validates pre-X2 private snapshots; round-trip tests also remove Thinoda metadata to exercise public content. Attachments share bytes with image resources when deduplicated and are never decoded or opened. |
 | X3 | Done. Added generator marker groups and variants with localized names in all ten languages; `week-web` imports as `week-wed`; task pause has a distinct glyph in vector/SVG rendering. |
-| X4 | Planned |
+| X4 | Done. The bounded XML importer reads multiple sheets, attached/detached/summary collections, positions, relationships, boundaries, numbering, topic widths, styles/theme defaults, notes and safe local image/attachment members. Recoverable losses are reported. |
 | X5 | Planned |
 | X6 | Planned |
 | X7 | Planned |
@@ -302,3 +302,25 @@ branch for per-phase critiques.
 - **Marker scope:** Catalog entries preserve the reviewed generator IDs and
   have local glyph/color representations. XMind's custom marker groups and
   `taskInfo` remain unsupported; unknown IDs still produce a Markers warning.
+
+### 4.3 X4 review critique
+
+- **XML tree shape:** Thinoda's legacy compatibility writer emits child
+  `<topic>` elements directly, while XMind 8 commonly groups them inside
+  `<children><topics type="attached">`. The importer accepts both layouts and
+  the round-trip test protects the direct-child form.
+- **Position semantics:** Detached topic coordinates are absolute in the XML.
+  The shared deterministic placement pass also creates an owner relationship;
+  its derived position is therefore replaced with the source coordinates after
+  placement so the imported map does not drift.
+- **Style and data loss:** `styles.xml` definitions and theme defaults resolve
+  before topic overrides. HTML notes are deliberately flattened and warned;
+  unsupported relationship control points and detached-topic conversions are
+  also reported rather than silently discarded.
+- **Package safety:** XML depth, archive entry sizes, resource count/size,
+  relative resource paths and image decoding remain bounded. External links are
+  never fetched, and non-image attachment bytes remain opaque.
+- **Evidence limit:** The generated multi-sheet legacy package fixture covers
+  sheets, style/theme resolution, numbering, width, notes, images, attachments,
+  boundaries, summaries, relationships and detached positions. XMind desktop
+  itself has not been used to verify re-exported legacy packages.

@@ -224,6 +224,16 @@ Native save remains the complete source-preserving path.
 - File > Import supports formats including EdrawMind, MindManager, FreeMind, MindNode, DOCX, Markdown, OPML, and TextBundle. The guide does not give an exhaustive format/version matrix.
 - Source: https://xmind.com/user-guide/import-new
 
+**Thinoda XMind import:** Current `.xmind` packages with `content.json` and
+XMind 8 packages with `content.xml` are imported locally. Legacy packages retain
+multiple sheets, topic hierarchy, supported styles, numbering, boundaries,
+summaries, relationships, and decodable PNG/JPEG pictures. Safe in-package
+attachments remain opaque. Unsupported formatting, HTML notes, detached-topic
+conversion, missing resources, or other unrepresentable data is summarized
+before opening; external links are never fetched. Accepting a lossy import does
+not overwrite the richer source file. XMind desktop interoperability has not
+been verified.
+
 ## Label
 - Insert > Label adds a label to a topic; multiple labels are comma-separated. Existing labels can be selected from the quick-label suggestions.
 - Select a label and delete it from the label popup or right-click > Delete.

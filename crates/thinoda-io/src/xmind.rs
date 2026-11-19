@@ -3373,253 +3373,962 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                 warnings.into_iter().collect(),
             ));
         }
-        let xml = zip_entry(&mut z, "content.xml")?;
-        return import_legacy_xml(&xml).map(|workbook| (workbook, Vec::new()));
+        return import_legacy_archive(&mut z, &names);
     }
     if bytes.starts_with(b"<") {
-        return import_legacy_xml(bytes).map(|workbook| (workbook, Vec::new()));
+        return import_legacy_xml_with_resources(bytes, None, &HashMap::new());
     }
     Err(IoError::Invalid("not an XMind archive".into()))
 }
 #[derive(Default)]
-struct LegacyTopic {
-    node: thinoda_core::OutlineNode,
-    collapsed: bool,
-    structure: Option<Structure>,
-    style: thinoda_core::TopicStyle,
-    children: Vec<LegacyTopic>,
+struct LegacyXmlNode {
+    name: String,
+    attributes: BTreeMap<String, String>,
+    content: Vec<LegacyXmlContent>,
 }
 
-fn parse_legacy_topic_property(topic: &mut LegacyTopic, key: &str, value: &str) {
-    match key {
-        "fo:color" => topic.style.text_color = Color::from_hex(value),
-        "svg:fill" | "background-color" => topic.style.fill = Color::from_hex(value),
-        "svg:stroke" | "border-line-color" => topic.style.border_color = Color::from_hex(value),
-        "svg:stroke-width" | "border-line-width" => {
-            topic.style.border_width = parse_number(&Value::String(value.to_owned()))
-        }
-        "fo:font-size" => topic.style.font_size = parse_number(&Value::String(value.to_owned())),
-        "fo:font-weight" => topic.style.bold = Some(value == "bold" || value == "600"),
-        "fo:font-style" => topic.style.italic = Some(value == "italic"),
-        "fo:font-family" => topic.style.font_family = Some(value.to_owned()),
-        "fo:text-decoration" => {
-            if value == "none" {
-                topic.style.underline = Some(false);
-                topic.style.strikethrough = None;
-            } else {
-                topic.style.underline = value.contains("underline").then_some(true);
-                topic.style.strikethrough = value.contains("line-through").then_some(true);
-            }
-        }
-        "fo:text-align" => {
-            topic.style.align = match value {
-                "left" => Some(TextAlign::Left),
-                "center" => Some(TextAlign::Center),
-                "right" => Some(TextAlign::Right),
+enum LegacyXmlContent {
+    Text(String),
+    Element(LegacyXmlNode),
+}
+
+impl LegacyXmlNode {
+    fn attribute(&self, name: &str) -> Option<&str> {
+        self.attributes
+            .get(&name.to_ascii_lowercase())
+            .map(String::as_str)
+    }
+
+    fn children(&self, name: &str) -> impl Iterator<Item = &Self> {
+        self.content
+            .iter()
+            .filter_map(move |content| match content {
+                LegacyXmlContent::Element(element) if element.local_name() == name => Some(element),
                 _ => None,
+            })
+    }
+
+    fn child(&self, name: &str) -> Option<&Self> {
+        self.children(name).next()
+    }
+
+    fn local_name(&self) -> &str {
+        self.name.rsplit(':').next().unwrap_or(&self.name)
+    }
+
+    fn text(&self) -> String {
+        let mut output = String::new();
+        self.append_text(&mut output);
+        output
+    }
+
+    fn append_text(&self, output: &mut String) {
+        for content in &self.content {
+            match content {
+                LegacyXmlContent::Text(text) => output.push_str(text),
+                LegacyXmlContent::Element(element) => element.append_text(output),
             }
         }
-        "line-color" => topic.style.line_color = Color::from_hex(value),
-        "line-width" => topic.style.line_width = parse_number(&Value::String(value.to_owned())),
-        "line-class" | "line-shape" => topic.style.line_shape = parse_line_class(value),
-        "shape-class" => topic.style.shape = parse_shape_class(value),
-        _ => {}
     }
 }
 
-fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
+fn parse_legacy_xml(bytes: &[u8]) -> Result<LegacyXmlNode, IoError> {
     use quick_xml::{Reader, events::Event};
+    if bytes.len() > crate::MAX_ENTRY_SIZE as usize {
+        return Err(IoError::Invalid(
+            "XMind XML entry exceeds the 200 MiB limit".into(),
+        ));
+    }
     let mut reader = Reader::from_reader(bytes);
-    reader.config_mut().trim_text(true);
-    let mut buf = Vec::new();
-    let mut sheet_title = String::from("Sheet");
-    let mut stack: Vec<LegacyTopic> = Vec::new();
-    let mut roots = Vec::new();
-    let mut capture: Option<String> = None;
-    let mut capture_kind: Option<&str> = None;
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut stack: Vec<LegacyXmlNode> = Vec::new();
+    let mut root = None;
     loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let name = e.name().as_ref().to_ascii_lowercase().to_string();
-                if matches!(name.as_str(), "image" | "attachment" | "attachments") {
-                    return Err(IoError::Invalid(
-                        "legacy XMind image/attachment package content is not supported".into(),
-                    ));
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(event)) => {
+                if stack.len() >= 2000 {
+                    return Err(IoError::Invalid("XMind nesting exceeds 2000 levels".into()));
                 }
-                if name == "sheet" {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case("title") {
-                            sheet_title = attr
-                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .unwrap_or_default()
-                                .to_string();
-                        }
-                    }
-                } else if name == "topic" {
-                    if stack.len() >= 2000 {
-                        return Err(IoError::Invalid("XMind nesting exceeds 2000 levels".into()));
-                    }
-                    let mut topic = LegacyTopic::default();
-                    for attr in e.attributes().flatten() {
-                        let key = attr.key.as_ref().to_ascii_lowercase();
-                        let value = attr
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap_or_default()
-                            .to_string();
-                        match key.as_str() {
-                            "branch" => topic.collapsed = value == "folded",
-                            "structure-class" => {
-                                topic.structure = Structure::from_xmind_class(&value)
-                            }
-                            _ if key.ends_with("href") => topic.node.link = Some(value),
-                            _ => {}
-                        }
-                    }
-                    stack.push(topic);
-                } else if name == "title" || name == "plain" || name == "label" {
-                    capture_kind = Some(if name == "title" {
-                        "title"
-                    } else if name == "plain" {
-                        "plain"
-                    } else {
-                        "label"
-                    });
-                    capture = Some(String::new());
-                } else if name == "marker-ref" {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case("marker-id")
-                            && let Some(topic) = stack.last_mut()
-                        {
-                            topic.node.markers.push(
-                                attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                            );
-                        }
-                    }
-                } else if name == "topic-properties"
-                    && let Some(topic) = stack.last_mut()
-                {
-                    for attr in e.attributes().flatten() {
-                        let key = attr.key.as_ref().to_ascii_lowercase();
-                        let value = attr
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap_or_default()
-                            .to_string();
-                        parse_legacy_topic_property(topic, &key, &value);
-                    }
+                stack.push(legacy_xml_node(&event)?);
+            }
+            Ok(Event::Empty(event)) => {
+                let node = legacy_xml_node(&event)?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.content.push(LegacyXmlContent::Element(node));
+                } else if root.replace(node).is_some() {
+                    return Err(IoError::Invalid("XMind XML has multiple roots".into()));
                 }
             }
-            Ok(Event::Empty(e)) => {
-                let name = e.name().as_ref().to_ascii_lowercase().to_string();
-                if matches!(name.as_str(), "image" | "attachment" | "attachments") {
-                    return Err(IoError::Invalid(
-                        "legacy XMind image/attachment package content is not supported".into(),
-                    ));
-                }
-                if name == "marker-ref" {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case("marker-id")
-                            && let Some(topic) = stack.last_mut()
-                        {
-                            topic.node.markers.push(
-                                attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                            );
-                        }
-                    }
-                } else if name == "topic-properties"
-                    && let Some(topic) = stack.last_mut()
-                {
-                    for attr in e.attributes().flatten() {
-                        let key = attr.key.as_ref().to_ascii_lowercase();
-                        let value = attr
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap_or_default()
-                            .to_string();
-                        parse_legacy_topic_property(topic, &key, &value);
-                    }
+            Ok(Event::Text(event)) => {
+                if let Some(parent) = stack.last_mut() {
+                    let text = event.xml_content(quick_xml::XmlVersion::Implicit1_0);
+                    parent
+                        .content
+                        .push(LegacyXmlContent::Text(text.into_owned()));
                 }
             }
-            Ok(Event::Text(e)) => {
-                if let Some(capture) = capture.as_mut() {
-                    capture.push_str(&e.xml_content(quick_xml::XmlVersion::Implicit1_0));
+            Ok(Event::CData(event)) => {
+                if let Some(parent) = stack.last_mut() {
+                    parent
+                        .content
+                        .push(LegacyXmlContent::Text(event.as_ref().to_owned()));
                 }
             }
-            Ok(Event::End(e)) => {
-                let name = e.name().as_ref().to_ascii_lowercase().to_string();
-                if (name == "title" || name == "plain" || name == "label")
-                    && let (Some(kind), Some(value), Some(topic)) =
-                        (capture_kind.take(), capture.take(), stack.last_mut())
-                {
-                    match kind {
-                        "title" => topic.node.title = value,
-                        "plain" => topic.node.notes = Some(value.into()),
-                        "label" => topic.node.labels.push(value),
-                        _ => {}
-                    }
-                } else if name == "topic"
-                    && let Some(topic) = stack.pop()
-                {
-                    if let Some(parent) = stack.last_mut() {
-                        parent.children.push(topic);
-                    } else {
-                        roots.push(topic);
-                    }
+            Ok(Event::End(_)) => {
+                let node = stack
+                    .pop()
+                    .ok_or_else(|| IoError::Xml("unexpected closing element".into()))?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.content.push(LegacyXmlContent::Element(node));
+                } else if root.replace(node).is_some() {
+                    return Err(IoError::Invalid("XMind XML has multiple roots".into()));
                 }
+            }
+            Ok(Event::DocType(_)) => {
+                return Err(IoError::Invalid(
+                    "XMind XML document types are not supported".into(),
+                ));
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(IoError::Xml(e.to_string())),
+            Err(error) => return Err(IoError::Xml(error.to_string())),
             _ => {}
         }
-        buf.clear();
+        buffer.clear();
     }
-    let mut roots = roots.into_iter();
-    let root = roots
-        .next()
-        .ok_or_else(|| IoError::Invalid("XMind XML has no topics".into()))?;
-    let mut workbook = Workbook::new(Sheet::new(&sheet_title, &root.node.title));
-    fn apply(sheet: &mut Sheet, id: TopicId, topic: LegacyTopic) {
-        let LegacyTopic {
-            node,
-            collapsed,
-            structure,
-            style,
-            children,
-        } = topic;
-        let root_id = sheet.root;
-        {
-            let model = sheet.topic_mut(id).unwrap();
-            model.notes = node.notes;
-            model.hyperlink = node.link;
-            model.labels = node.labels;
-            model.markers = node.markers;
-            model.collapsed = collapsed;
-            model.style = style;
-            if id != root_id {
-                model.structure = structure;
+    if !stack.is_empty() {
+        return Err(IoError::Xml("unclosed XMind XML element".into()));
+    }
+    root.ok_or_else(|| IoError::Invalid("XMind XML has no document element".into()))
+}
+
+fn legacy_xml_node(event: &quick_xml::events::BytesStart<'_>) -> Result<LegacyXmlNode, IoError> {
+    let name = event.name().as_ref().to_ascii_lowercase();
+    let mut attributes = BTreeMap::new();
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| IoError::Xml(error.to_string()))?;
+        let key = attribute.key.as_ref().to_ascii_lowercase();
+        let value = attribute
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_err(|error| IoError::Xml(error.to_string()))?
+            .to_string();
+        attributes.insert(key, value);
+    }
+    Ok(LegacyXmlNode {
+        name,
+        attributes,
+        content: Vec::new(),
+    })
+}
+
+type LegacyProperties = serde_json::Map<String, Value>;
+
+#[derive(Default)]
+struct LegacyStyles {
+    definitions: HashMap<String, LegacyProperties>,
+    roles: HashMap<String, LegacyProperties>,
+}
+
+fn legacy_descendants<'a>(
+    node: &'a LegacyXmlNode,
+    name: &str,
+    output: &mut Vec<&'a LegacyXmlNode>,
+) {
+    for content in &node.content {
+        if let LegacyXmlContent::Element(element) = content {
+            if element.local_name() == name {
+                output.push(element);
+            }
+            legacy_descendants(element, name, output);
+        }
+    }
+}
+
+fn legacy_property_map(node: &LegacyXmlNode) -> LegacyProperties {
+    node.attributes
+        .iter()
+        .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+        .collect()
+}
+
+fn legacy_styles(styles_xml: Option<&LegacyXmlNode>, sheet: &LegacyXmlNode) -> LegacyStyles {
+    let mut styles = LegacyStyles::default();
+    let Some(root) = styles_xml else {
+        return styles;
+    };
+    let mut definitions = Vec::new();
+    legacy_descendants(root, "style", &mut definitions);
+    for definition in definitions {
+        let Some(id) = definition.attribute("id") else {
+            continue;
+        };
+        let mut property_nodes = Vec::new();
+        for name in [
+            "topic-properties",
+            "relationship-properties",
+            "boundary-properties",
+            "map-properties",
+        ] {
+            legacy_descendants(definition, name, &mut property_nodes);
+        }
+        if !property_nodes.is_empty() {
+            let properties = styles.definitions.entry(id.to_owned()).or_default();
+            for property_node in property_nodes {
+                properties.extend(legacy_property_map(property_node));
             }
         }
-        if id == root_id
-            && let Some(structure) = structure
+    }
+    let Some(theme_id) = sheet.attribute("theme") else {
+        return styles;
+    };
+    let mut master_styles = Vec::new();
+    legacy_descendants(root, "master-style", &mut master_styles);
+    let Some(master) = master_styles
+        .into_iter()
+        .find(|style| style.attribute("id") == Some(theme_id))
+    else {
+        return styles;
+    };
+    let mut defaults = Vec::new();
+    legacy_descendants(master, "default-style", &mut defaults);
+    for default in defaults {
+        let (Some(family), Some(style_id)) = (
+            default.attribute("style-family"),
+            default.attribute("style-id"),
+        ) else {
+            continue;
+        };
+        if let Some(properties) = styles.definitions.get(style_id) {
+            styles.roles.insert(family.to_owned(), properties.clone());
+        }
+    }
+    styles
+}
+
+fn legacy_apply_style(
+    topic: &mut thinoda_core::TopicStyle,
+    properties: &LegacyProperties,
+    warnings: &mut BTreeSet<ImportWarning>,
+) {
+    let color_value = |key: &str| style_value(properties, key).and_then(color);
+    topic.fill = color_value("svg:fill").or_else(|| color_value("background-color"));
+    topic.text_color = color_value("fo:color");
+    topic.border_color = color_value("border-line-color").or_else(|| color_value("svg:stroke"));
+    topic.border_width = style_number(properties, "border-line-width")
+        .or_else(|| style_number(properties, "svg:stroke-width"));
+    topic.bold = style_value(properties, "fo:font-weight").and_then(|value| {
+        let bold = parse_font_weight(value);
+        if bold.is_none() {
+            warnings.insert(ImportWarning::Formatting);
+        }
+        bold
+    });
+    topic.italic = style_value(properties, "fo:font-style")
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "italic" | "oblique"));
+    topic.font_size = style_number(properties, "fo:font-size");
+    topic.font_family = style_value(properties, "fo:font-family").map(str::to_owned);
+    if let Some(decoration) = style_value(properties, "fo:text-decoration") {
+        let decoration = decoration.to_ascii_lowercase();
+        if decoration == "none" {
+            topic.underline = Some(false);
+            topic.strikethrough = None;
+        } else {
+            topic.underline = decoration.contains("underline").then_some(true);
+            topic.strikethrough = decoration.contains("line-through").then_some(true);
+        }
+    }
+    topic.align = style_value(properties, "fo:text-align").and_then(|value| {
+        match value.to_ascii_lowercase().as_str() {
+            "left" => Some(TextAlign::Left),
+            "center" => Some(TextAlign::Center),
+            "right" => Some(TextAlign::Right),
+            _ => None,
+        }
+    });
+    topic.line_color = color_value("line-color");
+    topic.line_width = style_number(properties, "line-width");
+    if let Some(class) = style_value(properties, "shape-class") {
+        topic.shape = parse_shape_class(class).or_else(|| {
+            warnings.insert(ImportWarning::Formatting);
+            approximate_shape_class(class)
+        });
+    }
+    if let Some(class) =
+        style_value(properties, "line-class").or_else(|| style_value(properties, "line-shape"))
+    {
+        topic.line_shape = parse_line_class(class);
+        if topic.line_shape.is_none() {
+            warnings.insert(ImportWarning::Formatting);
+        }
+    }
+}
+
+fn legacy_note_text(notes: &LegacyXmlNode) -> (Option<String>, bool, bool) {
+    if let Some(plain) = notes.child("plain") {
+        return (Some(plain.text().trim().to_owned()), false, false);
+    }
+    let mut html = notes.child("html");
+    if html.is_none() {
+        html = notes.child("realhtml");
+    }
+    let Some(html) = html else {
+        let text = notes.text().trim().to_owned();
+        return ((!text.is_empty()).then_some(text), true, false);
+    };
+    fn append(node: &LegacyXmlNode, text: &mut String, formatted: &mut bool, has_image: &mut bool) {
+        for content in &node.content {
+            match content {
+                LegacyXmlContent::Text(value) => text.push_str(value),
+                LegacyXmlContent::Element(child) => {
+                    let name = child.local_name();
+                    if name == "br" && !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    if name == "img" || name == "image" {
+                        *has_image = true;
+                        *formatted = true;
+                    }
+                    if !matches!(name, "html" | "body" | "p" | "div" | "span" | "br" | "head")
+                        || child.attributes.keys().any(|key| key != "xmlns")
+                    {
+                        *formatted = true;
+                    }
+                    append(child, text, formatted, has_image);
+                    if matches!(name, "p" | "div" | "li" | "tr") {
+                        text.push('\n');
+                    }
+                }
+            }
+        }
+    }
+    let mut text = String::new();
+    let mut formatted = true;
+    let mut has_image = false;
+    append(html, &mut text, &mut formatted, &mut has_image);
+    (
+        (!text.trim().is_empty()).then(|| text.trim().to_owned()),
+        formatted,
+        has_image,
+    )
+}
+
+fn legacy_resource_path(href: &str) -> Option<String> {
+    let path = href
+        .strip_prefix("xap:")
+        .unwrap_or(href)
+        .trim_start_matches('/');
+    let (root, _) = path.split_once('/')?;
+    if !matches!(root, "attachments" | "resources") || !safe_manifest_path(path) {
+        return None;
+    }
+    Some(path.to_owned())
+}
+
+struct LegacyImportContext<'a> {
+    styles: &'a LegacyStyles,
+    files: &'a HashMap<String, Vec<u8>>,
+    ids: HashMap<String, TopicId>,
+    used_files: HashSet<String>,
+    warnings: BTreeSet<ImportWarning>,
+    floating_links: Vec<(TopicId, TopicId, Option<Vec2>)>,
+    explicit_floating_positions: Vec<(TopicId, Vec2)>,
+}
+
+fn legacy_normalize_range(
+    range: ChildRange,
+    children: usize,
+    warnings: &mut BTreeSet<ImportWarning>,
+) -> Option<ChildRange> {
+    if children == 0 {
+        warnings.insert(ImportWarning::Other);
+        return None;
+    }
+    let (start, end) = if range.start <= range.end {
+        (range.start, range.end)
+    } else {
+        (range.end, range.start)
+    };
+    let end = end.min(children - 1);
+    if range.start.max(range.end) >= children {
+        warnings.insert(ImportWarning::Other);
+    }
+    Some(ChildRange {
+        start: start.min(end),
+        end,
+    })
+}
+
+fn legacy_numbering(
+    node: &LegacyXmlNode,
+    warnings: &mut BTreeSet<ImportWarning>,
+) -> Option<Numbering> {
+    let numbering = node.child("numbering")?;
+    let properties = numbering.child("numbering-properties").unwrap_or(numbering);
+    let format = properties
+        .attribute("number-format")
+        .or_else(|| properties.attribute("numberformat"))?;
+    if format == "org.xmind.numbering.none" {
+        return None;
+    }
+    let format = XMIND_NUMBER_FORMATS
+        .iter()
+        .find(|(id, _)| *id == format.trim())
+        .map(|(_, format)| *format)
+        .unwrap_or_else(|| {
+            warnings.insert(ImportWarning::Formatting);
+            NumberFormat::Decimal
+        });
+    if properties
+        .attribute("number-separator")
+        .is_some_and(|separator| separator.trim() != ".")
+    {
+        warnings.insert(ImportWarning::Formatting);
+    }
+    Some(Numbering {
+        format,
+        tiered: properties
+            .attribute("prepending-numbers")
+            .or_else(|| properties.attribute("prependingnumbers"))
+            .is_none_or(|value| value.trim() != "none"),
+        start: 1,
+    })
+}
+
+fn legacy_style(node: &LegacyXmlNode, role: &str, styles: &LegacyStyles) -> LegacyProperties {
+    let mut properties = styles.roles.get(role).cloned().unwrap_or_default();
+    if let Some(id) = node.attribute("style-id")
+        && let Some(overrides) = styles.definitions.get(id)
+    {
+        properties.extend(overrides.clone());
+    }
+    let mut inline = Vec::new();
+    legacy_descendants(node, "topic-properties", &mut inline);
+    if let Some(inline) = inline.first() {
+        properties.extend(legacy_property_map(inline));
+    }
+    properties
+}
+
+fn legacy_topic_position(node: &LegacyXmlNode) -> Option<Vec2> {
+    let position = node.child("position")?;
+    let x = position
+        .attribute("svg:x")
+        .and_then(|value| parse_number(&Value::String(value.to_owned())))?;
+    let y = position
+        .attribute("svg:y")
+        .and_then(|value| parse_number(&Value::String(value.to_owned())))?;
+    (x.abs() <= 1_000_000.0 && y.abs() <= 1_000_000.0).then(|| Vec2::new(x, y))
+}
+
+fn legacy_import_topic(
+    sheet: &mut Sheet,
+    id: TopicId,
+    node: &LegacyXmlNode,
+    role: &str,
+    context: &mut LegacyImportContext<'_>,
+    depth: usize,
+) -> Result<(), IoError> {
+    if depth >= 2000 {
+        return Err(IoError::Invalid("XMind nesting exceeds 2000 levels".into()));
+    }
+    let title = node.child("title");
+    let title_text = title
+        .map(LegacyXmlNode::text)
+        .unwrap_or_default()
+        .replace('\r', "");
+    let width = title
+        .and_then(|title| title.attribute("svg:width"))
+        .and_then(|value| parse_number(&Value::String(value.to_owned())));
+    if title.is_some_and(|title| title.attribute("svg:width").is_some()) {
+        if let Some(width) = width.filter(|width| (1.0..=10_000.0).contains(width)) {
+            sheet.topic_mut(id).unwrap().style.width = Some(width);
+        } else {
+            context.warnings.insert(ImportWarning::Formatting);
+        }
+    }
+    if let Some(external_id) = node.attribute("id")
+        && context.ids.insert(external_id.to_owned(), id).is_some()
+    {
+        return Err(IoError::Invalid(format!(
+            "duplicate XMind topic id {external_id}"
+        )));
+    }
+    let topic = sheet.topic_mut(id).unwrap();
+    if !title_text.is_empty() || topic.title.is_empty() {
+        topic.title = title_text;
+    }
+    topic.collapsed = node.attribute("branch") == Some("folded");
+    topic.structure = node.attribute("structure-class").and_then(|class| {
+        let structure = Structure::from_xmind_class(class);
+        if structure.is_none() {
+            context.warnings.insert(ImportWarning::Formatting);
+        }
+        structure
+    });
+    let link_href = node
+        .attribute("xlink:href")
+        .or_else(|| node.attribute("href"))
+        .or_else(|| {
+            node.child("hyperlink")
+                .and_then(|link| link.attribute("xlink:href"))
+        })
+        .or_else(|| {
+            node.child("hyperlink")
+                .and_then(|link| link.attribute("href"))
+        })
+        .map(str::to_owned);
+    if let Some(href) = &link_href {
+        topic.hyperlink = Some(href.to_owned());
+        if href.starts_with("xmind:#") {
+            context.warnings.insert(ImportWarning::Links);
+        }
+    }
+    if let Some(markers) = node.child("marker-refs") {
+        for marker in markers.children("marker-ref") {
+            if let Some(marker_id) = marker.attribute("marker-id") {
+                let marker_id = canonical_marker_id(marker_id);
+                if thinoda_core::markers::find(marker_id).is_none() {
+                    context.warnings.insert(ImportWarning::Markers);
+                }
+                topic.markers.push(marker_id.to_owned());
+            }
+        }
+    }
+    if let Some(labels) = node.child("labels") {
+        topic.labels = labels.children("label").map(LegacyXmlNode::text).collect();
+    }
+    if let Some(notes) = node.child("notes") {
+        let (text, formatted, has_image) = legacy_note_text(notes);
+        topic.notes = text.map(Into::into);
+        if formatted {
+            context.warnings.insert(ImportWarning::Notes);
+        }
+        if has_image {
+            context.warnings.insert(ImportWarning::Resources);
+        }
+    }
+    let properties = legacy_style(node, role, context.styles);
+    if node
+        .attribute("style-id")
+        .is_some_and(|id| !context.styles.definitions.contains_key(id))
+    {
+        context.warnings.insert(ImportWarning::Formatting);
+    }
+    legacy_apply_style(
+        &mut sheet.topic_mut(id).unwrap().style,
+        &properties,
+        &mut context.warnings,
+    );
+    sheet.topic_mut(id).unwrap().child_numbering = legacy_numbering(node, &mut context.warnings);
+
+    if let Some(image) = node.child("image") {
+        let href = image
+            .attribute("xlink:href")
+            .or_else(|| image.attribute("href"));
+        let path = href.and_then(legacy_resource_path);
+        let imported = path.as_ref().and_then(|path| {
+            let bytes = context.files.get(path)?;
+            let decoded = images::decode(bytes).ok()?;
+            let component = path.rsplit('/').next().unwrap_or("image");
+            let resource = Resource::new(component, decoded.media_type, bytes.clone()).ok()?;
+            let reference = sheet.resources.insert(resource).ok()?;
+            if let Some(stored) = reference
+                .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+                .and_then(|stored| sheet.resources.entries.get_mut(stored))
+                && stored.media_type == "application/octet-stream"
+            {
+                stored.media_type = decoded.media_type.to_owned();
+            }
+            Some((path.clone(), reference, decoded))
+        });
+        if let Some((path, reference, decoded)) = imported {
+            context.used_files.insert(path);
+            let width = image
+                .attribute("svg:width")
+                .and_then(|value| parse_number(&Value::String(value.to_owned())));
+            let height = image
+                .attribute("svg:height")
+                .and_then(|value| parse_number(&Value::String(value.to_owned())));
+            let requested = match (width, height) {
+                (Some(width), Some(height)) => Vec2::new(width, height),
+                (Some(width), None) => {
+                    Vec2::new(width, width * decoded.height as f32 / decoded.width as f32)
+                }
+                (None, Some(height)) => Vec2::new(
+                    height * decoded.width as f32 / decoded.height as f32,
+                    height,
+                ),
+                (None, None) => Vec2::new(decoded.width as f32, decoded.height as f32),
+            };
+            let size = if images::valid_size(requested) {
+                requested
+            } else {
+                context.warnings.insert(ImportWarning::Formatting);
+                images::default_size(decoded.width, decoded.height)
+            };
+            let topic = sheet.topic_mut(id).unwrap();
+            topic.image = Some(reference);
+            topic.image_size = Some(size);
+            topic.image_below = image.attribute("align") == Some("bottom");
+        } else {
+            context.warnings.insert(ImportWarning::Resources);
+        }
+    }
+
+    // Local file hyperlinks become opaque attachments only when the package contains
+    // the referenced member; external links are never fetched.
+    if let Some(href) = link_href.as_deref()
+        && let Some(path) = legacy_resource_path(href)
+    {
+        if let Some(bytes) = context.files.get(&path) {
+            let name = thinoda_core::attachments::safe_name(path.rsplit('/').next().unwrap_or(""));
+            if let Ok(resource) = Resource::new(&name, "application/octet-stream", bytes.clone())
+                && let Ok(reference) = sheet.resources.insert(resource)
+            {
+                let topic = sheet.topic_mut(id).unwrap();
+                topic.hyperlink = None;
+                topic.attachment = Some(thinoda_core::attachments::Attachment {
+                    resource: reference,
+                    name,
+                });
+                context.used_files.insert(path);
+            } else {
+                context.warnings.insert(ImportWarning::Resources);
+            }
+        } else {
+            context.warnings.insert(ImportWarning::Resources);
+        }
+    }
+
+    let children = node.child("children");
+    let topic_collections: Vec<_> = children
+        .into_iter()
+        .flat_map(|children| children.children("topics"))
+        .collect();
+    let attached: Vec<_> = if topic_collections.is_empty() {
+        let nested = children
+            .into_iter()
+            .flat_map(|children| children.children("topic"));
+        nested.chain(node.children("topic")).collect()
+    } else {
+        topic_collections
+            .iter()
+            .filter(|topics| topics.attribute("type") == Some("attached"))
+            .flat_map(|topics| topics.children("topic"))
+            .collect()
+    };
+    for child in &attached {
+        let child_id = sheet.add_child(
+            id,
+            None,
+            child
+                .child("title")
+                .map(LegacyXmlNode::text)
+                .unwrap_or_default(),
+        );
+        let role = if id == sheet.root {
+            "mainTopic"
+        } else {
+            "subTopic"
+        };
+        legacy_import_topic(sheet, child_id, child, role, context, depth + 1)?;
+    }
+    if let Some(children) = children {
+        for topics in children.children("topics") {
+            let kind = topics.attribute("type").unwrap_or_default();
+            if !matches!(kind, "attached" | "detached" | "summary")
+                && topics.children("topic").next().is_some()
+            {
+                context.warnings.insert(ImportWarning::Other);
+            }
+            if kind == "detached" {
+                for detached in topics.children("topic") {
+                    let position = legacy_topic_position(detached);
+                    let child_id = sheet.add_floating(
+                        detached
+                            .child("title")
+                            .map(LegacyXmlNode::text)
+                            .unwrap_or_default(),
+                        position.unwrap_or_default(),
+                    );
+                    legacy_import_topic(
+                        sheet,
+                        child_id,
+                        detached,
+                        "floatingTopic",
+                        context,
+                        depth + 1,
+                    )?;
+                    context.floating_links.push((id, child_id, None));
+                    if let Some(position) = position {
+                        context
+                            .explicit_floating_positions
+                            .push((child_id, position));
+                    }
+                    context.warnings.insert(ImportWarning::Other);
+                }
+            } else if kind == "summary" {
+                for summary in topics.children("topic") {
+                    let summary_id = sheet.add_floating(
+                        summary
+                            .child("title")
+                            .map(LegacyXmlNode::text)
+                            .unwrap_or_default(),
+                        Vec2::ZERO,
+                    );
+                    legacy_import_topic(
+                        sheet,
+                        summary_id,
+                        summary,
+                        "summaryTopic",
+                        context,
+                        depth + 1,
+                    )?;
+                    let range = summary
+                        .attribute("range")
+                        .and_then(|range| parse_range(&Value::String(range.to_owned())))
+                        .and_then(|range| {
+                            legacy_normalize_range(range, attached.len(), &mut context.warnings)
+                        });
+                    if let Some(range) = range {
+                        sheet.floating.retain(|floating| *floating != summary_id);
+                        sheet.topic_mut(summary_id).unwrap().position = None;
+                        let summary_id_model = sheet.alloc_summary_id();
+                        sheet.summaries.push(Summary {
+                            id: summary_id_model,
+                            parent: id,
+                            range,
+                            topic: summary_id,
+                        });
+                    } else {
+                        context.warnings.insert(ImportWarning::Other);
+                        context.floating_links.push((id, summary_id, None));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(boundaries) = node.child("boundaries") {
+        for boundary in boundaries.children("boundary") {
+            let range = boundary
+                .attribute("range")
+                .filter(|value| !value.eq_ignore_ascii_case("master"))
+                .and_then(|value| parse_range(&Value::String(value.to_owned())))
+                .and_then(|range| {
+                    legacy_normalize_range(range, attached.len(), &mut context.warnings)
+                });
+            let mut boundary_color = None;
+            if let Some(style_id) = boundary.attribute("style-id")
+                && let Some(properties) = context.styles.definitions.get(style_id)
+            {
+                boundary_color = style_value(properties, "svg:fill").and_then(color);
+            } else if boundary.attribute("style-id").is_some() {
+                context.warnings.insert(ImportWarning::Formatting);
+            }
+            let id_model = sheet.alloc_boundary_id();
+            sheet.boundaries.push(Boundary {
+                id: id_model,
+                parent: id,
+                range,
+                title: boundary
+                    .child("title")
+                    .map(LegacyXmlNode::text)
+                    .filter(|title| !title.is_empty()),
+                color: boundary_color,
+            });
+        }
+    }
+    for ignored in ["extensions", "comments", "zones"] {
+        if node.child(ignored).is_some() {
+            context.warnings.insert(ImportWarning::Other);
+        }
+    }
+    Ok(())
+}
+
+fn import_legacy_archive<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    names: &BTreeSet<String>,
+) -> Result<(Workbook, Vec<ImportWarning>), IoError> {
+    let content = crate::zip_entry_with_limit(archive, "content.xml", crate::MAX_ENTRY_SIZE)?;
+    let styles = names
+        .contains("styles.xml")
+        .then(|| crate::zip_entry_with_limit(archive, "styles.xml", 4 * 1024 * 1024))
+        .transpose()?;
+    let resource_paths: Vec<_> = names
+        .iter()
+        .filter(|path| {
+            !path.ends_with('/')
+                && (path.starts_with("attachments/") || path.starts_with("resources/"))
+        })
+        .collect();
+    if resource_paths.len() > MAX_RESOURCES {
+        return Err(IoError::Invalid(
+            "XMind archive exceeds the 128 embedded resource limit".into(),
+        ));
+    }
+    let mut total_bytes = 0u64;
+    for path in &resource_paths {
+        let size = archive.by_name(path)?.size();
+        if size > MAX_RESOURCE_BYTES as u64 {
+            return Err(IoError::Invalid(format!(
+                "XMind resource {path} exceeds the 8 MiB limit"
+            )));
+        }
+        total_bytes = total_bytes.saturating_add(size);
+    }
+    if total_bytes > MAX_WORKBOOK_RESOURCE_BYTES as u64 {
+        return Err(IoError::Invalid(
+            "XMind resources exceed the 64 MiB workbook limit".into(),
+        ));
+    }
+    let mut files = HashMap::new();
+    for path in resource_paths {
+        files.insert(
+            path.clone(),
+            crate::zip_entry_with_limit(archive, path, MAX_RESOURCE_BYTES as u64)?,
+        );
+    }
+    import_legacy_xml_with_resources(&content, styles.as_deref(), &files)
+}
+
+fn import_legacy_xml_with_resources(
+    bytes: &[u8],
+    styles_bytes: Option<&[u8]>,
+    files: &HashMap<String, Vec<u8>>,
+) -> Result<(Workbook, Vec<ImportWarning>), IoError> {
+    let document = parse_legacy_xml(bytes)?;
+    let styles_document = styles_bytes.map(parse_legacy_xml).transpose()?;
+    let sheets: Vec<_> = if document.local_name() == "sheet" {
+        vec![&document]
+    } else {
+        document.children("sheet").collect()
+    };
+    let mut imported_sheets = Vec::new();
+    let mut warnings = BTreeSet::new();
+    let mut used_files = HashSet::new();
+    for sheet_xml in sheets {
+        let roots: Vec<_> = sheet_xml.children("topic").collect();
+        let root = roots
+            .first()
+            .copied()
+            .or_else(|| {
+                let mut descendants = Vec::new();
+                legacy_descendants(sheet_xml, "topic", &mut descendants);
+                descendants.first().copied()
+            })
+            .ok_or_else(|| IoError::Invalid("XMind XML sheet has no root topic".into()))?;
+        let title = sheet_xml
+            .child("title")
+            .map(LegacyXmlNode::text)
+            .or_else(|| sheet_xml.attribute("title").map(str::to_owned))
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "Sheet".into());
+        let root_title = root
+            .child("title")
+            .map(LegacyXmlNode::text)
+            .unwrap_or_default();
+        let styles = legacy_styles(styles_document.as_ref(), sheet_xml);
+        let mut sheet = Sheet::new(title, root_title);
+        if let Some(properties) = styles.roles.get("map") {
+            sheet.theme.background = style_value(properties, "svg:fill")
+                .or_else(|| style_value(properties, "background-color"))
+                .and_then(color);
+            sheet.theme.line_width = style_number(properties, "line-width");
+            sheet.theme.font_family = style_value(properties, "fo:font-family").map(str::to_owned);
+        }
+        let mut context = LegacyImportContext {
+            styles: &styles,
+            files,
+            ids: HashMap::new(),
+            used_files: HashSet::new(),
+            warnings: BTreeSet::new(),
+            floating_links: Vec::new(),
+            explicit_floating_positions: Vec::new(),
+        };
+        let root_id = sheet.root;
+        legacy_import_topic(&mut sheet, root_id, root, "centralTopic", &mut context, 0)?;
+        if let Some(structure) = sheet
+            .topic_mut(root_id)
+            .and_then(|topic| topic.structure.take())
         {
             sheet.structure = structure;
         }
-        for child in children {
-            let child_id = sheet.add_child(id, None, child.node.title.clone());
-            apply(sheet, child_id, child);
+        for extra in roots.into_iter().skip(1) {
+            let id = sheet.add_floating(
+                extra
+                    .child("title")
+                    .map(LegacyXmlNode::text)
+                    .unwrap_or_default(),
+                legacy_topic_position(extra).unwrap_or_default(),
+            );
+            legacy_import_topic(&mut sheet, id, extra, "floatingTopic", &mut context, 0)?;
+            context.warnings.insert(ImportWarning::Other);
         }
+        if let Some(relationships) = sheet_xml.child("relationships") {
+            for relationship in relationships.children("relationship") {
+                let end1 = relationship
+                    .attribute("end1")
+                    .and_then(|id| context.ids.get(id))
+                    .copied();
+                let end2 = relationship
+                    .attribute("end2")
+                    .and_then(|id| context.ids.get(id))
+                    .copied();
+                if let (Some(from), Some(to)) = (end1, end2) {
+                    let mut relation_color = None;
+                    if let Some(style_id) = relationship.attribute("style-id")
+                        && let Some(properties) = styles.definitions.get(style_id)
+                    {
+                        relation_color = style_value(properties, "line-color").and_then(color);
+                    } else if relationship.attribute("style-id").is_some() {
+                        context.warnings.insert(ImportWarning::Formatting);
+                    }
+                    if relationship.child("control-points").is_some() {
+                        context.warnings.insert(ImportWarning::Other);
+                    }
+                    let id = sheet.alloc_relationship_id();
+                    sheet.relationships.push(thinoda_core::Relationship {
+                        id,
+                        from,
+                        to,
+                        title: relationship
+                            .child("title")
+                            .map(LegacyXmlNode::text)
+                            .unwrap_or_default(),
+                        color: relation_color,
+                        control_points: None,
+                    });
+                } else {
+                    context.warnings.insert(ImportWarning::Other);
+                }
+            }
+        }
+        place_linked_floating(&mut sheet, &context.floating_links);
+        for (id, position) in &context.explicit_floating_positions {
+            sheet.topic_mut(*id).unwrap().position = Some(*position);
+        }
+        sheet.validate().map_err(|error| {
+            IoError::Invalid(format!("invalid imported XMind XML sheet: {error}"))
+        })?;
+        used_files.extend(context.used_files);
+        warnings.extend(context.warnings);
+        imported_sheets.push(sheet);
     }
-    let root_id = workbook.active().root;
-    apply(workbook.active_mut(), root_id, root);
-    for extra in roots {
-        let id = workbook
-            .active_mut()
-            .add_floating(extra.node.title.clone(), Vec2::ZERO);
-        apply(workbook.active_mut(), id, extra);
+    if imported_sheets.is_empty() {
+        return Err(IoError::Invalid("XMind XML has no sheets".into()));
     }
-    Ok(workbook)
+    if files.keys().any(|path| !used_files.contains(path)) {
+        warnings.insert(ImportWarning::Resources);
+    }
+    Ok((
+        Workbook {
+            sheets: imported_sheets,
+            active_sheet: 0,
+            metadata: Default::default(),
+        },
+        warnings.into_iter().collect(),
+    ))
 }
 
 #[cfg(test)]
@@ -5371,7 +6080,9 @@ mod tests {
         assert!(xml.contains("Root &amp; title"));
         assert!(xml.contains("Child"));
         assert!(xml.contains("shape-class=\"org.xmind.topicShape.diamond\""));
-        let imported = import_legacy_xml(xml.as_bytes()).unwrap();
+        let (imported, warnings) =
+            import_legacy_xml_with_resources(xml.as_bytes(), None, &HashMap::new()).unwrap();
+        assert!(warnings.is_empty());
         assert_eq!(imported.active().root_topic().style.line_width, Some(3.5));
         assert_eq!(
             imported.active().root_topic().style.font_family.as_deref(),
@@ -5391,6 +6102,121 @@ mod tests {
         assert_eq!(
             imported_child.style.font_family.as_deref(),
             Some("Noto Sans")
+        );
+    }
+
+    #[test]
+    fn legacy_xmind_archive_imports_sheets_styles_annotations_and_resources() {
+        let content = br#"<?xml version="1.0"?>
+            <xmap-content xmlns:xlink="http://www.w3.org/1999/xlink"
+                          xmlns:svg="http://www.w3.org/2000/svg">
+              <sheet theme="theme">
+                <title>First</title>
+                <topic id="root" structure-class="org.xmind.ui.logic.right"
+                       style-id="central">
+                  <title svg:width="120pt">Root</title>
+                  <numbering><numbering-properties
+                    number-format="org.xmind.numbering.roman"/></numbering>
+                  <children><topics type="attached">
+                    <topic id="a" xlink:href="xap:attachments/evidence.bin">
+                      <title>One</title>
+                      <image xlink:href="xap:resources/picture.png" svg:width="40pt"/>
+                      <notes><html><p>Line one</p><p>Line two</p></html></notes>
+                    </topic>
+                    <topic id="b"><title>Two</title></topic>
+                  </topics>
+                  <topics type="summary">
+                    <topic id="summary" range="(0, 1)">
+                      <title>Summary</title>
+                    </topic>
+                  </topics>
+                  <topics type="detached"><topic id="floating">
+                    <title>Floating</title>
+                    <position svg:x="100pt" svg:y="-30pt"/>
+                  </topic></topics>
+                  </children>
+                  <boundaries><boundary range="(0, 1)" style-id="boundary">
+                    <title>Group</title>
+                  </boundary></boundaries>
+                </topic>
+                <relationships><relationship end1="a" end2="b">
+                  <title>Related</title>
+                </relationship></relationships>
+              </sheet>
+              <sheet><title>Second</title><topic id="root-2"><title>Other map</title></topic></sheet>
+            </xmap-content>"#;
+        let styles = br##"<xmap-styles xmlns:svg="http://www.w3.org/2000/svg"><styles>
+            <style id="central"><topic-properties svg:fill="#112233"/></style>
+            <style id="boundary"><boundary-properties svg:fill="#445566"/></style>
+            <style id="map"><map-properties svg:fill="#778899"/></style>
+          </styles><master-styles><master-style id="theme">
+            <default-style style-family="centralTopic" style-id="central"/>
+            <default-style style-family="map" style-id="map"/>
+          </master-style></master-styles></xmap-styles>"##;
+        let picture = png([10, 20, 30], 2, 1);
+        let entries = vec![
+            ("content.xml".into(), content.to_vec()),
+            ("styles.xml".into(), styles.to_vec()),
+            ("resources/picture.png".into(), picture),
+            ("attachments/evidence.bin".into(), vec![1, 2, 3]),
+            ("resources/unused.bin".into(), vec![4, 5]),
+        ];
+        let (workbook, warnings) = import_with_report(&make_archive(&entries)).unwrap();
+
+        assert_eq!(workbook.sheets.len(), 2);
+        let sheet = workbook.active();
+        assert_eq!(sheet.title, "First");
+        assert_eq!(sheet.structure, Structure::LogicRight);
+        assert_eq!(sheet.theme.background, Some(Color::rgb(119, 136, 153)));
+        assert_eq!(
+            sheet.topic(sheet.root).unwrap().style.fill,
+            Some(Color::rgb(17, 34, 51))
+        );
+        assert_eq!(sheet.topic(sheet.root).unwrap().style.width, Some(120.0));
+        assert_eq!(
+            sheet.topic(sheet.root).unwrap().child_numbering,
+            Some(Numbering {
+                format: NumberFormat::UpperRoman,
+                tiered: true,
+                start: 1,
+            })
+        );
+        assert_eq!(sheet.boundaries.len(), 1);
+        assert_eq!(
+            sheet.boundaries[0].range,
+            Some(ChildRange { start: 0, end: 1 })
+        );
+        assert_eq!(sheet.boundaries[0].color, Some(Color::rgb(68, 85, 102)));
+        assert_eq!(sheet.summaries.len(), 1);
+        assert_eq!(
+            sheet
+                .relationships
+                .iter()
+                .filter(|relationship| relationship.title == "Related")
+                .count(),
+            1
+        );
+        assert_eq!(sheet.floating.len(), 1);
+        assert_eq!(
+            sheet.topic(sheet.floating[0]).unwrap().position,
+            Some(Vec2::new(100.0, -30.0))
+        );
+        let image_topic = sheet.topic(sheet.root_topic().children[0]).unwrap();
+        assert_eq!(image_topic.image_size, Some(Vec2::new(40.0, 20.0)));
+        assert_eq!(image_topic.notes.as_deref(), Some("Line one\nLine two"));
+        let attachment = image_topic.attachment.as_ref().unwrap();
+        assert_eq!(attachment.name, "evidence.bin");
+        assert_eq!(
+            sheet.resources.get(&attachment.resource).unwrap().bytes(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            warnings,
+            vec![
+                ImportWarning::Notes,
+                ImportWarning::Resources,
+                ImportWarning::Other
+            ]
         );
     }
 
@@ -5938,14 +6764,13 @@ mod tests {
             book.active().root_topic().title
         );
 
-        assert!(
-            import_legacy_xml(
-                b"<xmap-content><sheet><topic><image src=\"x\"/></topic></sheet></xmap-content>"
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("legacy XMind image")
-        );
+        let (_, warnings) = import_legacy_xml_with_resources(
+            b"<xmap-content><sheet><topic><image src=\"x\"/></topic></sheet></xmap-content>",
+            None,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
     }
 
     fn content_report(sheet: Value) -> (Workbook, Vec<ImportWarning>) {
