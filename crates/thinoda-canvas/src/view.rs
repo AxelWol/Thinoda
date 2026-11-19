@@ -3187,6 +3187,88 @@ fn show_editor(
     layout: &Layout,
     out: &mut CanvasOutput,
 ) {
+    let edit_id = MapCanvas::title_editor_id();
+    let split_history = !out.minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && view.editing.as_ref().is_some_and(|edit| {
+            edit.rich_history.is_some() || !edit.original_inline_text.is_empty()
+        })
+        && ui.input(|input| {
+            input.focused
+                && input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::Z | Key::Y,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } if modifiers.command
+                    )
+                })
+                && input
+                    .events
+                    .iter()
+                    .filter(|event| board_input::label_keyboard_event(event))
+                    .count()
+                    > 1
+                && !input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerButton { .. }
+                            | egui::Event::Ime(_)
+                            | egui::Event::AccessKitActionRequest(_)
+                    )
+                })
+        });
+    if split_history {
+        let (events, pointer) = ui.input_mut(|input| {
+            (
+                std::mem::take(&mut input.events),
+                std::mem::take(&mut input.pointer),
+            )
+        });
+        let mut processed = vec![false; events.len()];
+        for (index, event) in events.iter().enumerate() {
+            if !board_input::label_keyboard_event(event) {
+                continue;
+            }
+            ui.input_mut(|input| input.events = vec![event.clone()]);
+            let mut child = Ui::new(
+                ui.ctx().clone(),
+                edit_id.with(("history-input", index)),
+                egui::UiBuilder::new()
+                    .layer_id(ui.layer_id())
+                    .max_rect(ui.max_rect())
+                    .layout(*ui.layout())
+                    .style(ui.style().clone()),
+            );
+            child.set_clip_rect(Rect::NOTHING);
+            show_editor_pass(&mut child, doc, view, layout, out);
+            processed[index] = true;
+            if view.editing.is_none() {
+                break;
+            }
+        }
+        ui.input_mut(|input| {
+            input.pointer = pointer;
+            input.events = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, event)| (!processed[index]).then_some(event))
+                .collect();
+        });
+    }
+    show_editor_pass(ui, doc, view, layout, out);
+}
+
+fn show_editor_pass(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    out: &mut CanvasOutput,
+) {
     let rich_card_title = view
         .editing
         .as_ref()
@@ -4325,11 +4407,51 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("StickyX"));
-        h.key_press(Key::Enter);
+        h.input_mut().events.extend([
+            egui::Event::Text("Y".into()),
+            egui::Event::Key {
+                key: Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            },
+        ]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("StickyX"));
+        h.input_mut().events.extend([
+            egui::Event::Key {
+                key: Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            },
+            egui::Event::Text("Z".into()),
+        ]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("StickyZ"));
+        h.input_mut().events.extend([
+            egui::Event::Text("Y".into()),
+            egui::Event::Key {
+                key: Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            },
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
         h.run_steps(2);
 
         let topic = h.state().doc.sheet().topic(id).unwrap();
-        assert_eq!(topic.title, "StickyX");
+        assert_eq!(topic.title, "StickyZ");
         assert_eq!(topic.inline_text.runs[0].start, 0);
         assert_eq!(topic.inline_text.runs[0].end, 2);
         assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));

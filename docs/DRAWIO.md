@@ -821,10 +821,16 @@ text. Save-and-resume rebases formatting and refuses a different document.
 Recovery has a focused snapshot round-trip and stale-format/foreign-owner
 test. IME composition also closes when a commit changes no text.
 
-Duck check: this does not establish parity with the board-label editor's
-ordered processing of mixed keyboard, pointer, accessibility and IME events
-in the same frame, or its grapheme-boundary safeguards. Those remain open;
-real-platform IME, screen-reader and visual acceptance are still required.
+**D9 card keyboard ordering (partial).** When a focused formatted title
+receives text and undo/redo keyboard events in one frame, each keyboard event
+is processed in order before the visible editor pass, including a following
+commit key. Synthetic tests cover both typing-before-undo and
+undo-before-typing.
+
+Duck check: batches containing pointer, accessibility or IME events do not use
+this keyboard-only path. Their ordering and the board-label editor's
+grapheme-boundary safeguards remain open; real-platform IME, screen-reader and
+visual acceptance are still required.
 
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;

@@ -1916,8 +1916,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   selection deletion/insertion is a single replacement so it inherits the
   selected style; committed continuations rebase formatting and check the
   document owner. Snapshot round-trip and foreign-owner/stale-format tests
-  cover recovery. Batched mixed-input ordering and grapheme safeguards still
-  need parity work against the shape-label editor.
+  cover recovery. Keyboard-only batches containing undo/redo now process each
+  event in order, including a following commit key. Batches with pointer,
+  accessibility or IME input and grapheme safeguards still need parity work
+  against the shape-label editor.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 
