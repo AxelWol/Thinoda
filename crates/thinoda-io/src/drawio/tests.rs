@@ -12003,8 +12003,9 @@ fn drawio_unrepresented_container_metadata_is_reported() {
         ),
     ] {
         let document = |attributes: &str| {
+            let label = if style == "group;" { "" } else { "Container" };
             page(&format!(
-                r#"<UserObject id="container" label="Container" {attributes}><mxCell style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject>{children}"#
+                r#"<UserObject id="container" label="{label}" {attributes}><mxCell style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject>{children}"#
             ))
         };
         assert!(
@@ -12046,6 +12047,42 @@ fn drawio_unrepresented_container_metadata_is_reported() {
         r#"<UserObject id="object" label="Object" link="https://example.com" tooltip="Details" placeholders="1"><mxCell vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></UserObject>"#,
     );
     assert!(!load(&object).warnings.contains(&ImportWarning::Other));
+}
+
+#[test]
+fn drawio_group_discloses_discarded_content_and_styles() {
+    let document = |style: &str, attributes: &str| {
+        page(&format!(
+            r#"<mxCell id="g" {attributes} style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell><mxCell id="a" vertex="1" parent="g"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="b" vertex="1" parent="g"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell>"#
+        ))
+    };
+    for style in ["group;", "group;locked=0;", "group;locked=1;"] {
+        let report = load(&document(style, ""));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        assert_eq!(report.workbook.active().canvas.groups.len(), 1);
+    }
+    for style in [
+        "group;fillColor=#ff0000;",
+        "group;custom=value;",
+        "group;locked=invalid;",
+        "group;otherStyle;",
+        ";group;",
+    ] {
+        let report = load(&document(style, ""));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+    for attributes in [r#"value="Important""#, r#"collapsed="1""#] {
+        let report = load(&document("group;", attributes));
+        assert!(
+            report.warnings.contains(&ImportWarning::Other),
+            "{attributes}: {:?}",
+            report.warnings
+        );
+    }
 }
 
 #[test]

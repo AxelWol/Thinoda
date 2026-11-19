@@ -2133,6 +2133,48 @@ mod tests {
     }
 
     #[test]
+    fn drawio_group_loss_requires_consent_and_preserves_source() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, attributes, style, warning) in [
+            (
+                "label",
+                r#"value="Important""#,
+                "group;",
+                thinoda_io::ImportWarning::Other,
+            ),
+            (
+                "collapsed",
+                r#"collapsed="1""#,
+                "group;",
+                thinoda_io::ImportWarning::Other,
+            ),
+            (
+                "style",
+                "",
+                "group;fillColor=#ff0000;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+        ] {
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="g" {attributes} style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell><mxCell id="a" vertex="1" parent="g"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="b" vertex="1" parent="g"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            let path = directory.path().join(format!("{name}.drawio"));
+            std::fs::write(&path, &xml).unwrap();
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert!(warnings.contains(&warning), "{name}: {warnings:?}");
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        }
+    }
+
+    #[test]
     fn adjusted_drawio_grid_requires_consent_and_preserves_the_source() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("grid.drawio");

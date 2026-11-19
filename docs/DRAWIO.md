@@ -302,6 +302,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
 - [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
 - [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
+- [x] Disclose group labels, collapsed state and unsupported group styles that cannot be represented
 - [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape loss
 - [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
@@ -348,6 +349,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 group loss diagnostics | Group labels, collapsed state and unsupported group styles require import consent rather than disappearing silently. |
 | 2026-11-19 | D10 group source identity | Representable flat groups own bounded source IDs through native v56, XMind and recovery; copies clear ownership, and flattened or undersized groups warn. |
 | 2026-11-19 | D10 topic source identity | Imported cards and converted Sankey nodes own bounded source IDs through native v55, XMind and recovery; moves retain identity, copies clear it, and exports avoid collisions. |
 | 2026-11-19 | D10 Sankey structure safety | Sankey shape nodes with locks, named layers, groups, zones or scene parents remain ordinary objects when conversion would lose their structure. |
@@ -1271,6 +1273,12 @@ tombstones. Export avoids collisions with all live owners and remaps Sankey IDs
 when necessary. Duck check: nested groups flatten and empty or one-member
 groups are omitted, so those identities warn rather than round-trip; omitted
 tombstones can permit reuse after deletion.
+
+**D10 group loss diagnostics (partial).** Import now discloses discarded group
+labels, collapsed state and group styles other than the supported lock flag.
+Duck check: this warns rather than preserving the original content or styles;
+group geometry and other container fidelity remain subject to further review,
+and in-place save stays disabled.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

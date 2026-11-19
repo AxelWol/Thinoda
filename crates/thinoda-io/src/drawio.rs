@@ -3502,6 +3502,19 @@ impl<'a> PageImport<'a> {
         }
         match kind {
             Kind::Group => {
+                if !cell.value.is_empty() || cell.collapsed {
+                    self.warn(ImportWarning::Other);
+                }
+                if cell.style.suppress_defaults
+                    || cell.style.tokens.iter().any(|token| token != "group")
+                    || cell
+                        .style
+                        .map
+                        .iter()
+                        .any(|(key, value)| key != "locked" || !matches!(value.as_str(), "0" | "1"))
+                {
+                    self.warn(ImportWarning::Formatting);
+                }
                 if context.scene_parent.is_some() {
                     self.warn(ImportWarning::Other);
                 }
