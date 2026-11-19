@@ -304,6 +304,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
+- [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -339,6 +340,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 generated map-decoration IDs | Boundary, branch-edge, relationship and summary cells avoid retained tombstones and live source IDs. |
 | 2026-11-19 | D10 generated zone/group IDs | Zone and group IDs avoid retained tombstones and live source IDs, with remapped parent links preserving nested geometry. |
 | 2026-11-19 | D10 layer tombstones | Imported named-layer source IDs survive as bounded page tombstones, including native save/reopen; dropped IDs warn. |
 | 2026-11-19 | D10 structural-cell diagnostics | Unrepresented root/layer geometry, data and styles, regenerated structural IDs and normalized layer names now produce import warnings; supported layer visibility and locking remain warning-free. |
@@ -1190,6 +1192,11 @@ the corresponding tombstone. Parent references use the allocated IDs and nested
 geometry remains relative to the correct parent. Duck check: source IDs for
 zones and groups themselves are still regenerated, and other fixed generated
 IDs, including Sankey IDs, need their own collision policy.
+
+**D10 map-decoration IDs (partial).** Generated boundaries, branch edges,
+relationships and summaries now avoid retained tombstones and live source IDs.
+Duck check: their own source IDs are not retained, and topic and Sankey cell
+IDs still require a collision policy before source overwrite is safe.
 
 ## 5. Rubber-duck findings
 

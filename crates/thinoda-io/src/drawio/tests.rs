@@ -10862,6 +10862,54 @@ fn drawio_generated_zones_and_groups_do_not_reuse_source_ids() {
 }
 
 #[test]
+fn drawio_generated_map_cells_avoid_source_ids() {
+    let mut sheet = Sheet::new("Root", "Root");
+    let first = sheet.add_child(sheet.root, None, "First");
+    let second = sheet.add_child(sheet.root, None, "Second");
+    sheet.add_boundary(&[first, second]).unwrap();
+    sheet.add_relationship(first, second).unwrap();
+    sheet.add_summary(&[first, second], "Summary").unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    assert!(!layout.boundaries.is_empty());
+    assert!(!layout.connectors.is_empty());
+    assert!(!layout.relationships.is_empty());
+    assert!(!layout.summaries.is_empty());
+    let mut ids = Vec::new();
+    ids.extend(layout.boundaries.iter().map(|b| format!("b{}", b.id.0)));
+    ids.extend((0..layout.connectors.len()).map(|n| format!("e{n}")));
+    ids.extend(layout.relationships.iter().map(|r| format!("r{}", r.id.0)));
+    ids.extend(layout.summaries.iter().map(|s| format!("s{}", s.id.0)));
+    let object = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 400.0, 80.0, 60.0),
+            "Source e0",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some("e0".into()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: ids.iter().filter(|id| *id != "e0").cloned().collect(),
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    for id in ids {
+        assert_eq!(
+            xml.matches(&format!(r#"id="{id}""#)).count(),
+            usize::from(id == "e0"),
+            "{xml}"
+        );
+        assert!(xml.contains(&format!(r#"id="{id}-1""#)), "{xml}");
+    }
+    let restored = load(&xml);
+    assert!(connectors(restored.workbook.active()).len() >= layout.connectors.len());
+}
+
+#[test]
 fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
     let drawio = Passthrough {
         source_id: None,

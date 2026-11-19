@@ -174,9 +174,9 @@ pub struct DrawioPagePassthrough {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_attributes: Vec<(String, String)>,
     /// Retained source IDs for imported objects and named layers. Generated
-    /// object, layer, zone, group and auxiliary cell IDs avoid these, including
-    /// after deletion, except for fixed Sankey IDs. Other generated cell types
-    /// do not yet have a complete collision policy.
+    /// object, layer, zone, group, map-decoration and auxiliary cell IDs avoid
+    /// these after deletion, except for fixed Sankey IDs. Generated topic IDs do
+    /// not yet have a complete collision policy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cell_ids: Vec<String>,
 }

@@ -6370,6 +6370,8 @@ struct PageWriter<'a> {
     /// Generated draw.io cell IDs for zones and groups.
     zone_cells: HashMap<ZoneId, String>,
     group_cells: HashMap<CanvasGroupId, String>,
+    /// Generated IDs for mind-map boundaries, links, relationships and summaries.
+    map_cells: HashMap<String, String>,
     /// Row cell ids and absolute row origins of each written table.
     table_rows: HashMap<CanvasObjectId, Vec<(String, Vec2)>>,
 }
@@ -6548,32 +6550,11 @@ impl<'a> PageWriter<'a> {
             layer_cells: HashMap::new(),
             zone_cells: HashMap::new(),
             group_cells: HashMap::new(),
+            map_cells: HashMap::new(),
             table_rows: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
         reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
-        reserved.extend(
-            writer
-                .layout
-                .boundaries
-                .iter()
-                .map(|b| format!("b{}", b.id.0)),
-        );
-        reserved.extend((0..writer.layout.connectors.len()).map(|n| format!("e{n}")));
-        reserved.extend(
-            writer
-                .layout
-                .relationships
-                .iter()
-                .map(|r| format!("r{}", r.id.0)),
-        );
-        reserved.extend(
-            writer
-                .layout
-                .summaries
-                .iter()
-                .map(|s| format!("s{}", s.id.0)),
-        );
         let mut unavailable: HashSet<String> = sheet
             .drawio
             .iter()
@@ -6603,6 +6584,29 @@ impl<'a> PageWriter<'a> {
             reserved.insert(id.clone());
             id
         };
+        let map_ids = writer
+            .layout
+            .boundaries
+            .iter()
+            .map(|boundary| format!("b{}", boundary.id.0))
+            .chain((0..writer.layout.connectors.len()).map(|n| format!("e{n}")))
+            .chain(
+                writer
+                    .layout
+                    .relationships
+                    .iter()
+                    .map(|relationship| format!("r{}", relationship.id.0)),
+            )
+            .chain(
+                writer
+                    .layout
+                    .summaries
+                    .iter()
+                    .map(|summary| format!("s{}", summary.id.0)),
+            );
+        for id in map_ids {
+            writer.map_cells.insert(id.clone(), generated_id(id));
+        }
         for zone in &sheet.zones {
             writer
                 .zone_cells
@@ -7699,14 +7703,8 @@ impl<'a> PageWriter<'a> {
                 model.and_then(|b| b.color),
             );
             let title = model.and_then(|b| b.title.as_deref()).unwrap_or_default();
-            self.vertex(
-                &format!("b{}", boundary.id.0),
-                title,
-                &style,
-                "1",
-                boundary.rect,
-                None,
-            );
+            let id = self.map_cells[&format!("b{}", boundary.id.0)].clone();
+            self.vertex(&id, title, &style, "1", boundary.rect, None);
         }
         for (n, connector) in self.layout.connectors.clone().iter().enumerate() {
             let mut style = String::from("endArrow=none;html=1;");
@@ -7721,17 +7719,8 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(connector.parent, connector.start),
                 self.topic_terminal(connector.child, connector.end),
             ];
-            self.edge(
-                &format!("e{n}"),
-                "",
-                &style,
-                "1",
-                Vec2::ZERO,
-                ends,
-                &[],
-                "",
-                None,
-            );
+            let id = self.map_cells[&format!("e{n}")].clone();
+            self.edge(&id, "", &style, "1", Vec2::ZERO, ends, &[], "", None);
         }
         for id in self.layout.order.clone() {
             let Some(topic) = sheet.topic(id) else {
@@ -7794,8 +7783,9 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(model.from, relationship.start),
                 self.topic_terminal(model.to, relationship.end),
             ];
+            let id = self.map_cells[&format!("r{}", relationship.id.0)].clone();
             self.edge(
-                &format!("r{}", relationship.id.0),
+                &id,
                 &model.title,
                 &style,
                 "1",
@@ -7807,8 +7797,9 @@ impl<'a> PageWriter<'a> {
             );
         }
         for summary in self.layout.summaries.clone() {
+            let id = self.map_cells[&format!("s{}", summary.id.0)].clone();
             self.edge(
-                &format!("s{}", summary.id.0),
+                &id,
                 "",
                 "endArrow=none;html=1;",
                 "1",
