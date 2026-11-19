@@ -3262,6 +3262,127 @@ fn show_editor(
     show_editor_pass(ui, doc, view, layout, out);
 }
 
+fn protect_card_title_graphemes(
+    ctx: &egui::Context,
+    edit_id: Id,
+    text: &str,
+) -> Result<(), String> {
+    enum Operation {
+        Replace(bool),
+        Delete(bool),
+        ModifiedDelete(bool),
+    }
+
+    let operation = ctx.input(|input| {
+        if input.pointer.any_pressed() || input.pointer.any_released() {
+            return None;
+        }
+        let mut events = input.events.iter().filter(|event| {
+            board_input::label_keyboard_event(event)
+                && !matches!(event, egui::Event::Key { pressed: false, .. })
+        });
+        match (events.next(), events.next()) {
+            (
+                Some(egui::Event::Key {
+                    key: key @ (Key::Backspace | Key::Delete),
+                    modifiers,
+                    pressed: true,
+                    ..
+                }),
+                None,
+            ) if modifiers.matches_exact(Modifiers::NONE) => {
+                Some(Operation::Delete(*key == Key::Backspace))
+            }
+            (
+                Some(egui::Event::Key {
+                    key: key @ (Key::Backspace | Key::Delete),
+                    modifiers,
+                    pressed: true,
+                    ..
+                }),
+                None,
+            ) if modifiers.matches_exact(Modifiers::CTRL)
+                || modifiers.matches_exact(Modifiers::ALT)
+                || modifiers.matches_exact(Modifiers::COMMAND) =>
+            {
+                Some(Operation::ModifiedDelete(*key == Key::Backspace))
+            }
+            (
+                Some(egui::Event::Key {
+                    key: Key::Enter,
+                    modifiers,
+                    pressed: true,
+                    ..
+                }),
+                None,
+            ) if modifiers.matches_exact(Modifiers::SHIFT) => Some(Operation::Replace(true)),
+            (Some(egui::Event::Text(value)), None)
+                if !value.is_empty() && value != "\n" && value != "\r" =>
+            {
+                Some(Operation::Replace(true))
+            }
+            (Some(egui::Event::Paste(value)), None) if !value.is_empty() => {
+                Some(Operation::Replace(true))
+            }
+            (
+                Some(egui::Event::Ime(
+                    egui::ImeEvent::Preedit { text: value, .. } | egui::ImeEvent::Commit(value),
+                )),
+                None,
+            ) if !value.is_empty() && value != "\n" && value != "\r" => {
+                Some(Operation::Replace(true))
+            }
+            (Some(egui::Event::Cut), None) => Some(Operation::Replace(false)),
+            _ => None,
+        }
+    });
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    let Some(mut state) = TextEdit::load_state(ctx, edit_id) else {
+        return Ok(());
+    };
+    let Some(selection) = state.cursor.char_range() else {
+        return Ok(());
+    };
+    let sorted = selection.as_sorted_char_range();
+    let selection = sorted.start.0..sorted.end.0;
+    let range = match operation {
+        Operation::Replace(snap) => {
+            board_input::card_title_grapheme_replacement_range(text, selection.clone(), snap)?
+        }
+        Operation::Delete(backward) => {
+            board_input::card_title_grapheme_deletion_range(text, selection.clone(), backward)?
+        }
+        Operation::ModifiedDelete(backward) if selection.is_empty() => {
+            if backward {
+                board_input::card_title_grapheme_replacement_range(text, selection.clone(), true)?
+            } else {
+                let cluster = board_input::card_title_grapheme_deletion_range(
+                    text,
+                    selection.clone(),
+                    false,
+                )?;
+                let position = cluster.start.min(selection.start);
+                position..position
+            }
+        }
+        Operation::ModifiedDelete(_) => {
+            board_input::card_title_grapheme_replacement_range(text, selection.clone(), false)?
+        }
+    };
+    if range != selection {
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(range.end),
+                egui::text::CCursor::new(range.start),
+            )));
+        state.store(ctx, edit_id);
+    }
+    Ok(())
+}
+
 fn show_editor_pass(
     ui: &mut Ui,
     doc: &mut Document,
@@ -3384,6 +3505,16 @@ fn show_editor_pass(
         ui.memory_mut(|memory| memory.request_focus(edit_id));
     }
 
+    if !out.minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && let Some(edit) = &view.editing
+        && edit.rich_history.is_some()
+        && !edit.ime_composing
+        && let Err(error) = protect_card_title_graphemes(ui.ctx(), edit_id, &edit.text)
+    {
+        view.title_error = Some(error);
+        return;
+    }
     if !out.minimap_blocks_keyboard && ui.memory(|memory| memory.has_focus(edit_id)) {
         view.protect_title_ime(ui.ctx(), edit_id);
     }
@@ -4356,6 +4487,96 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("abx"));
+    }
+
+    #[test]
+    fn formatted_card_title_replacement_protects_partial_graphemes() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "e\u{301}b",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(2);
+        let edit_id = MapCanvas::title_editor_id();
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::Text("X".into()));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("Xb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.key_press(Key::Backspace);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("b"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::Text("X".into()));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("e\u{301}Xb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("y".into())));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("e\u{301}yb"));
+        h.key_press(Key::Enter);
+        h.run_steps(1);
+        let topic = h.state().doc.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "e\u{301}yb");
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
     }
 
     #[test]

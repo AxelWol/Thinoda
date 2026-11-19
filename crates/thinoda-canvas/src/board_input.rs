@@ -6137,6 +6137,22 @@ pub(super) struct LabelEditorLayout<'a> {
     pub(super) align: egui::Align,
 }
 
+pub(super) fn card_title_grapheme_replacement_range(
+    text: &str,
+    selection: std::ops::Range<usize>,
+    snap_caret: bool,
+) -> Result<std::ops::Range<usize>, String> {
+    label_format::grapheme_replacement_range(text, selection, snap_caret)
+}
+
+pub(super) fn card_title_grapheme_deletion_range(
+    text: &str,
+    selection: std::ops::Range<usize>,
+    backward: bool,
+) -> Result<std::ops::Range<usize>, String> {
+    label_format::grapheme_deletion_range(text, selection, backward)
+}
+
 struct LabelListMarker {
     start: usize,
     text: String,
