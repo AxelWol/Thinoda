@@ -1972,6 +1972,7 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
             }
         };
         if cell.id.is_empty() {
+            warnings.insert(ImportWarning::Other);
             cell.id = format!("\u{0}{}", cells.len());
         }
         if !ids.insert(cell.id.clone()) {
@@ -3265,6 +3266,11 @@ impl<'a> PageImport<'a> {
             .filter(|&i| self.cells[i].parent.is_none())
             .collect();
         for root in roots {
+            if self.cells[root].vertex || self.cells[root].edge {
+                self.warn(ImportWarning::Other);
+                self.visit(root, Context::default(), 0);
+                continue;
+            }
             self.visited[root] = true;
             for (position, layer) in self.children[root].clone().into_iter().enumerate() {
                 self.visited[layer] = true;

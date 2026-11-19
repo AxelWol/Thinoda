@@ -10686,6 +10686,33 @@ fn drawio_import_reports_unrepresented_cell_and_geometry_xml() {
 }
 
 #[test]
+fn drawio_import_keeps_parentless_vertices_and_edges_with_a_warning() {
+    let xml = page(concat!(
+        r#"<mxCell id="shape" value="Parentless" vertex="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge" edge="1"><mxGeometry relative="1" as="geometry"><mxPoint x="10" y="20" as="sourcePoint"/><mxPoint x="100" y="80" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(shapes(sheet).len(), 1);
+    assert_eq!(shapes(sheet)[0].label(), "Parentless");
+    assert_eq!(connectors(sheet).len(), 1);
+    let reopened = import(&export(&report.workbook).unwrap()).unwrap();
+    assert_eq!(shapes(&reopened.workbook.sheets[0]).len(), 1);
+    assert_eq!(connectors(&reopened.workbook.sheets[0]).len(), 1);
+}
+
+#[test]
+fn drawio_import_reports_missing_cell_ids() {
+    let xml = page(
+        r#"<mxCell value="No id" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "No id");
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,

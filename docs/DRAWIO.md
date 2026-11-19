@@ -299,6 +299,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
 - [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
 - [x] Report ignored cell and geometry attributes, children, duplicate geometry parts and unsupported flags rather than silently discarding them
+- [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -334,6 +335,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 nonstandard cell roots | Parentless vertices and edges are imported with a warning instead of being silently discarded; missing cell IDs also warn before a temporary ID is assigned. |
 | 2026-11-19 | D10 editable-image document metadata | Editable draw.io SVG and PNG retain validated workbook attributes as well as the selected page; masked copies omit those attributes. |
 | 2026-11-19 | D10 cell/geometry import diagnostics (partial) | Unknown cell and geometry XML, malformed flags, repeated geometry roles and non-connectable shapes/groups now warn; recognized non-connectable edge labels remain warning-free. |
 | 2026-11-19 | D10 document passthrough budget | Oversized, unsafe or excess unknown `<mxfile>` attributes produce import warnings; individually valid attributes that fit are still retained and round-trip. |
@@ -1146,6 +1148,12 @@ attributes and children, graph children, root attributes and unrepresented cell
 and geometry XML are disclosed instead of silently discarded. Duck check: this
 identifies loss; it does not preserve the omitted XML or establish complete
 semantic parity for all accepted cell and geometry values.
+
+**D10 nonstandard roots (partial).** Parentless vertex and edge cells now
+enter the ordinary object importer and produce a loss warning; missing cell
+IDs also warn. Duck check: this repairs a silent omission, not the source
+hierarchy; malformed or unsupported structural cells and their metadata still
+need complete representation and diagnostics before in-place save.
 
 ## 5. Rubber-duck findings
 
