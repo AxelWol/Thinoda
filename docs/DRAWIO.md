@@ -1245,9 +1245,10 @@ supported links, rich text, colors and alignment. A node with unsupported
 object data, tooltip or unknown cell styles/attributes invalidates the Sankey
 extension instead of losing that content. Candidate conversion rolls back
 before reporting the stale extension; successful conversion reports the lost
-shape appearance and source identity. Duck check: fallback intentionally uses
-ordinary diagram objects rather than Sankey semantics; full owner-bound topic
-IDs and lossless conversion remain open.
+shape appearance and source identity. Both paths retain their supported data
+through native save/reopen and draw.io re-export. Duck check: fallback
+intentionally uses ordinary diagram objects rather than Sankey semantics; full
+owner-bound topic IDs and lossless conversion remain open.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

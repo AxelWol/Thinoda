@@ -10991,6 +10991,27 @@ fn sankey_shape_node_conversion_discloses_lost_shape_and_identity() {
     assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
     assert_eq!(topic.style.text_color, Some(Color::rgb(18, 52, 86)));
     assert_eq!(topic.style.align, Some(TextAlign::Right));
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let exported = export(&reopened).unwrap();
+    let restored = import(&exported).unwrap();
+    assert!(restored.workbook.has_sankey());
+    let topic = restored
+        .workbook
+        .active()
+        .topics
+        .values()
+        .find(|topic| topic.title == title)
+        .unwrap();
+    assert_eq!(
+        topic.hyperlink.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+    assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
+    assert_eq!(topic.style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(topic.style.align, Some(TextAlign::Right));
 }
 
 fn sankey_node_as_shape(xml: &str, node: TopicId) -> String {
@@ -11065,6 +11086,25 @@ fn sankey_shape_node_metadata_refuses_conversion_without_losing_prior_nodes() {
     let data = object.data.as_ref().unwrap();
     assert_eq!(data.link.as_deref(), Some("https://example.com/retained"));
     assert_eq!(data.property("custom"), Some("Retained data"));
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let restored = import(&export(&reopened).unwrap()).unwrap();
+    let object = restored
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.alt_text == "Retained tooltip")
+        .unwrap();
+    assert_eq!(
+        object.data.as_ref().unwrap().link.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(
+        object.data.as_ref().unwrap().property("custom"),
+        Some("Retained data")
+    );
 }
 
 #[test]
