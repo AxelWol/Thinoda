@@ -10532,6 +10532,40 @@ fn drawio_page_passthrough_reports_dropped_attributes_and_invalid_ids() {
 }
 
 #[test]
+fn drawio_document_passthrough_reports_oversized_attributes_without_losing_other_data() {
+    let large = "x".repeat(thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES);
+    let xml = format!(
+        r#"<mxfile oversized="{large}" kept="A &amp; B"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+    assert_eq!(
+        report.workbook.drawio.as_ref().unwrap().attributes,
+        [("kept".into(), "A & B".into())]
+    );
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let exported = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(exported.contains("kept=\"A &amp; B\""));
+    assert!(!exported.contains("oversized="));
+
+    let at_limit =
+        "x".repeat(thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES - "full".len());
+    let xml = format!(
+        r#"<mxfile full="{at_limit}" extra="x"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+    let document = report.workbook.drawio.as_ref().unwrap();
+    assert_eq!(
+        document.byte_len(),
+        thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES
+    );
+    assert_eq!(document.attributes.len(), 1);
+    assert_eq!(document.attributes[0].0, "full");
+}
+
+#[test]
 fn drawio_page_passthrough_rejects_reserved_and_oversized_attributes() {
     let mut book = Workbook::new(Sheet::new("Page", "Root"));
     book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {

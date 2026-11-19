@@ -685,22 +685,29 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
         "mxfile" => {
             let dropped_content = !root.text.trim().is_empty()
                 || root.children.iter().any(|child| child.name != "diagram");
-            let dropped_attributes = root.attrs.iter().any(|(name, _)| {
-                !RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str())
-                    && !thinoda_core::drawio_passthrough::valid_attribute_name(name)
-            });
-            let passthrough = DrawioDocumentPassthrough {
-                attributes: root
-                    .attrs
-                    .iter()
-                    .filter(|(name, _)| !RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str()))
-                    .filter(|(name, _)| {
-                        thinoda_core::drawio_passthrough::valid_attribute_name(name)
-                    })
-                    .cloned()
-                    .collect(),
-            };
-            passthrough.validate().map_err(|error| invalid(&error))?;
+            let mut dropped_attributes = false;
+            let mut passthrough = DrawioDocumentPassthrough::default();
+            let mut seen = HashSet::new();
+            let mut bytes = 0usize;
+            for (name, value) in &root.attrs {
+                if RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str()) {
+                    continue;
+                }
+                let valid = thinoda_core::drawio_passthrough::valid_attribute_name(name)
+                    && !value
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+                    && seen.insert(name.as_str());
+                let next = bytes.saturating_add(name.len()).saturating_add(value.len());
+                if !valid || next > thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES
+                {
+                    dropped_attributes = true;
+                    continue;
+                }
+                bytes = next;
+                passthrough.attributes.push((name.clone(), value.clone()));
+            }
+            debug_assert!(passthrough.validate().is_ok());
             let passthrough = (!passthrough.is_empty()).then(|| Arc::new(passthrough));
             let mut pages = Vec::new();
             for mut diagram in root.children.into_iter().filter(|c| c.name == "diagram") {

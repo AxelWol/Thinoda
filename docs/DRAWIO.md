@@ -293,6 +293,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D10 — Save back to `.drawio`
 
 - [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
+- [x] Disclose document attributes omitted for safety or budget limits while retaining other valid attributes
 - [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
 - [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
 - [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
@@ -331,6 +332,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 document passthrough budget | Oversized, unsafe or excess unknown `<mxfile>` attributes produce import warnings; individually valid attributes that fit are still retained and round-trip. |
 | 2026-11-19 | D10 structural import diagnostics (partial) | Ignored document children, diagram attributes or children, and graph/root-level content produce import warnings; later-page warnings do not contaminate the first-page clipboard report, and the original source remains protected. |
 | 2026-11-19 | D10 page passthrough safety (partial) | Unknown page attributes and object-ID tombstones are bounded during import; omissions warn. Reserved generated model attributes and oversized page passthrough are rejected even on empty sheets or direct export. |
 | 2026-11-19 | D10 document passthrough (partial) | Safe unknown `<mxfile>` attributes survive draw.io, native v53, private XMind snapshots and recovery with or without pending ink; older or mismatched envelopes reject the metadata rather than dropping it. |
@@ -1111,7 +1113,9 @@ separate precedence, persistence and undo contracts.
 **D10 document metadata slice (partial).** Safe unknown `<mxfile>` attributes
 are bounded, validated and retained across native workbook save/reopen and
 draw.io export; namespace-qualified attributes are dropped with an import
-warning because their namespace declaration is not represented. Private XMind
+warning because their namespace declaration is not represented. Attributes that
+exceed the document budget are disclosed rather than failing the entire import.
+Private XMind
 and recovery envelopes are versioned, and generated attributes cannot appear in
 passthrough. Duck check:
 this is not sufficient for in-place saves. Opaque unsupported cells, other
