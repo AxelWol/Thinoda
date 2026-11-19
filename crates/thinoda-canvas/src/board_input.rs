@@ -6126,15 +6126,15 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
     }
 }
 
-struct LabelEditorLayout<'a> {
-    ctx: &'a egui::Context,
-    base: &'a thinoda_core::label_style::LabelStyle,
-    font: &'a FontId,
-    zoom: f32,
-    color: Color32,
-    background: Color32,
-    wrap_width: f32,
-    align: egui::Align,
+pub(super) struct LabelEditorLayout<'a> {
+    pub(super) ctx: &'a egui::Context,
+    pub(super) base: &'a thinoda_core::label_style::LabelStyle,
+    pub(super) font: &'a FontId,
+    pub(super) zoom: f32,
+    pub(super) color: Color32,
+    pub(super) background: Color32,
+    pub(super) wrap_width: f32,
+    pub(super) align: egui::Align,
 }
 
 struct LabelListMarker {
@@ -6292,6 +6292,22 @@ fn label_editor_layout_job(
     job.halign = layout.align;
     job.keep_trailing_whitespace = true;
     (job, bold, markers)
+}
+
+pub(super) fn card_title_layout_job(
+    text: &str,
+    rich: &InlineText,
+    layout: &LabelEditorLayout<'_>,
+) -> (egui::text::LayoutJob, Vec<bool>, Vec<(usize, String, f32)>) {
+    let (job, bold, markers) = label_editor_layout_job(text, Some(rich), layout);
+    (
+        job,
+        bold,
+        markers
+            .into_iter()
+            .map(|marker| (marker.start, marker.text, marker.indent))
+            .collect(),
+    )
 }
 
 fn extra_label_at_point(

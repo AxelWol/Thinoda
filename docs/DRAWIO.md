@@ -803,6 +803,17 @@ native extension stale instead of losing that edit. Known limitations:
 - Recovery now detects formatting-only changes even after earlier draft edits,
   at the cost of retaining the last observed rich draft while editing.
 
+**D9 formatted card-title editing (partial).** Sticky-note and text-card titles
+that already contain inline runs or list paragraphs can now be edited without
+flattening their formatting. Ordered text-buffer edits reconcile runs and list
+metadata, the editor renders those runs and list markers, and bounded local
+undo/redo groups IME composition. Commits use the atomic rich card-title edit;
+recovery snapshots validate document ownership and the original title and
+formatting before preserving the draft. Existing unformatted title editing is
+unchanged. Focused native tests cover repeated text, style/list preservation,
+commit and undo. Real IME/accessibility acceptance and broader rich-title
+formatting controls remain open; this does not complete D9.
+
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;
 moving the caret clears the pending override. Batched keyboard and in-editor

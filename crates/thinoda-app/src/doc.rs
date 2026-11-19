@@ -215,7 +215,7 @@ pub struct OpenDoc {
     last_seen_inspector_edit: Option<InspectorEdit>,
     /// After a failed autosave, the next automatic attempt waits until then.
     pub(crate) autosave_retry_at: Option<Instant>,
-    snapshot_title: Option<(TopicId, String, String)>,
+    snapshot_title: Option<(TopicId, String, String, Option<InlineText>)>,
     snapshot_board_label: Option<BoardLabelSnapshot>,
     last_seen_board_label: Option<BoardLabelSnapshot>,
     snapshot_saw_ink: bool,
@@ -782,7 +782,26 @@ impl OpenDoc {
         if let Some(edit) = &self.fim_edit {
             edit.apply(&mut document)?;
         }
-        if let Some((id, original, text)) = self.view.title_draft()
+        let rich_title_draft = if self.view.has_title_changes() {
+            self.view
+                .validated_card_title_rich_draft(&self.doc)
+                .map_err(|error| error.to_string())?
+        } else {
+            None
+        };
+        if let Some((id, original, text, rich)) = rich_title_draft {
+            if original != text
+                || self
+                    .doc
+                    .sheet()
+                    .topic(id)
+                    .is_some_and(|topic| topic.inline_text != rich)
+            {
+                document
+                    .set_card_title_with_rich_text(id, &text, rich)
+                    .map_err(|error| error.to_string())?;
+            }
+        } else if let Some((id, original, text)) = self.view.title_draft()
             && original != text
         {
             document
@@ -901,10 +920,14 @@ impl OpenDoc {
         }
         self.snapshot_saw_ink |= ink_version.is_some();
         let s = self.doc.state_id();
-        let title_draft = self
-            .view
-            .title_draft()
-            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        let title_draft = self.view.title_draft().map(|(id, original, text)| {
+            (
+                id,
+                original.to_owned(),
+                text.to_owned(),
+                self.view.title_rich_formatting_draft(),
+            )
+        });
         let board_label = self
             .view
             .board_rich_label_draft()

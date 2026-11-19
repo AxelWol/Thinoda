@@ -1896,6 +1896,22 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   `open_path`/`request_open` calls do not participate in the UI event-ordering
   wrapper.
 
+### Formatted card-title editing checkpoint and critique
+
+- Existing inline styles and list paragraphs on sticky-note/text-card titles now
+  survive ordered edits, render in the editor, and commit atomically with the
+  changed title. The draft uses bounded local undo/redo; IME preedit/commit
+  changes are grouped, and recovery validates document ownership plus the
+  original title and formatting before applying the pending draft.
+- Duck check: repeated text makes whole-string diffing ambiguous, so edits are
+  reconciled from egui's ordered insert/delete/replace operations. Recovery
+  applies both title and formatting through the core card-title transaction,
+  while ordinary unformatted title editing keeps its prior path.
+- Focused native tests cover repeated-text run movement, title commit, list/run
+  retention and document undo. Real IME/accessibility behavior and broader
+  formatted-title toolbar controls remain unverified/open; this checkpoint
+  does not claim D9 completion.
+
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 
 - Sticky-note and text-card titles now align their complete row within the

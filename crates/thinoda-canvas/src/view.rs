@@ -15,6 +15,8 @@ use thinoda_core::{
     layout::{Dir, Icon, TopicLayout, cubic as bezier},
     layout_sheet,
     navigation::Direction,
+    rich_text::InlineText,
+    rich_text_draft::{DraftSelection, RichTextDraft},
     scene::{Scene, SceneHit, SceneId, build_scene, topic_clip_rect},
 };
 
@@ -368,11 +370,90 @@ struct EditState {
     topic: TopicId,
     text: String,
     original: String,
+    original_inline_text: InlineText,
+    inline_text: InlineText,
+    rich_history: Option<RichTextDraft>,
+    rich_history_composing: bool,
+    owner_document: Option<u64>,
     select_all: bool,
     focus_requested: bool,
     focus_retry_after: Option<(egui::ViewportId, u64)>,
     ime_composing: bool,
     companion_cursor: Option<(String, Option<egui::text::CCursorRange>)>,
+}
+
+#[derive(Debug)]
+enum CardTitleOperation {
+    Insert { index: usize, text: String },
+    Delete(std::ops::Range<usize>),
+    Replace(String),
+}
+
+struct CardTitleBuffer<'a> {
+    text: &'a mut String,
+    operations: &'a std::cell::RefCell<Vec<CardTitleOperation>>,
+}
+
+impl egui::TextBuffer for CardTitleBuffer<'_> {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_str(&self) -> &str {
+        self.text
+    }
+
+    fn insert_text(&mut self, text: &str, index: egui::text::CharIndex) -> usize {
+        self.operations
+            .borrow_mut()
+            .push(CardTitleOperation::Insert {
+                index: index.0,
+                text: text.to_owned(),
+            });
+        self.text.insert_text(text, index)
+    }
+
+    fn delete_char_range(&mut self, range: std::ops::Range<egui::text::CharIndex>) {
+        self.operations
+            .borrow_mut()
+            .push(CardTitleOperation::Delete(range.start.0..range.end.0));
+        self.text.delete_char_range(range);
+    }
+
+    fn replace_with(&mut self, text: &str) {
+        self.operations
+            .borrow_mut()
+            .push(CardTitleOperation::Replace(text.to_owned()));
+        self.text.replace_with(text);
+    }
+
+    fn type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<CardTitleBuffer<'static>>()
+    }
+}
+
+fn apply_card_title_operations(
+    text: &str,
+    formatting: &InlineText,
+    operations: &[CardTitleOperation],
+    resulting_text: &str,
+) -> Result<InlineText, String> {
+    let mut current_text = text.to_owned();
+    let mut current_formatting = formatting.clone();
+    for operation in operations {
+        let (range, replacement) = match operation {
+            CardTitleOperation::Insert { index, text } => (*index..*index, text.as_str()),
+            CardTitleOperation::Delete(range) => (range.clone(), ""),
+            CardTitleOperation::Replace(text) => (0..current_text.chars().count(), text.as_str()),
+        };
+        (current_text, current_formatting) =
+            current_formatting.replace_label_range(&current_text, range, replacement)?;
+    }
+    if current_text != resulting_text {
+        return Err("Rich card title operations did not match the editor value".into());
+    }
+    current_formatting.validate(resulting_text)?;
+    Ok(current_formatting)
 }
 
 /// An existing title edit that may be resumed after its text was committed.
@@ -984,6 +1065,11 @@ impl MapView {
             topic: id,
             text: t.title.clone(),
             original: t.title.clone(),
+            original_inline_text: t.inline_text.clone(),
+            inline_text: t.inline_text.clone(),
+            rich_history: None,
+            rich_history_composing: false,
+            owner_document: None,
             select_all,
             focus_requested: false,
             focus_retry_after: None,
@@ -1128,13 +1214,72 @@ impl MapView {
     }
 
     pub fn has_title_changes(&self) -> bool {
-        self.editing.as_ref().is_some_and(|e| e.text != e.original)
+        self.editing.as_ref().is_some_and(|edit| {
+            edit.text != edit.original || edit.inline_text != edit.original_inline_text
+        })
     }
 
     pub fn title_draft(&self) -> Option<(TopicId, &str, &str)> {
         self.editing
             .as_ref()
             .map(|edit| (edit.topic, edit.original.as_str(), edit.text.as_str()))
+    }
+
+    pub fn title_rich_formatting_draft(&self) -> Option<InlineText> {
+        self.editing
+            .as_ref()
+            .and_then(|edit| edit.rich_history.as_ref())
+            .map(|history| history.formatting().clone())
+    }
+
+    pub fn validated_card_title_rich_draft(
+        &self,
+        doc: &Document,
+    ) -> thinoda_core::EditResult<Option<(TopicId, String, String, InlineText)>> {
+        let Some(edit) = self.editing.as_ref() else {
+            return Ok(None);
+        };
+        let Some(history) = &edit.rich_history else {
+            return Ok(None);
+        };
+        if edit.owner_document != Some(doc.instance_id()) {
+            return Err(thinoda_core::EditError::Invalid(
+                "Rich card title belongs to a different document; draft retained".into(),
+            ));
+        }
+        let topic = doc.sheet().topic(edit.topic).ok_or_else(|| {
+            thinoda_core::EditError::Invalid("Title source no longer exists; draft retained".into())
+        })?;
+        if topic.title != edit.original || topic.inline_text != edit.original_inline_text {
+            return Err(thinoda_core::EditError::Invalid(
+                "Title source changed while editing; draft retained".into(),
+            ));
+        }
+        if history.text() != edit.text {
+            return Err(thinoda_core::EditError::Invalid(
+                "Rich card title draft is out of sync; draft retained".into(),
+            ));
+        }
+        if !board_input::topic_is_unlocked(doc.sheet(), edit.topic)
+            || !matches!(
+                topic.card.as_ref().map(|card| card.kind),
+                Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+            )
+        {
+            return Err(thinoda_core::EditError::Invalid(
+                "Rich card title is no longer editable; draft retained".into(),
+            ));
+        }
+        history
+            .formatting()
+            .validate(history.text())
+            .map_err(thinoda_core::EditError::Invalid)?;
+        Ok(Some((
+            edit.topic,
+            edit.original.clone(),
+            edit.text.clone(),
+            history.formatting().clone(),
+        )))
     }
 
     pub fn take_title_error(&mut self) -> Option<String> {
@@ -1163,17 +1308,42 @@ impl MapView {
                 "Card or group is locked; title draft retained".into(),
             ));
         }
-        if e.text == e.original {
+        if e.text == e.original && e.inline_text == e.original_inline_text {
             self.editing = None;
             return Ok(false);
         }
         let current = doc.sheet().topic(e.topic).ok_or_else(|| {
             thinoda_core::EditError::Invalid("Title source no longer exists; draft retained".into())
         })?;
-        if current.title != e.original {
+        if current.title != e.original || current.inline_text != e.original_inline_text {
             return Err(thinoda_core::EditError::Invalid(
                 "Title source changed while editing; draft retained".into(),
             ));
+        }
+        if let Some(history) = &e.rich_history {
+            if e.owner_document != Some(doc.instance_id()) {
+                return Err(thinoda_core::EditError::Invalid(
+                    "Rich card title belongs to a different document; draft retained".into(),
+                ));
+            }
+            if !matches!(
+                current.card.as_ref().map(|card| card.kind),
+                Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+            ) {
+                return Err(thinoda_core::EditError::Invalid(
+                    "Rich titles are only supported on sticky and text cards; draft retained"
+                        .into(),
+                ));
+            }
+            if history.text() != e.text {
+                return Err(thinoda_core::EditError::Invalid(
+                    "Rich card title draft is out of sync; draft retained".into(),
+                ));
+            }
+            doc.set_card_title_with_rich_text(e.topic, &e.text, history.formatting().clone())?;
+            self.editing = None;
+            self.title_error = None;
+            return Ok(true);
         }
         doc.edit_sheet("Edit Title", |s| s.set_title(e.topic, &e.text))?;
         self.editing = None;
@@ -3001,6 +3171,63 @@ fn show_editor(
     layout: &Layout,
     out: &mut CanvasOutput,
 ) {
+    let rich_card_title = view
+        .editing
+        .as_ref()
+        .and_then(|edit| doc.sheet().topic(edit.topic))
+        .is_some_and(|topic| {
+            topic.inline_text != InlineText::default()
+                && matches!(
+                    topic.card.as_ref().map(|card| card.kind),
+                    Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
+                )
+        });
+    if rich_card_title {
+        let owner = doc.instance_id();
+        let Some(edit) = view.editing.as_mut() else {
+            return;
+        };
+        let owner_mismatch = edit.owner_document.is_some_and(|current| current != owner);
+        if owner_mismatch {
+            view.title_error = Some(
+                "Rich card title belongs to a different document; cancel and reopen it".into(),
+            );
+        } else {
+            edit.owner_document = Some(owner);
+        }
+        if !owner_mismatch && edit.rich_history.is_none() {
+            let current_formatting = if edit.text == edit.original {
+                edit.original_inline_text.clone()
+            } else {
+                match edit.original_inline_text.replace_label_range(
+                    &edit.original,
+                    0..edit.original.chars().count(),
+                    &edit.text,
+                ) {
+                    Ok((_, formatting)) => formatting,
+                    Err(error) => {
+                        view.title_error = Some(error);
+                        return;
+                    }
+                }
+            };
+            edit.inline_text = current_formatting.clone();
+            match RichTextDraft::new(
+                edit.text.clone(),
+                current_formatting,
+                DraftSelection {
+                    anchor: edit.text.chars().count(),
+                    focus: edit.text.chars().count(),
+                },
+            ) {
+                Ok(history) => edit.rich_history = Some(history),
+                Err(error) => {
+                    view.title_error = Some(error);
+                    return;
+                }
+            }
+        }
+    }
     let Some(edit) = view.editing.as_ref() else {
         return;
     };
@@ -3111,6 +3338,28 @@ fn show_editor(
         edit.companion_cursor = TextEdit::load_state(ui.ctx(), edit_id)
             .map(|state| (edit.text.clone(), state.cursor.char_range()));
     }
+    let mut history_cursor = None;
+    if edit.rich_history.is_some() && !ime_active && ui.memory(|memory| memory.has_focus(edit_id)) {
+        let redo = ui.input_mut(|input| {
+            input.consume_key(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z)
+                || input.consume_key(Modifiers::COMMAND, Key::Y)
+        });
+        let undo = !redo && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Z));
+        if (undo || redo)
+            && let Some(history) = &mut edit.rich_history
+        {
+            let result = if undo { history.undo() } else { history.redo() };
+            match result {
+                Ok(true) => {
+                    edit.text = history.text().to_owned();
+                    edit.inline_text = history.formatting().clone();
+                    history_cursor = Some(history.selection());
+                }
+                Ok(false) => {}
+                Err(error) => view.title_error = Some(error),
+            }
+        }
+    }
     let align = match style.align {
         thinoda_core::TextAlign::Left => egui::Align::LEFT,
         thinoda_core::TextAlign::Right => egui::Align::RIGHT,
@@ -3119,7 +3368,42 @@ fn show_editor(
     let line_height =
         ui.fonts_mut(|fonts| fonts.row_height(&font)) + ui.spacing().extra_text_line_spacing;
     let decoration = Stroke::new((style.font_size * view.zoom / 14.0).max(0.6), color);
+    let rich_layout = text_card && edit.rich_history.is_some();
+    let rich_formatting = edit.inline_text.clone();
+    let zoom = view.zoom;
+    let rich_base = thinoda_core::label_style::LabelStyle {
+        font_family: style.font_family.clone(),
+        font_size: Some(style.font_size),
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+        strikethrough: style.strikethrough,
+        align: style.align,
+        ..Default::default()
+    };
+    let background = style.fill.map_or(Color32::WHITE, color32);
+    let mut rich_bold_sections = Vec::new();
+    let mut rich_list_markers = Vec::new();
     let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+        if rich_layout {
+            let (job, bold, markers) = board_input::card_title_layout_job(
+                text.as_str(),
+                &rich_formatting,
+                &board_input::LabelEditorLayout {
+                    ctx: ui.ctx(),
+                    base: &rich_base,
+                    font: &font,
+                    zoom,
+                    color,
+                    background,
+                    wrap_width,
+                    align,
+                },
+            );
+            rich_bold_sections = bold;
+            rich_list_markers = markers;
+            return ui.fonts_mut(|fonts| fonts.layout_job(job));
+        }
         let mut job = egui::text::LayoutJob::simple(
             text.as_str().to_owned(),
             font.clone(),
@@ -3143,7 +3427,26 @@ fn show_editor(
         };
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
-    let mut te = TextEdit::multiline(&mut edit.text)
+    let operations = std::cell::RefCell::new(Vec::new());
+    let before_text = edit.text.clone();
+    let before_formatting = edit.inline_text.clone();
+    let before_cursor =
+        TextEdit::load_state(ui.ctx(), edit_id).and_then(|state| state.cursor.char_range());
+    let before_selection = before_cursor.map_or_else(
+        || DraftSelection {
+            anchor: before_text.chars().count(),
+            focus: before_text.chars().count(),
+        },
+        |cursor| DraftSelection {
+            anchor: cursor.secondary.index.0,
+            focus: cursor.primary.index.0,
+        },
+    );
+    let mut title_buffer = CardTitleBuffer {
+        text: &mut edit.text,
+        operations: &operations,
+    };
+    let mut te = TextEdit::multiline(&mut title_buffer)
         .id(edit_id)
         .font(font.clone())
         .text_color(color)
@@ -3162,14 +3465,87 @@ fn show_editor(
             vertical_arrows: true,
             escape: true,
         });
-    if text_card && (style.italic || style.underline || style.strikethrough) {
+    if rich_layout || (text_card && (style.italic || style.underline || style.strikethrough)) {
         te = te.layouter(&mut layouter);
     }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-    let bold_underlay = (text_card && style.bold).then(|| child.painter().add(egui::Shape::Noop));
+    let bold_underlay =
+        (rich_layout || (text_card && style.bold)).then(|| child.painter().add(egui::Shape::Noop));
     let pointer = pending_before_outside_pointer
         .then(|| ui.input_mut(|input| std::mem::take(&mut input.pointer)));
     let output = te.show(&mut child);
+    if let Some(selection) = history_cursor {
+        let mut state = output.state.clone();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(selection.anchor),
+                egui::text::CCursor::new(selection.focus),
+            )));
+        state.store(ui.ctx(), edit_id);
+    }
+    if let Some(history) = &mut edit.rich_history {
+        let draft_selection = history_cursor.unwrap_or_else(|| {
+            let selection = output.state.cursor.char_range().unwrap_or_else(|| {
+                egui::text::CCursorRange::one(egui::text::CCursor::new(edit.text.chars().count()))
+            });
+            DraftSelection {
+                anchor: selection.secondary.index.0,
+                focus: selection.primary.index.0,
+            }
+        });
+        let operations = operations.into_inner();
+        if operations.is_empty() {
+            if let Err(error) = history.set_selection(draft_selection) {
+                view.title_error = Some(error);
+            }
+        } else {
+            let (is_ime_preedit, is_ime_end) = ui.input(|input| {
+                let mut preedit = false;
+                let mut end = false;
+                for event in &input.events {
+                    match event {
+                        egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+                            preedit = !text.is_empty();
+                            end = text.is_empty();
+                        }
+                        egui::Event::Ime(egui::ImeEvent::Commit(_)) => end = true,
+                        _ => {}
+                    }
+                }
+                (preedit, end)
+            });
+            let history_result = (|| {
+                history.set_selection(before_selection)?;
+                let formatting = apply_card_title_operations(
+                    &before_text,
+                    &before_formatting,
+                    &operations,
+                    &edit.text,
+                )?;
+                if is_ime_preedit && !edit.rich_history_composing {
+                    history.begin_composition()?;
+                    edit.rich_history_composing = true;
+                }
+                history.replace_content(edit.text.clone(), formatting.clone(), draft_selection)?;
+                if (is_ime_end || !is_ime_preedit) && edit.rich_history_composing {
+                    history.commit_composition()?;
+                    edit.rich_history_composing = false;
+                }
+                edit.inline_text = formatting;
+                Ok::<(), String>(())
+            })();
+            if let Err(error) = history_result {
+                if edit.rich_history_composing {
+                    let _ = history.cancel_composition();
+                    edit.rich_history_composing = false;
+                }
+                edit.text = before_text;
+                edit.inline_text = before_formatting;
+                view.title_error = Some(error);
+            }
+        }
+    }
     if let Some(pointer) = pointer {
         ui.input_mut(|input| input.pointer = pointer);
         ui.memory_mut(|memory| {
@@ -3187,13 +3563,49 @@ fn show_editor(
         }
     }
     if let Some(index) = bold_underlay {
-        // Keep selection and IME visuals above the unselected faux-bold copy.
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
-        let pos = output.galley_pos - vec2(galley.rect.left(), 0.0) + vec2(0.45 * view.zoom, 0.0);
-        child
-            .painter()
-            .with_clip_rect(output.text_clip_rect)
-            .set(index, egui::Shape::galley(pos, galley, color));
+        if rich_layout
+            && !rich_bold_sections.is_empty()
+            && rich_bold_sections.len() == output.galley.job.sections.len()
+        {
+            let mut job = (*output.galley.job).clone();
+            for (section, bold) in job.sections.iter_mut().zip(&rich_bold_sections) {
+                if !bold {
+                    section.format.color = Color32::TRANSPARENT;
+                }
+                section.format.underline = Stroke::NONE;
+                section.format.strikethrough = Stroke::NONE;
+                section.format.background = Color32::TRANSPARENT;
+            }
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            let pos = output.galley_pos - vec2(galley.rect.left(), 0.0) + vec2(0.45 * zoom, 0.0);
+            child
+                .painter()
+                .with_clip_rect(output.text_clip_rect)
+                .set(index, egui::Shape::galley(pos, galley, color));
+        } else if !rich_layout && text_card && style.bold {
+            // Keep selection and IME visuals above the unselected faux-bold copy.
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
+            let pos = output.galley_pos - vec2(galley.rect.left(), 0.0) + vec2(0.45 * zoom, 0.0);
+            child
+                .painter()
+                .with_clip_rect(output.text_clip_rect)
+                .set(index, egui::Shape::galley(pos, galley, color));
+        }
+    }
+    if rich_layout {
+        let painter = child.painter().with_clip_rect(output.text_clip_rect);
+        let origin = output.galley_pos - vec2(output.galley.rect.left(), 0.0);
+        for (start, marker, indent) in rich_list_markers {
+            let cursor = output
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(start));
+            let galley = painter.layout_no_wrap(marker, font.clone(), color);
+            painter.galley(
+                origin + vec2(cursor.left() - indent, cursor.bottom() - galley.size().y),
+                galley,
+                color,
+            );
+        }
     }
     if output.response.changed() {
         view.pending_reveal = Some(edit.topic);
@@ -3534,7 +3946,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_formatted_card_title_is_rejected_without_losing_its_draft_or_styles() {
+    fn changed_formatted_card_title_commits_without_losing_its_styles() {
         use thinoda_core::{
             CardKind, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
             board::Card, geometry::Vec2,
@@ -3569,19 +3981,137 @@ mod tests {
 
             view.begin_edit(doc.sheet(), id, false);
             view.set_editing_text("Tricky");
-
-            assert!(!view.commit_edit(&mut doc));
-            let error = view.take_title_error().unwrap();
-            assert!(
-                error.contains("Formatted card titles"),
-                "unexpected error: {error}"
+            let (text, formatting) = inline_text
+                .replace_label_range("Sticky", 0..6, "Tricky")
+                .unwrap();
+            let edit = view.editing.as_mut().unwrap();
+            edit.text = text;
+            edit.inline_text = formatting.clone();
+            edit.owner_document = Some(doc.instance_id());
+            edit.rich_history = Some(
+                RichTextDraft::new(
+                    "Tricky".into(),
+                    formatting.clone(),
+                    DraftSelection {
+                        anchor: 6,
+                        focus: 6,
+                    },
+                )
+                .unwrap(),
             );
-            assert_eq!(doc.sheet().topic(id).unwrap().title, "Sticky");
-            assert_eq!(doc.sheet().topic(id).unwrap().inline_text, inline_text);
-            assert_eq!(view.editing_topic(), Some(id));
-            assert_eq!(view.editing_text(), Some("Tricky"));
-            assert!(!doc.undo(), "rejected title edits must not enter history");
+
+            assert!(view.commit_edit(&mut doc));
+            let topic = doc.sheet().topic(id).unwrap();
+            assert_eq!(topic.title, "Tricky");
+            assert_eq!(topic.inline_text, formatting);
+            assert_eq!(topic.inline_text.runs[0].start, 0);
+            assert_eq!(topic.inline_text.runs[0].end, 6);
+            assert_eq!(topic.inline_text.paragraphs, inline_text.paragraphs);
+            assert!(doc.undo());
+            let topic = doc.sheet().topic(id).unwrap();
+            assert_eq!(topic.title, "Sticky");
+            assert_eq!(topic.inline_text, inline_text);
         }
+    }
+
+    #[test]
+    fn card_title_operations_keep_runs_with_repeated_text() {
+        use thinoda_core::rich_text::{InlineTextRun, InlineTextStyle};
+
+        let text = "same same";
+        let formatting = InlineText {
+            runs: vec![InlineTextRun {
+                start: 5,
+                end: 9,
+                style: InlineTextStyle {
+                    italic: Some(true),
+                    ..InlineTextStyle::default()
+                },
+            }],
+            paragraphs: Vec::new(),
+        };
+        let updated = apply_card_title_operations(
+            text,
+            &formatting,
+            &[
+                CardTitleOperation::Delete(0..4),
+                CardTitleOperation::Insert {
+                    index: 0,
+                    text: "new".into(),
+                },
+            ],
+            "new same",
+        )
+        .unwrap();
+        assert_eq!(updated.runs[0].start, 4);
+        assert_eq!(updated.runs[0].end, 8);
+        assert_eq!(updated.runs[0].style.italic, Some(true));
+    }
+
+    #[test]
+    fn formatted_card_title_editor_keeps_rich_text_when_typing() {
+        use thinoda_core::{
+            CardKind, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
+            board::Card, geometry::Vec2,
+        };
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "Sticky",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        sheet.topic_mut(id).unwrap().inline_text = InlineText {
+            runs: vec![InlineTextRun {
+                start: 0,
+                end: 2,
+                style: InlineTextStyle {
+                    bold: Some(true),
+                    ..InlineTextStyle::default()
+                },
+            }],
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+        };
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(2);
+        h.get_by_label("Topic title").type_text("X");
+        h.run_steps(1);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("Sticky"));
+        h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("StickyX"));
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+
+        let topic = h.state().doc.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "StickyX");
+        assert_eq!(topic.inline_text.runs[0].start, 0);
+        assert_eq!(topic.inline_text.runs[0].end, 2);
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+        assert_eq!(
+            topic.inline_text.paragraphs,
+            vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }]
+        );
     }
 
     #[test]
@@ -3669,6 +4199,11 @@ mod tests {
             topic: root,
             text: String::new(),
             original: String::new(),
+            original_inline_text: InlineText::default(),
+            inline_text: InlineText::default(),
+            rich_history: None,
+            rich_history_composing: false,
+            owner_document: None,
             select_all: false,
             focus_requested: false,
             focus_retry_after: None,
