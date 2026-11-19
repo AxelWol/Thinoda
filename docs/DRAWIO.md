@@ -821,12 +821,13 @@ text. Save-and-resume rebases formatting and refuses a different document.
 Recovery has a focused snapshot round-trip and stale-format/foreign-owner
 test. IME composition also closes when a commit changes no text.
 
-**D9 card keyboard ordering (partial).** Keyboard-only batches in a focused
-formatted title are processed event by event before the visible editor pass,
-including undo/redo and a following commit key. Synthetic tests cover both
-typing-before-undo and undo-before-typing, and multiple text events around a
-partial grapheme selection. Separate text events create separate local undo
-steps; composition, pointer and accessibility batches are not split here.
+**D9 card input ordering (partial).** Keyboard batches and title-targeted
+accessible text-value actions in a focused formatted title are processed
+event by event before the visible editor pass, including undo/redo and a
+following commit key. Synthetic tests cover typing-before-undo,
+undo-before-typing and mixed accessible/keyboard replacement around a partial
+grapheme selection. Separate text events create separate local undo steps;
+composition and pointer batches are not split here.
 
 **D9 card graphemes (partial).** Single-event text/paste, line-break,
 deletion, cut, accessible selected-text replacement and initial IME input
@@ -834,10 +835,10 @@ use the board-label editor's grapheme boundaries. Focused synthetic tests
 cover replacement and deletion of a partial combining-character selection,
 an empty accessible replacement, caret snapping and initial IME insertion.
 
-Duck check: batches containing pointer, accessibility or IME events do not use
-the keyboard-only history path, and mixed-input ordering and full grapheme
-parity remain open. Real-platform IME, screen-reader and visual acceptance are
-still required.
+Duck check: batches containing pointer, unrelated accessibility or IME events
+do not use this ordered path, and mixed-input ordering and full grapheme parity
+remain open. Real-platform IME, screen-reader and visual acceptance are still
+required.
 
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;

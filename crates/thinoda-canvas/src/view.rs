@@ -3199,16 +3199,18 @@ fn show_editor(
                 && input
                     .events
                     .iter()
-                    .filter(|event| board_input::label_keyboard_event(event))
+                    .filter(|event| {
+                        board_input::label_keyboard_event(event)
+                            || card_title_accessible_value(event, edit_id).is_some()
+                    })
                     .count()
                     > 1
                 && !input.events.iter().any(|event| {
                     matches!(
                         event,
-                        egui::Event::PointerButton { .. }
-                            | egui::Event::Ime(_)
-                            | egui::Event::AccessKitActionRequest(_)
-                    )
+                        egui::Event::PointerButton { .. } | egui::Event::Ime(_)
+                    ) || (matches!(event, egui::Event::AccessKitActionRequest(_))
+                        && card_title_accessible_value(event, edit_id).is_none())
                 })
         });
     if split_keyboard {
@@ -3220,7 +3222,9 @@ fn show_editor(
         });
         let mut processed = vec![false; events.len()];
         for (index, event) in events.iter().enumerate() {
-            if !board_input::label_keyboard_event(event) {
+            if !board_input::label_keyboard_event(event)
+                && card_title_accessible_value(event, edit_id).is_none()
+            {
                 continue;
             }
             ui.input_mut(|input| input.events = vec![event.clone()]);
@@ -3381,16 +3385,29 @@ fn protect_card_title_graphemes(
 }
 
 fn card_title_accessible_replacement(event: &egui::Event, edit_id: Id) -> Option<&str> {
+    card_title_accessible_value(event, edit_id).and_then(|(action, text)| {
+        (action == egui::accesskit::Action::ReplaceSelectedText).then_some(text)
+    })
+}
+
+fn card_title_accessible_value(
+    event: &egui::Event,
+    edit_id: Id,
+) -> Option<(egui::accesskit::Action, &str)> {
     match event {
         egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
-            action: egui::accesskit::Action::ReplaceSelectedText,
+            action,
             target_node,
             target_tree,
             data: Some(egui::accesskit::ActionData::Value(text)),
         }) if *target_node == edit_id.accesskit_id()
-            && *target_tree == egui::accesskit::TreeId::ROOT =>
+            && *target_tree == egui::accesskit::TreeId::ROOT
+            && matches!(
+                action,
+                egui::accesskit::Action::ReplaceSelectedText | egui::accesskit::Action::SetValue
+            ) =>
         {
-            Some(text)
+            Some((*action, text))
         }
         _ => None,
     }
@@ -4556,6 +4573,29 @@ mod tests {
         h.input_mut()
             .events
             .extend([egui::Event::Text("X".into()), egui::Event::Text("Y".into())]);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("XYb"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        let mut state = TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut().events.extend([
+            egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::ReplaceSelectedText,
+                target_node: edit_id.accesskit_id(),
+                target_tree: egui::accesskit::TreeId::ROOT,
+                data: Some(egui::accesskit::ActionData::Value("X".into())),
+            }),
+            egui::Event::Text("Y".into()),
+        ]);
         h.run_steps(1);
         assert_eq!(h.state().view.editing_text(), Some("XYb"));
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
