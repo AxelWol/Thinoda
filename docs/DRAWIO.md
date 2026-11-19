@@ -814,6 +814,18 @@ unchanged. Focused native tests cover repeated text, style/list preservation,
 commit and undo. Real IME/accessibility acceptance and broader rich-title
 formatting controls remain open; this does not complete D9.
 
+**D9 formatted-card safety follow-up.** Deleting all or part of a formatted
+title no longer indexes stale run boundaries during intermediate layouts;
+selected-text replacement inherits the selected run rather than the preceding
+text. Save-and-resume rebases formatting and refuses a different document.
+Recovery has a focused snapshot round-trip and stale-format/foreign-owner
+test. IME composition also closes when a commit changes no text.
+
+Duck check: this does not establish parity with the board-label editor's
+ordered processing of mixed keyboard, pointer, accessibility and IME events
+in the same frame, or its grapheme-boundary safeguards. Those remain open;
+real-platform IME, screen-reader and visual acceptance are still required.
+
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;
 moving the caret clears the pending override. Batched keyboard and in-editor

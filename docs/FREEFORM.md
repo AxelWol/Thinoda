@@ -1911,6 +1911,13 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   retention and document undo. Real IME/accessibility behavior and broader
   formatted-title toolbar controls remain unverified/open; this checkpoint
   does not claim D9 completion.
+- Follow-up critique: transient editor layouts must reconcile the current
+  ordered operations before indexing rich runs, including delete-all. Adjacent
+  selection deletion/insertion is a single replacement so it inherits the
+  selected style; committed continuations rebase formatting and check the
+  document owner. Snapshot round-trip and foreign-owner/stale-format tests
+  cover recovery. Batched mixed-input ordering and grapheme safeguards still
+  need parity work against the shape-label editor.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

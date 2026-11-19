@@ -440,10 +440,18 @@ fn apply_card_title_operations(
 ) -> Result<InlineText, String> {
     let mut current_text = text.to_owned();
     let mut current_formatting = formatting.clone();
-    for operation in operations {
+    let mut operations = operations.iter().peekable();
+    while let Some(operation) = operations.next() {
         let (range, replacement) = match operation {
             CardTitleOperation::Insert { index, text } => (*index..*index, text.as_str()),
-            CardTitleOperation::Delete(range) => (range.clone(), ""),
+            CardTitleOperation::Delete(range) => match operations.peek() {
+                Some(CardTitleOperation::Insert { index, text }) if *index == range.start => {
+                    let replacement = text.as_str();
+                    operations.next();
+                    (range.clone(), replacement)
+                }
+                _ => (range.clone(), ""),
+            },
             CardTitleOperation::Replace(text) => (0..current_text.chars().count(), text.as_str()),
         };
         (current_text, current_formatting) =
@@ -1125,11 +1133,19 @@ impl MapView {
             || !doc
                 .sheet()
                 .topic(continuation.edit.topic)
-                .is_some_and(|topic| topic.title == continuation.edit.text)
+                .is_some_and(|topic| {
+                    topic.title == continuation.edit.text
+                        && topic.inline_text == continuation.edit.inline_text
+                })
+            || continuation
+                .edit
+                .owner_document
+                .is_some_and(|owner| owner != doc.instance_id())
         {
             return false;
         }
         continuation.edit.original = continuation.edit.text.clone();
+        continuation.edit.original_inline_text = continuation.edit.inline_text.clone();
         self.editing = Some(continuation.edit);
         self.title_error = None;
         true
@@ -3384,11 +3400,21 @@ fn show_editor(
     let background = style.fill.map_or(Color32::WHITE, color32);
     let mut rich_bold_sections = Vec::new();
     let mut rich_list_markers = Vec::new();
+    let operations = std::cell::RefCell::new(Vec::new());
+    let before_text = edit.text.clone();
+    let before_formatting = edit.inline_text.clone();
     let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
         if rich_layout {
+            let current_formatting = apply_card_title_operations(
+                &before_text,
+                &rich_formatting,
+                &operations.borrow(),
+                text.as_str(),
+            )
+            .unwrap_or_default();
             let (job, bold, markers) = board_input::card_title_layout_job(
                 text.as_str(),
-                &rich_formatting,
+                &current_formatting,
                 &board_input::LabelEditorLayout {
                     ctx: ui.ctx(),
                     base: &rich_base,
@@ -3427,9 +3453,6 @@ fn show_editor(
         };
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
-    let operations = std::cell::RefCell::new(Vec::new());
-    let before_text = edit.text.clone();
-    let before_formatting = edit.inline_text.clone();
     let before_cursor =
         TextEdit::load_state(ui.ctx(), edit_id).and_then(|state| state.cursor.char_range());
     let before_selection = before_cursor.map_or_else(
@@ -3495,26 +3518,32 @@ fn show_editor(
             }
         });
         let operations = operations.into_inner();
+        let (is_ime_preedit, is_ime_end) = ui.input(|input| {
+            let mut preedit = false;
+            let mut end = false;
+            for event in &input.events {
+                match event {
+                    egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+                        preedit = !text.is_empty();
+                        end = text.is_empty();
+                    }
+                    egui::Event::Ime(egui::ImeEvent::Commit(_)) => end = true,
+                    _ => {}
+                }
+            }
+            (preedit, end)
+        });
         if operations.is_empty() {
             if let Err(error) = history.set_selection(draft_selection) {
                 view.title_error = Some(error);
             }
-        } else {
-            let (is_ime_preedit, is_ime_end) = ui.input(|input| {
-                let mut preedit = false;
-                let mut end = false;
-                for event in &input.events {
-                    match event {
-                        egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
-                            preedit = !text.is_empty();
-                            end = text.is_empty();
-                        }
-                        egui::Event::Ime(egui::ImeEvent::Commit(_)) => end = true,
-                        _ => {}
-                    }
+            if is_ime_end && edit.rich_history_composing {
+                match history.commit_composition() {
+                    Ok(_) => edit.rich_history_composing = false,
+                    Err(error) => view.title_error = Some(error),
                 }
-                (preedit, end)
-            });
+            }
+        } else {
             let history_result = (|| {
                 history.set_selection(before_selection)?;
                 let formatting = apply_card_title_operations(
@@ -3537,11 +3566,16 @@ fn show_editor(
             })();
             if let Err(error) = history_result {
                 if edit.rich_history_composing {
-                    let _ = history.cancel_composition();
-                    edit.rich_history_composing = false;
+                    match history.cancel_composition() {
+                        Ok(()) => edit.rich_history_composing = false,
+                        Err(cancel_error) => {
+                            view.title_error = Some(format!("{error}; {cancel_error}"));
+                            return;
+                        }
+                    }
                 }
-                edit.text = before_text;
-                edit.inline_text = before_formatting;
+                edit.text = history.text().to_owned();
+                edit.inline_text = history.formatting().clone();
                 view.title_error = Some(error);
             }
         }
@@ -4046,6 +4080,200 @@ mod tests {
         assert_eq!(updated.runs[0].start, 4);
         assert_eq!(updated.runs[0].end, 8);
         assert_eq!(updated.runs[0].style.italic, Some(true));
+    }
+
+    #[test]
+    fn card_title_selected_replacement_inherits_selected_style() {
+        let mut rich = InlineText::default();
+        rich.update_range("ab", 0..1, |style| style.bold = Some(true))
+            .unwrap();
+        let updated = apply_card_title_operations(
+            "ab",
+            &rich,
+            &[
+                CardTitleOperation::Delete(0..1),
+                CardTitleOperation::Insert {
+                    index: 0,
+                    text: "X".into(),
+                },
+            ],
+            "Xb",
+        )
+        .unwrap();
+        assert_eq!(updated.runs[0].start, 0);
+        assert_eq!(updated.runs[0].end, 1);
+        assert_eq!(updated.runs[0].style.bold, Some(true));
+    }
+
+    #[test]
+    fn formatted_card_title_editor_can_delete_all_text() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "Sticky",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, true);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(2);
+        h.key_press(Key::Backspace);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some(""));
+        h.key_press(Key::Enter);
+        h.run_steps(1);
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "");
+    }
+
+    #[test]
+    fn formatted_card_title_continuation_rebases_committed_formatting() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..1, |style| style.bold = Some(true))
+            .unwrap();
+        let mut doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let edit = view.editing.as_mut().unwrap();
+        let (text, formatting) = edit
+            .inline_text
+            .replace_label_range(&edit.text, 0..1, "XY")
+            .unwrap();
+        edit.owner_document = Some(doc.instance_id());
+        edit.text = text.clone();
+        edit.inline_text = formatting.clone();
+        edit.rich_history = Some(
+            RichTextDraft::new(
+                text,
+                formatting.clone(),
+                DraftSelection {
+                    anchor: 2,
+                    focus: 2,
+                },
+            )
+            .unwrap(),
+        );
+        let continuation = view.capture_title_edit_continuation().unwrap();
+        assert!(view.try_commit_edit(&mut doc).unwrap());
+        assert!(!view.resume_title_edit_after_commit(&doc.clone(), continuation.clone()));
+        assert!(view.resume_title_edit_after_commit(&doc, continuation));
+        assert_eq!(
+            view.editing.as_ref().unwrap().original_inline_text,
+            formatting
+        );
+        let edit = view.editing.as_mut().unwrap();
+        let (text, rich) = formatting
+            .replace_label_range(&edit.text, 2..2, "Z")
+            .unwrap();
+        edit.rich_history
+            .as_mut()
+            .unwrap()
+            .replace_content(
+                text.clone(),
+                rich.clone(),
+                DraftSelection {
+                    anchor: 3,
+                    focus: 3,
+                },
+            )
+            .unwrap();
+        edit.text = text;
+        edit.inline_text = rich;
+        assert!(view.try_commit_edit(&mut doc).unwrap());
+        assert_eq!(doc.sheet().topic(id).unwrap().title, "XYZb");
+    }
+
+    #[test]
+    fn formatted_card_title_ime_commit_is_one_undo_step() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(2);
+        for text in ["n", "ni"] {
+            h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: text.into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abx"));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("ab"));
+        h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abx"));
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("n".into())));
+        h.run_steps(1);
+        assert!(
+            !h.state()
+                .view
+                .editing
+                .as_ref()
+                .unwrap()
+                .rich_history_composing
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(1);
+        assert_eq!(h.state().view.editing_text(), Some("abx"));
     }
 
     #[test]

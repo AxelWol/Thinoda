@@ -1539,6 +1539,75 @@ mod tests {
         }
     }
 
+    #[test]
+    fn formatted_card_title_recovery_preserves_draft_and_rejects_foreign_document() {
+        use thinoda_core::{CardKind, InlineParagraph, ListKind, Sheet, Vec2, board::Card};
+        use thinoda_platform::Paths;
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        topic.inline_text.paragraphs.push(InlineParagraph {
+            index: 0,
+            list: ListKind::Bulleted,
+        });
+        let mut doc = OpenDoc::new(Workbook::new(sheet));
+        doc.doc.mark_saved();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                |ui, doc: &mut OpenDoc| {
+                    thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+                },
+                doc,
+            );
+        harness.run_steps(2);
+        harness.get_by_label("Topic title").type_text("X");
+        harness.run_steps(1);
+        let doc = harness.state_mut();
+        let draft = doc.document_with_drafts_for_recovery().unwrap();
+        let topic = draft.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "abX");
+        assert_eq!(topic.inline_text.runs[0].end, 3);
+        assert_eq!(topic.inline_text.paragraphs[0].list, ListKind::Bulleted);
+        assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "ab");
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        doc.snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let recovered = orphans[0].docs[0].load().unwrap();
+        assert_eq!(recovered.active().topic(id).unwrap(), topic);
+        drop(orphans);
+        recovery.resume().unwrap();
+
+        let mut changed_formatting = doc.doc.sheet().topic(id).unwrap().inline_text.clone();
+        changed_formatting
+            .update_range("ab", 0..2, |style| style.italic = Some(true))
+            .unwrap();
+        doc.doc
+            .set_card_title_with_rich_text(id, "ab", changed_formatting)
+            .unwrap();
+        assert!(doc.document_with_drafts_for_recovery().is_err());
+        assert!(doc.doc.undo());
+        doc.doc = doc.doc.clone();
+        assert!(doc.document_with_drafts_for_recovery().is_err());
+        assert_eq!(doc.view.editing_text(), Some("abX"));
+    }
+
     fn pending_board_label() -> (Harness<'static, OpenDoc>, CanvasObjectId) {
         use thinoda_core::{
             CanvasObject, CanvasObjectKind, Rect, ShapeKind, Sheet, SheetRootMode, Vec2,
