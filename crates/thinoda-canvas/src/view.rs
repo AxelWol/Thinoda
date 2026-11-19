@@ -380,6 +380,7 @@ struct EditState {
     focus_retry_after: Option<(egui::ViewportId, u64)>,
     ime_composing: bool,
     companion_cursor: Option<(String, Option<egui::text::CCursorRange>)>,
+    source_unavailable: bool,
 }
 
 #[derive(Debug)]
@@ -1029,6 +1030,24 @@ impl MapView {
         if let Some(e) = &self.editing
             && (sheet.is_anchor(e.topic) || sheet.topic(e.topic).is_none())
         {
+            self.handle_unavailable_title_source();
+        }
+    }
+
+    fn handle_unavailable_title_source(&mut self) {
+        let Some(edit) = self.editing.as_mut() else {
+            return;
+        };
+        let dirty = edit.text != edit.original || edit.inline_text != edit.original_inline_text;
+        if dirty && (edit.rich_history.is_some() || !edit.original_inline_text.is_empty()) {
+            if !edit.source_unavailable {
+                edit.source_unavailable = true;
+                self.title_error = Some(
+                    "Card title source is unavailable; draft retained. Restore the card or cancel the edit"
+                        .into(),
+                );
+            }
+        } else {
             self.editing = None;
         }
     }
@@ -1062,7 +1081,13 @@ impl MapView {
         if sheet.is_anchor(id) || !board_input::topic_is_unlocked(sheet, id) {
             return;
         }
-        if self.title_error.is_some() && self.has_title_changes() {
+        if (self.title_error.is_some()
+            || self
+                .editing
+                .as_ref()
+                .is_some_and(|edit| edit.source_unavailable))
+            && self.has_title_changes()
+        {
             self.title_error =
                 Some("Finish or cancel the current title edit before starting another".into());
             return;
@@ -1083,14 +1108,25 @@ impl MapView {
             focus_retry_after: None,
             ime_composing: false,
             companion_cursor: None,
+            source_unavailable: false,
         });
         self.pending_reveal = Some(id);
     }
 
     /// Starts editing with `text` replacing the title (type-to-edit).
     pub fn begin_edit_with(&mut self, sheet: &Sheet, id: TopicId, text: &str) {
-        if (self.title_error.is_some() && self.has_title_changes())
-            || sheet.is_anchor(id)
+        if (self.title_error.is_some()
+            || self
+                .editing
+                .as_ref()
+                .is_some_and(|edit| edit.source_unavailable))
+            && self.has_title_changes()
+        {
+            self.title_error =
+                Some("Finish or cancel the current title edit before starting another".into());
+            return;
+        }
+        if sheet.is_anchor(id)
             || sheet.topic(id).is_none()
             || !board_input::topic_is_unlocked(sheet, id)
         {
@@ -3603,19 +3639,35 @@ fn show_editor_pass(
             }
         }
     }
-    let Some(edit) = view.editing.as_ref() else {
+    let Some(topic_id) = view.editing.as_ref().map(|edit| edit.topic) else {
         return;
     };
-    let Some(tl) = layout.topics.get(&edit.topic) else {
-        view.editing = None;
+    let Some(tl) = layout.topics.get(&topic_id) else {
+        view.handle_unavailable_title_source();
+        if view.editing.is_some()
+            && ui.memory(|memory| {
+                memory
+                    .focused()
+                    .is_none_or(|focused| focused == MapCanvas::title_editor_id())
+            })
+        {
+            if view.title_ime_active(ui.ctx()) {
+                view.protect_title_ime(ui.ctx(), MapCanvas::title_editor_id());
+            } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+                view.cancel_edit();
+            }
+        }
         return;
     };
+    if let Some(edit) = &mut view.editing {
+        edit.source_unavailable = false;
+    }
     let xf = view.xf();
     let r = xf.rect(topic_editor_rect(doc.sheet(), tl)).expand(2.0);
     let style = &tl.style;
     let text_card = doc
         .sheet()
-        .topic(edit.topic)
+        .topic(topic_id)
         .and_then(|topic| topic.card)
         .is_some_and(|card| {
             matches!(
@@ -4815,6 +4867,128 @@ mod tests {
     }
 
     #[test]
+    fn formatted_card_draft_survives_source_deletion_and_can_resume_after_undo() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), id, false);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run_steps(3);
+        h.event(egui::Event::Text("X".into()));
+        h.run_steps(1);
+        h.state_mut()
+            .doc
+            .edit_sheet("Delete card", |sheet| sheet.remove_topics(&[id]))
+            .unwrap();
+        h.run_steps(2);
+        assert_eq!(h.state().view.editing_text(), Some("abX"));
+        assert!(h.state_mut().view.take_title_error().is_some());
+        h.run_steps(2);
+        assert!(h.state_mut().view.take_title_error().is_none());
+        {
+            let state = h.state_mut();
+            assert!(
+                state
+                    .view
+                    .validated_card_title_rich_draft(&state.doc)
+                    .is_err()
+            );
+            let root = state.doc.sheet().root;
+            state.view.begin_edit_with(state.doc.sheet(), root, "other");
+            assert_eq!(state.view.editing_text(), Some("abX"));
+            assert!(state.view.take_title_error().is_some());
+        }
+        assert!(h.state_mut().doc.undo());
+        h.run_steps(2);
+        let state = h.state_mut();
+        if state.view.editing_topic().is_some() {
+            assert!(state.view.try_commit_edit(&mut state.doc).unwrap());
+        }
+        let topic = state.doc.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "abX");
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+    }
+
+    #[test]
+    fn unavailable_formatted_card_draft_can_be_cancelled() {
+        use thinoda_core::{CardKind, board::Card, geometry::Vec2};
+
+        for composing in [false, true] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "ab",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic
+                .inline_text
+                .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+                .unwrap();
+            let doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+            view.begin_edit(doc.sheet(), id, false);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State { doc, view },
+                );
+            h.run_steps(3);
+            h.event(egui::Event::Text("X".into()));
+            h.run_steps(1);
+            if composing {
+                h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "n".into(),
+                    active_range_chars: None,
+                }));
+                h.run_steps(1);
+            }
+            h.state_mut()
+                .doc
+                .edit_sheet("Delete card", |sheet| sheet.remove_topics(&[id]))
+                .unwrap();
+            h.run_steps(3);
+            assert!(h.state().view.editing_text().unwrap().starts_with("abX"));
+            if composing {
+                h.key_press(Key::Escape);
+                h.run_steps(1);
+                assert!(h.state().view.editing_topic().is_some());
+                h.event(egui::Event::Ime(egui::ImeEvent::Commit(String::new())));
+                h.run_steps(1);
+            }
+            h.key_press(Key::Escape);
+            h.run_steps(1);
+            assert_eq!(h.state().view.editing_topic(), None);
+        }
+    }
+
+    #[test]
     fn formatted_card_title_replacement_protects_partial_graphemes() {
         use thinoda_core::{CardKind, board::Card, geometry::Vec2};
 
@@ -5189,6 +5363,7 @@ mod tests {
             focus_retry_after: None,
             ime_composing: false,
             companion_cursor: None,
+            source_unavailable: false,
         });
         Harness::builder()
             .with_size(vec2(900.0, 600.0))

@@ -1922,11 +1922,18 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   text events create separate local undo steps. An outside canvas press now
   applies preceding eligible text and IME input before committing, without
   consuming later input; a rejected stale-source commit retains the draft.
-  Synthetic tests cover these boundaries, but host chrome can handle input
-  before the canvas and is not covered. In-editor pointer batches and other
-  accessibility targets still need ordering parity. Single-event typing,
-  deletion, cut, accessible selected-text replacement and initial IME input
-  share the shape-label editor's grapheme-boundary rules.
+  The app's native/web input splitter orders title input before host controls;
+  synthetic formatted-title close-tab cases cover text and IME, not all host
+  actions. In-editor pointer batches and other accessibility targets still
+  need ordering parity. Single-event typing, deletion, cut, accessible
+  selected-text replacement and initial IME input share the shape-label
+  editor's grapheme-boundary rules.
+- A dirty formatted draft survives deletion or loss of its layout source.
+  The view warns once, refuses to replace it with a new title edit, and allows
+  cancellation or continuation after the source is restored. Recovery rejects
+  a missing source. This is in-memory retention, not durable orphan recovery;
+  programmatic view resets are not covered by this guarantee. IME updates
+  received while the source is unavailable are not added to the draft.
 
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 

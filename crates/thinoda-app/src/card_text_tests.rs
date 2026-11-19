@@ -3377,6 +3377,67 @@ fn last_title_keystroke_and_close_tab_click_in_one_frame_preserve_the_draft() {
 }
 
 #[test]
+fn formatted_title_input_precedes_close_tab_click() {
+    for ime in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("formatted-close.thinoda");
+        let (mut app, id) = app_with_card(CardKind::Sticky);
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("Card title", 0..4, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .set_card_title_with_rich_text(id, "Card title", rich)
+            .unwrap();
+        doc.save_to(&path, false).unwrap();
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(5);
+        let label = format!("Close Tab: {}", h.state().doc().unwrap().title());
+        let close = h
+            .get_by_role_and_label(Role::Button, &label)
+            .rect()
+            .center();
+        if ime {
+            h.input_mut().events.extend([
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "n".into(),
+                    active_range_chars: None,
+                }),
+                egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+            ]);
+        } else {
+            h.input_mut().events.push(egui::Event::Text("x".into()));
+        }
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(close),
+            egui::Event::PointerButton {
+                pos: close,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: close,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("y".into()),
+        ]);
+        run_input_hook_steps(&mut h, 8);
+        let doc = h.state().doc().unwrap();
+        let topic = doc.doc.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "Card titlex", "IME={ime}");
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+        assert!(h.state().dialogs.close.is_some());
+    }
+}
+
+#[test]
 fn last_title_keystroke_and_window_close_in_one_frame_preserve_the_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fast-window-close.thinoda");
