@@ -959,10 +959,12 @@ pub fn export_bytes_with_consent_and_visual_context(
         Format::DrawIoSvg => drawio::embed_svg(
             render::svg(book, opts, visual)?,
             &book.sheets[export_sheet_index(book, opts)],
+            book.drawio.as_deref(),
         )?,
         Format::DrawIoPng => drawio::embed_png(
             render::raster(book, opts, image::ImageFormat::Png, visual)?,
             &book.sheets[export_sheet_index(book, opts)],
+            book.drawio.as_deref(),
         )?,
         Format::Svg => render::svg(book, opts, visual)?.into_bytes(),
         Format::Png => render::raster(book, opts, image::ImageFormat::Png, visual)?,

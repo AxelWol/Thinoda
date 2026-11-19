@@ -293,6 +293,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D10 — Save back to `.drawio`
 
 - [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
+- [x] Include validated workbook-level `<mxfile>` attributes in editable SVG/PNG exports while embedding only the selected sheet
 - [x] Disclose document attributes omitted for safety or budget limits while retaining other valid attributes
 - [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
 - [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
@@ -333,6 +334,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 editable-image document metadata | Editable draw.io SVG and PNG retain validated workbook attributes as well as the selected page; masked copies omit those attributes. |
 | 2026-11-19 | D10 cell/geometry import diagnostics (partial) | Unknown cell and geometry XML, malformed flags, repeated geometry roles and non-connectable shapes/groups now warn; recognized non-connectable edge labels remain warning-free. |
 | 2026-11-19 | D10 document passthrough budget | Oversized, unsafe or excess unknown `<mxfile>` attributes produce import warnings; individually valid attributes that fit are still retained and round-trip. |
 | 2026-11-19 | D10 structural import diagnostics (partial) | Ignored document children, diagram attributes or children, and graph/root-level content produce import warnings; later-page warnings do not contaminate the first-page clipboard report, and the original source remains protected. |
@@ -1124,6 +1126,13 @@ this is not sufficient for in-place saves. Opaque unsupported cells, other
 workbook/page-level XML, container compression policy and save conflict/recovery
 semantics still need explicit ownership and loss handling before an imported
 source may be overwritten.
+
+**D10 editable-image metadata (partial).** Single-sheet editable SVG and PNG
+exports now carry the workbook's validated document attributes in their embedded
+diagram. Duck check: document attributes may include sensitive source metadata
+even when only one sheet is exported; masking removes them. The preview pixels
+do not expose the attributes, but the editable payload does. This does not
+preserve unrepresented XML or enable source overwrite.
 
 **D10 page passthrough safety (partial).** Imported unknown model attributes
 and tombstones are capped before storage, with omissions and invalid diagram

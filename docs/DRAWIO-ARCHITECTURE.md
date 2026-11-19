@@ -183,6 +183,8 @@ v37 for cells/pages, v53 for document attributes, board clipboard v30): objects 
 bounded safe unknown `<mxfile>` attributes in `DrawioDocumentPassthrough`. Other
 workbook-level XML, opaque objects for unmappable cells and cut-once provenance remain
 deferred to D10, so every clipboard copy clears `source_id`.
+Editable draw.io SVG/PNG exports embed only the selected sheet but include these
+workbook-level attributes; use a masked copy when source metadata must be removed.
 Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
 `THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
 recovery envelopes; older envelopes are rejected if they contain these attributes.

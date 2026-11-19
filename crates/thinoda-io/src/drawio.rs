@@ -8071,14 +8071,18 @@ fn embedded_image_fits(image: usize, payload: usize, overhead: usize) -> bool {
         .is_some_and(|length| length <= MAX_BYTES)
 }
 
-pub(crate) fn embed_svg(mut svg: String, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+pub(crate) fn embed_svg(
+    mut svg: String,
+    sheet: &Sheet,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<Vec<u8>, IoError> {
     if svg.len() > MAX_BYTES {
         return Err(invalid("editable draw.io image exceeds size limit"));
     }
     if !valid_rendered_svg(&svg) {
         return Err(invalid("rendered SVG is not a valid SVG document"));
     }
-    let xml = export_sheets(std::iter::once(sheet), None)?;
+    let xml = export_sheets(std::iter::once(sheet), document)?;
     let escaped_len = xml.chars().try_fold(0usize, |length, character| {
         let size = match character {
             '&' => 5,
@@ -8140,13 +8144,17 @@ fn rendered_png_insertion(png: &[u8]) -> Option<usize> {
     }
 }
 
-pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+pub(crate) fn embed_png(
+    mut png: Vec<u8>,
+    sheet: &Sheet,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<Vec<u8>, IoError> {
     if png.len() > MAX_BYTES {
         return Err(invalid("editable draw.io image exceeds size limit"));
     }
     let insertion = rendered_png_insertion(&png)
         .ok_or_else(|| invalid("rendered PNG has no valid image and end chunk"))?;
-    let xml = export_sheets(std::iter::once(sheet), None)?;
+    let xml = export_sheets(std::iter::once(sheet), document)?;
     let text_len = crate::drawio_clipboard::encoded_uri_component_len(&xml)
         .and_then(|length| length.checked_add(b"mxfile\0".len()))
         .ok_or_else(|| invalid("editable draw.io image exceeds size limit"))?;

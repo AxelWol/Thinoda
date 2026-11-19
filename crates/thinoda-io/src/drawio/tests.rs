@@ -6165,6 +6165,10 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         .unwrap();
     let mut book = Workbook::new(first);
     book.sheets.push(second);
+    book.active_sheet = 1;
+    book.drawio = Some(Arc::new(DrawioDocumentPassthrough {
+        attributes: vec![("owner".into(), "team & <design>".into())],
+    }));
     let opts = ExportOptions {
         sheet: Some(1),
         ..Default::default()
@@ -6177,6 +6181,10 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         assert!(format.can_import() && format.can_export());
         assert!(export_losses(&book, format, &opts).is_empty());
         let bytes = export_bytes(&book, format, &opts).unwrap();
+        assert_eq!(
+            bytes,
+            export_bytes(&book, format, &ExportOptions::default()).unwrap()
+        );
         assert_eq!(detect_format(Path::new(name), &bytes), Some(Format::DrawIo));
         if format == Format::DrawIoPng {
             let first_chunk_len = u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize;
@@ -6219,6 +6227,7 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         }
         let report = import(&bytes).unwrap();
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.workbook.drawio, book.drawio);
         assert_eq!(report.workbook.sheets.len(), 1);
         assert_eq!(report.workbook.sheets[0].title, "Second");
         let objects = shapes(&report.workbook.sheets[0]);
@@ -6241,14 +6250,26 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
         "<svg content=\"existing\"></svg>",
         "<svg xmlns=\"x\"></svg><svg xmlns=\"x\"></svg>",
     ] {
-        assert!(embed_svg(svg.to_owned(), &sheet).is_err(), "{svg}");
+        assert!(embed_svg(svg.to_owned(), &sheet, None).is_err(), "{svg}");
     }
 
     let png = image::DynamicImage::new_rgba8(1, 1);
     let mut buffer = std::io::Cursor::new(Vec::new());
     png.write_to(&mut buffer, image::ImageFormat::Png).unwrap();
     let png = buffer.into_inner();
-    assert!(embed_png(png.clone(), &sheet).is_ok());
+    assert!(embed_png(png.clone(), &sheet, None).is_ok());
+    let invalid_document = DrawioDocumentPassthrough {
+        attributes: vec![("bad\" name".into(), "x".into())],
+    };
+    assert!(
+        embed_svg(
+            "<svg xmlns=\"x\"></svg>".into(),
+            &sheet,
+            Some(&invalid_document)
+        )
+        .is_err()
+    );
+    assert!(embed_png(png.clone(), &sheet, Some(&invalid_document)).is_err());
     for invalid in [
         vec![],
         PNG_SIGNATURE.to_vec(),
@@ -6265,11 +6286,26 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
             trailing
         },
     ] {
-        assert!(embed_png(invalid, &sheet).is_err());
+        assert!(embed_png(invalid, &sheet, None).is_err());
     }
     let oversized_svg = format!("<svg xmlns=\"x\">{}</svg>", " ".repeat(MAX_BYTES));
     assert!(
-        embed_svg(oversized_svg, &sheet)
+        embed_svg(oversized_svg, &sheet, None)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    let base_svg = "<svg xmlns=\"x\"></svg>";
+    let embedded_length = embed_svg(base_svg.into(), &sheet, None).unwrap().len();
+    let padded_svg = format!(
+        "<svg xmlns=\"x\">{}</svg>",
+        " ".repeat(MAX_BYTES - embedded_length)
+    );
+    let document = DrawioDocumentPassthrough {
+        attributes: vec![("owner".into(), "&".repeat(1024))],
+    };
+    assert!(
+        embed_svg(padded_svg, &sheet, Some(&document))
             .unwrap_err()
             .to_string()
             .contains("size limit")
@@ -6280,7 +6316,7 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
         bytes
     };
     assert!(
-        embed_png(oversized_png, &sheet)
+        embed_png(oversized_png, &sheet, None)
             .unwrap_err()
             .to_string()
             .contains("size limit")
