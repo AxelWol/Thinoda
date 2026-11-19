@@ -295,6 +295,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
 - [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
 - [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
+- [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -330,6 +331,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-19 | D10 structural import diagnostics (partial) | Ignored document children, diagram attributes or children, and graph/root-level content produce import warnings; later-page warnings do not contaminate the first-page clipboard report, and the original source remains protected. |
 | 2026-11-19 | D10 page passthrough safety (partial) | Unknown page attributes and object-ID tombstones are bounded during import; omissions warn. Reserved generated model attributes and oversized page passthrough are rejected even on empty sheets or direct export. |
 | 2026-11-19 | D10 document passthrough (partial) | Safe unknown `<mxfile>` attributes survive draw.io, native v53, private XMind snapshots and recovery with or without pending ink; older or mismatched envelopes reject the metadata rather than dropping it. |
 | 2026-11-19 | D9 card-title selection formatting (partial) | The active card-title toolbar applies strikethrough, subscript/superscript and bulleted/numbered paragraphs to selected text. Selection state is grapheme-aware, whole-card styling remains distinct, and each action participates in bounded local undo. Inline font family/size/color, caret formatting, Office visual parity and real input acceptance remain open. |
@@ -1123,6 +1125,11 @@ IDs reported. Page validation rejects generated model attributes and oversized
 data even when a sheet has no objects. Duck check: warnings retain the source
 for conversion-only imports, but existing topic/zone ID regeneration and
 unsupported cells remain incompatible with safe source overwrite.
+
+**D10 structural diagnostics (partial).** Unknown top-level children, diagram
+attributes and children, graph children and root attributes are disclosed
+instead of silently discarded. Duck check: this identifies loss; it does not
+preserve the omitted XML, nor does it audit every cell and geometry feature.
 
 ## 5. Rubber-duck findings
 

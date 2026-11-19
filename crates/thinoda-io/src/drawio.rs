@@ -640,6 +640,7 @@ struct Page {
     name: String,
     id: Option<String>,
     dropped_id: bool,
+    dropped_content: bool,
     model: Element,
 }
 
@@ -647,6 +648,7 @@ struct DrawioDocument {
     pages: Vec<Page>,
     passthrough: Option<Arc<DrawioDocumentPassthrough>>,
     dropped_attributes: bool,
+    dropped_content: bool,
 }
 
 fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
@@ -673,12 +675,16 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                 name: String::new(),
                 id: None,
                 dropped_id: false,
+                dropped_content: false,
                 model: root,
             }],
             passthrough: None,
             dropped_attributes: false,
+            dropped_content: false,
         }),
         "mxfile" => {
+            let dropped_content = !root.text.trim().is_empty()
+                || root.children.iter().any(|child| child.name != "diagram");
             let dropped_attributes = root.attrs.iter().any(|(name, _)| {
                 !RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str())
                     && !thinoda_core::drawio_passthrough::valid_attribute_name(name)
@@ -711,17 +717,29 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                     })
                     .map(str::to_owned);
                 let dropped_id = diagram.attr("id").is_some() && id.is_none();
+                let mut dropped_content = diagram
+                    .attrs
+                    .iter()
+                    .any(|(name, _)| !matches!(name.as_str(), "id" | "name"));
                 let model = match diagram
                     .children
                     .iter()
                     .position(|c| c.name == "mxGraphModel")
                 {
-                    Some(index) => diagram.children.swap_remove(index),
-                    None if diagram.text.trim().is_empty() => Element {
-                        name: "mxGraphModel".into(),
-                        ..Element::default()
-                    },
+                    Some(index) => {
+                        dropped_content |=
+                            diagram.children.len() != 1 || !diagram.text.trim().is_empty();
+                        diagram.children.swap_remove(index)
+                    }
+                    None if diagram.text.trim().is_empty() => {
+                        dropped_content |= !diagram.children.is_empty();
+                        Element {
+                            name: "mxGraphModel".into(),
+                            ..Element::default()
+                        }
+                    }
                     None => {
+                        dropped_content |= !diagram.children.is_empty();
                         let model = parse_dom(&decode_compressed(diagram.text.trim())?)?;
                         if model.name != "mxGraphModel" {
                             return Err(invalid("draw.io page has no graph model"));
@@ -733,6 +751,7 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                     name,
                     id,
                     dropped_id,
+                    dropped_content,
                     model,
                 });
             }
@@ -743,6 +762,7 @@ fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
                 pages,
                 passthrough,
                 dropped_attributes,
+                dropped_content,
             })
         }
         _ => Err(invalid("not a draw.io document")),
@@ -5252,6 +5272,21 @@ fn import_page(
     let mut sheet = Sheet::new(title, "");
     sheet.root_mode = SheetRootMode::Hidden;
     let model = &page.model;
+    let roots: Vec<_> = model
+        .children
+        .iter()
+        .filter(|child| child.name == "root")
+        .collect();
+    if page.dropped_content
+        || !model.text.trim().is_empty()
+        || roots.len() > 1
+        || model.children.len() != roots.len()
+        || roots
+            .iter()
+            .any(|root| !root.attrs.is_empty() || !root.text.trim().is_empty())
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     import_grid(model, &mut sheet, warnings);
     import_background(model, &mut sheet, warnings);
     let cells = read_cells(model, warnings);
@@ -5427,13 +5462,14 @@ pub(crate) fn import_with_first_page_warnings(
 ) -> Result<(ImportReport, Vec<ImportWarning>), IoError> {
     let document = read_pages(bytes)?;
     let dropped_document_attributes = document.dropped_attributes;
+    let dropped_document_content = document.dropped_content;
     let pages = document.pages;
     let mut warnings = BTreeSet::new();
     let (first, rest) = pages
         .split_first()
         .ok_or_else(|| invalid("draw.io document contains no pages"))?;
     let mut workbook = Workbook::new(import_page(first, 1, &mut warnings)?);
-    if dropped_document_attributes {
+    if dropped_document_attributes || dropped_document_content {
         warnings.insert(ImportWarning::Other);
     }
     let first_page_warnings = warnings.iter().copied().collect();

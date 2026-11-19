@@ -10553,6 +10553,31 @@ fn drawio_page_passthrough_rejects_reserved_and_oversized_attributes() {
 }
 
 #[test]
+fn drawio_import_reports_unsupported_document_and_page_xml() {
+    let graph =
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+    let cases = [
+        format!(r#"<mxfile><future/><diagram>{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile>unexpected<diagram>{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile><diagram custom="future">{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile><diagram>{graph}<future/></diagram></mxfile>"#),
+        r#"<mxfile><diagram><mxGraphModel><future/><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#.into(),
+        r#"<mxfile><diagram><mxGraphModel><root custom="future"><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#.into(),
+    ];
+    for xml in cases {
+        let report = import(xml.as_bytes()).unwrap();
+        assert!(report.warnings.contains(&ImportWarning::Other), "{xml}");
+    }
+
+    let xml = format!(
+        r#"<mxfile><diagram name="First">{graph}</diagram><diagram name="Second" custom="future">{graph}</diagram></mxfile>"#
+    );
+    let (report, first) = import_with_first_page_warnings(xml.as_bytes()).unwrap();
+    assert!(first.is_empty());
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
