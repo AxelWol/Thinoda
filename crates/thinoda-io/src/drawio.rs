@@ -6522,6 +6522,12 @@ impl<'a> PageWriter<'a> {
         reserved.extend(writer.layer_cells.values().cloned());
         writer.cell_ids = object_cell_ids(sheet, &reserved);
         reserved.extend(writer.cell_ids.values().cloned());
+        reserved.extend(
+            sheet
+                .drawio
+                .iter()
+                .flat_map(|page| page.cell_ids.iter().cloned()),
+        );
         writer.used_ids = reserved;
         for zone in &sheet.zones {
             for object in &zone.objects {

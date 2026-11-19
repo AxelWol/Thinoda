@@ -10744,6 +10744,41 @@ fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
 }
 
 #[test]
+fn drawio_generated_edge_labels_do_not_reuse_deleted_object_ids() {
+    let xml = page(concat!(
+        r##"<mxCell id="e" value="main" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        r#"<mxCell id="extra" value="Extra" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"><mxGeometry x="0.5" relative="1" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="e-label-1" value="Delete" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    ));
+    let mut book = load(&xml).workbook;
+    let sheet = book.active_mut();
+    assert!(
+        sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "e-label-1")
+    );
+    sheet.canvas.objects.retain(|object| {
+        object
+            .drawio
+            .as_ref()
+            .and_then(|passthrough| passthrough.source_id.as_deref())
+            != Some("e-label-1")
+    });
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(r#"id="e-label-1""#), "{xml}");
+    assert!(xml.contains(r#"id="e-label-1x""#), "{xml}");
+    let reopened = import(xml.as_bytes()).unwrap();
+    assert_eq!(
+        connectors(reopened.workbook.active())[0].extra_labels.len(),
+        1
+    );
+}
+
+#[test]
 fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
     let drawio = Passthrough {
         source_id: None,
@@ -11466,6 +11501,15 @@ fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
     assert_eq!(drawio.matches("shape=tableRow").count(), 3);
     assert_eq!(drawio.matches(r#"visible="0""#).count(), 2);
     assert!(drawio.contains("colspan=2;") && drawio.contains("rowspan=2;"));
+    let mut with_tombstone = sheet.clone();
+    let page = with_tombstone
+        .drawio
+        .get_or_insert_with(|| Arc::new(DrawioPagePassthrough::default()));
+    Arc::make_mut(page).cell_ids.push("t-row0".into());
+    let reserved = String::from_utf8(export(&Workbook::new(with_tombstone)).unwrap()).unwrap();
+    assert!(!reserved.contains(r#"id="t-row0""#), "{reserved}");
+    assert!(reserved.contains(r#"id="t-row0x""#), "{reserved}");
+    assert_eq!(table_summary(load(&reserved).workbook.active()), summary);
     // The export drops the page's adaptiveColors="none", so fixed colours warn.
     let report = load(&drawio);
     assert_eq!(
