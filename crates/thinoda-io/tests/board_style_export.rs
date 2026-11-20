@@ -92,8 +92,16 @@ fn formatted_card_titles_render_in_visual_exports() {
     for topic in plain.sheets[0].topics.values_mut() {
         topic.inline_text = Default::default();
     }
+    let mut without_color = book.clone();
+    for topic in without_color.sheets[0].topics.values_mut() {
+        for run in &mut topic.inline_text.runs {
+            run.style.color = None;
+        }
+    }
     let formatted_png = export_bytes_with_consent(&book, Format::Png, &options, true).unwrap();
     let plain_png = export_bytes_with_consent(&plain, Format::Png, &options, true).unwrap();
+    let without_color_png =
+        export_bytes_with_consent(&without_color, Format::Png, &options, true).unwrap();
     assert_ne!(formatted_png, plain_png);
     let red_pixels = |bytes: &[u8]| {
         image::load_from_memory(bytes)
@@ -103,8 +111,12 @@ fn formatted_card_titles_render_in_visual_exports() {
             .filter(|pixel| pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] > 0)
             .count()
     };
-    assert!(red_pixels(&formatted_png) > 10);
-    assert_eq!(red_pixels(&plain_png), 0);
+    let formatted_red = red_pixels(&formatted_png);
+    let inherited_red = red_pixels(&without_color_png);
+    assert!(
+        formatted_red > inherited_red + 10,
+        "formatted: {formatted_red}, inherited: {inherited_red}"
+    );
     for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
         assert!(
             !export_losses(&book, format, &options)
