@@ -1471,7 +1471,7 @@ impl ThinodaApp {
             return ctx.memory(|memory| memory.area_rect(area_id));
         }
         let area = egui::Area::new(area_id)
-            .order(egui::Order::Foreground)
+            .order(format_menu::ORDER)
             .fixed_pos(strip.min)
             .constrain_to(canvas)
             .movable(false)
@@ -9002,7 +9002,7 @@ mod tests {
         harness.run_steps(5);
 
         let id = format_menu::area_id(&harness.ctx);
-        let layer = egui::LayerId::new(egui::Order::Foreground, id);
+        let layer = egui::LayerId::new(format_menu::ORDER, id);
         let mut state = egui::containers::AreaState::load(&harness.ctx, id).unwrap();
         let size = state.size.unwrap();
         state.size = Some(vec2(size.x * 0.5, size.y));

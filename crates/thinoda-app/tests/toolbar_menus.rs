@@ -11,23 +11,21 @@ use thinoda_core::markers;
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
 fn popup_rects(h: &Harness<'_, ThinodaApp>) -> Vec<egui::Rect> {
+    let nearby = thinoda_canvas::format_menu::area_id(&h.ctx);
     let visible = h.ctx.memory(|memory| memory.areas().visible_layer_ids());
     h.ctx.memory(|memory| {
         visible
             .iter()
-            .filter(|layer| {
-                layer.order == egui::Order::Foreground
-                    && layer.id != egui::Id::unique("thinoda_editing_toolbar")
-                    && layer.id != egui::Id::unique("thinoda_topic_toolbar")
-            })
+            .filter(|layer| layer.order == egui::Order::Foreground && layer.id != nearby)
             .filter_map(|layer| memory.area_rect(layer.id))
             .collect()
     })
 }
 
 fn map_toolbars_stay_below_auxiliary_windows() {
-    for name in ["thinoda_editing_toolbar", "thinoda_topic_toolbar"] {
-        let toolbar = egui::Id::unique(name);
+    {
+        let name = "nearby selection menu";
+        let toolbar = thinoda_canvas::format_menu::area_id(&egui::Context::default());
         let window = egui::Id::unique(("auxiliary-feature", name));
         let mut h = Harness::builder()
             .with_size(egui::vec2(1280.0, 900.0))
@@ -91,6 +89,38 @@ fn reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
     assert_fit(h, label);
 }
 
+/// Scrolls a nested submenu with the wheel, as a user would. `scroll_to_me`
+/// would also scroll the parent menu away from the pointer and close it.
+fn wheel_reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
+    let viewport = h.ctx.content_rect();
+    let start = h.get_by_label(label).rect().center();
+    h.hover_at(egui::pos2(
+        start.x,
+        start.y.clamp(viewport.top() + 8.0, viewport.bottom() - 8.0),
+    ));
+    h.run_steps(2);
+    for _ in 0..80 {
+        let rect = h.get_by_label(label).rect();
+        if viewport.contains_rect(rect) {
+            break;
+        }
+        let dy = if rect.bottom() > viewport.bottom() {
+            -40.0
+        } else {
+            40.0
+        };
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(2);
+    }
+    reveal(h, label);
+}
+
 fn dismiss(h: &mut Harness<'_, ThinodaApp>) {
     h.key_press(egui::Key::Escape);
     h.run_steps(4);
@@ -109,7 +139,6 @@ fn toolbar_menus_remain_bounded_and_operable_in_short_windows() {
                         theme,
                         ui_scale: scale,
                         show_format_panel: false,
-                        show_topic_toolbar: false,
                         ..Default::default()
                     },
                     Services::default(),
@@ -131,22 +160,19 @@ fn toolbar_menus_remain_bounded_and_operable_in_short_windows() {
                 reveal(&mut h, t(EXPORT_MENU.first().unwrap().label()));
                 dismiss(&mut h);
 
-                open(&mut h, "More insert actions");
-                assert!(popup_rects(&h).iter().any(|rect| rect.width() >= 190.0));
+                open(&mut h, "More actions");
                 reveal(&mut h, t("Find and Replace…"));
                 h.get_by_role_and_label(Role::Button, t("Find and Replace…"))
                     .focus();
                 h.run_steps(4);
-                assert_fit(&h, "More insert actions focus");
-                reveal(&mut h, t("Notes"));
-                dismiss(&mut h);
-
-                open(&mut h, "Marker");
+                assert_fit(&h, "More actions focus");
+                h.get_by_label(t("Marker")).click();
+                h.run_steps(4);
                 let first = markers::GROUPS.first().unwrap().markers.first().unwrap();
                 let last = markers::GROUPS.last().unwrap().markers.last().unwrap();
-                reveal(&mut h, t(first.name));
+                wheel_reveal(&mut h, t(first.name));
                 assert!(popup_rects(&h).iter().all(|rect| rect.width() <= 350.0));
-                reveal(&mut h, t(last.name));
+                wheel_reveal(&mut h, t(last.name));
                 h.get_by_role_and_label(Role::Button, t(last.name)).click();
                 h.run_steps(4);
                 let doc = h.state().doc().unwrap();

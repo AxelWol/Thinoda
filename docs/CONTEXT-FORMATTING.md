@@ -59,8 +59,24 @@ canvases where no clear rectangle exists, explicitly requested formatting may
 overlap the object body rather than becoming unreachable; Escape dismisses it
 without discarding the draft. Default Actions still avoids other cards and frame
 titles, hiding rather than covering a completely obstructed board.
+Sections always appear in the same order: Actions, Text, Style, Arrange.
 Active shape/connector label editing uses the same placement algorithm, anchored
 to the object's visible bounds and avoiding the editor where space permits.
+Its Text section is flat like the other producers: decorations and lists, then
+font family and size, then text colour swatches with a custom-colour entry.
+Family, exact size and custom colour open inline value pages inside the same
+menu so the label edit is not ended by a popup. On compact canvases the swatch
+row collapses into a single **Text Color** entry that opens the swatches.
+Placement penalises any position covering the selection centre. When a very
+short window leaves no other position the node menu may still cover the
+selected topic; right-clicking the menu then opens the selection's full
+context menu, exactly as right-clicking the object would. Selecting an object
+by right-click does not close the context menu it opens, and the full context
+menu always stacks above the nearby menu, even when both appear in the same
+frame: like the former toolbars, the nearby menu is a Middle-order tool surface,
+so every Foreground popup and auxiliary window stays above it. While a mind-map title is being edited the menu
+stays visible and opens Text when editing starts; leaving the editor returns
+the topic to its default Actions section.
 Below the native 720 x 480 minimum, a menu may cover an entire small shape;
 bounded controls are guaranteed by compact acceptance, not unobstructed outlines
 at every unsupported window size.
@@ -98,6 +114,8 @@ actual rendered controls, not only a requested popup size.
 | Inline and whole-object controls can silently disagree. | One explicit editing scope is shown; whole-object changes clear only matching run overrides. Rich drafts keep typing, composition and formatting in one history. |
 | Blanket mixed-selection toggles can leave some objects unchanged. | Common values and all-selected toggle state are computed across targets; mixed shape typography and multi-card fill have one-step undo regressions. |
 | Removing a strip can lose its commands. | Node actions, markers, links, notes, to-dos and find remain in Actions/More actions; native command availability filters unsupported operations. |
+| Right-clicking a new object could paint the nearby menu over the freshly opened context menu (egui keeps stale relative order for areas that appear together). | The nearby menu uses Middle order (as the former toolbars did), below every Foreground popup and auxiliary window; regression tests assert paint order after right-click selection and that feature windows are not intercepted. |
+| A short window can leave the nearby menu over the selection, swallowing right-clicks. | A secondary click inside the visible selection menu opens the selection's full context menu; any retained marker target is cleared first; tested at 640 x 240 logical. |
 | A popup can physically cover a section tab. | Normal popup dismissal/keyboard focus is retained; no pointer click-through bypass is used. Section/owner changes close stale popups. |
 | Every kind does not support every property. | Stencils reuse native shape capabilities; generic/annotation selections expose supported actions and layering only. This does not invent new editable properties, card stacking, or multi-card geometry. |
 | Moving menus invalidate pixel comparisons beneath their shadows. | Outline acceptance excludes both actual popup shadows, requires at least two unchanged corners at normal size and actual visible stroke pixels at 640 x 360 and the native 720 x 480 minimum, across both themes. |

@@ -3352,6 +3352,12 @@ impl ThinodaApp {
                 self.set_fim_node_name(text);
             }
         }
+        if out.selection_menu_context_requested() {
+            // A forwarded menu right-click targets the selection, not a stale marker.
+            if let Some(doc) = self.doc_mut() {
+                doc.view.context_marker = None;
+            }
+        }
         let mut cmd = None;
         out.context_menu(|ui| {
             scroll_menu(ui, |ui| {
@@ -4040,7 +4046,7 @@ impl ThinodaApp {
             return false;
         }
         let panel = egui::Area::new(format_menu::area_id(&ctx))
-            .order(egui::Order::Foreground)
+            .order(format_menu::ORDER)
             .fixed_pos(strip.min)
             .constrain_to(canvas)
             .movable(false)
@@ -4781,7 +4787,9 @@ impl ThinodaApp {
                                 "priority-1".into(),
                             )))
                         {
-                            ui.menu_button(t("Marker"), |ui| self.marker_menu(ui, &mut picked));
+                            ui.menu_button(t("Marker"), |ui| {
+                                scroll_menu(ui, |ui| self.marker_menu(ui, &mut picked));
+                            });
                         }
                         if self.command_available(&Cmd::FindReplace)
                             && ui.button(t("Find and Replace…")).clicked()
@@ -4900,7 +4908,7 @@ impl ThinodaApp {
             return true;
         }
         let menu = egui::Area::new(id)
-            .order(egui::Order::Foreground)
+            .order(format_menu::ORDER)
             .fixed_pos(rect.min)
             .constrain_to(canvas)
             .movable(false)
@@ -5238,7 +5246,15 @@ impl ThinodaApp {
             return;
         }
         let Some(doc) = self.doc() else { return };
+        // Title editing opens Text and remembers its section separately.
+        let editing_title = doc.view.editing_topic().is_some();
         let owner = format_menu::owner(&doc.doc, &doc.view);
+        // Entering title editing must not close unrelated popups via prepare.
+        let section_owner = if editing_title {
+            owner.with("title")
+        } else {
+            owner
+        };
         format_menu::prepare(ctx, owner);
         if ctx.data(|data| {
             data.get_temp::<egui::Id>(card_text_slot(self.current_viewport).with("dismissed"))
@@ -5246,7 +5262,15 @@ impl ThinodaApp {
         {
             return;
         }
-        let mut section = format_menu::section(ctx, owner, ContextSection::Actions);
+        let mut section = format_menu::section(
+            ctx,
+            section_owner,
+            if editing_title {
+                ContextSection::Text
+            } else {
+                ContextSection::Actions
+            },
+        );
         let enabled = StyleTargets::from_view(doc.doc.sheet(), &doc.view)
             .is_some_and(|targets| !targets.locked)
             && !doc.view.has_active_canvas_gesture()
@@ -5464,7 +5488,7 @@ impl ThinodaApp {
             return;
         }
         let shown = egui::Area::new(toolbar_id)
-            .order(egui::Order::Foreground)
+            .order(format_menu::ORDER)
             .pivot(if below {
                 egui::Align2::CENTER_TOP
             } else {
@@ -5498,7 +5522,7 @@ impl ThinodaApp {
                     let before = section;
                     format_menu::tabs(ui, &mut section, &sections, true);
                     if section != before {
-                        format_menu::set_section(ctx, owner, section);
+                        format_menu::set_section(ctx, section_owner, section);
                     }
                     match section {
                         ContextSection::Actions => cmd = self.selection_context_actions(ui),
@@ -5532,10 +5556,9 @@ impl ThinodaApp {
                 if let Some(mut state) = egui::containers::AreaState::load(ctx, toolbar_id) {
                     state.interactable = false;
                     ctx.memory_mut(|memory| {
-                        memory.areas_mut().set_state(
-                            egui::LayerId::new(egui::Order::Foreground, toolbar_id),
-                            state,
-                        );
+                        memory
+                            .areas_mut()
+                            .set_state(egui::LayerId::new(format_menu::ORDER, toolbar_id), state);
                     });
                 }
                 ctx.request_discard("board topic toolbar size changed");
@@ -9863,26 +9886,11 @@ mod font_family_tests {
                 editor.store(&harness.ctx, editor_id);
                 harness.run_steps(2);
             }
-            let more = format!(
-                "{} / {} / {}",
-                t("Font Size"),
-                t("Text Color"),
-                t("Font Family")
-            );
-            harness
-                .get_by_role_and_label(egui::Role::Button, &more)
-                .click();
-            harness.run_steps(3);
-            assert_eq!(
-                harness.state().doc().unwrap().view.editing_board_object(),
-                Some(id),
-                "opening typography must not finish the label draft"
-            );
             assert!(
                 harness
                     .query_by_role_and_label(egui::Role::Button, &format!("{} +", t("Font Size")))
                     .is_some(),
-                "typography page did not open"
+                "typography controls must be in the flat Text section"
             );
             harness
                 .get_by_role_and_label(egui::Role::Button, t("Font Family"))

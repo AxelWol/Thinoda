@@ -44,6 +44,8 @@ fn harness(settings: Settings) -> Harness<'static, ThinodaApp> {
     let mut app = ThinodaApp::new(settings, Services::default(), &[]);
     app.exec(&egui::Context::default(), Cmd::New);
     app.format_tab = FormatTab::Map;
+    // The nearby menu also has a Style tab; these checks target the sidebar.
+    app.settings.show_topic_toolbar = false;
     Harness::builder()
         .with_size(egui::vec2(1280.0, 1000.0) * scale)
         .with_context_setup(|ctx| {

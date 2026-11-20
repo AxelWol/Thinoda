@@ -189,7 +189,10 @@ fn insertion_instance_contrast_context_removal_and_export_cancellation() {
             h.state_mut().settings.show_format_panel = false;
             h.state_mut().symbol_color = Some(Color::rgb(10, 30, 90));
             h.run_steps(3);
-            h.get_by_role_and_label(Role::Button, t("Marker")).click();
+            h.get_by_role_and_label(Role::Button, t("More actions"))
+                .click();
+            h.run_steps(3);
+            h.get_by_label(t("Marker")).click();
             h.run_steps(3);
             h.get_by_role_and_label(Role::Button, t("Priority 2"))
                 .click();

@@ -8,6 +8,7 @@ use thinoda_app::{
     doc::OpenDoc,
     i18n::t,
 };
+use thinoda_canvas::Action;
 use thinoda_platform::{
     Paths,
     recovery::RecoveryManager,
@@ -217,7 +218,9 @@ fn enlarged_editors_invalidate_on_selection_revision_and_tab_without_applying_el
                     doc.view.select_only(child);
                 }
                 1 => {
-                    h.get_by_role_and_label(Role::Button, t("Subtopic")).click();
+                    // The enlarged editor window stays above the nearby menu.
+                    let ctx = h.ctx.clone();
+                    h.state_mut().exec(&ctx, Cmd::Canvas(Action::InsertChild));
                 }
                 2 => {
                     h.get_by_role_and_label(Role::Tab, t("Style")).click();

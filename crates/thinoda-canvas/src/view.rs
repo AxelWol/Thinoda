@@ -1929,9 +1929,18 @@ pub struct CanvasOutput {
 }
 
 impl CanvasOutput {
+    /// A right-click on the nearby selection menu opens the selection's context menu.
+    pub fn selection_menu_context_requested(&self) -> bool {
+        self.context_menu_allowed
+            && crate::format_menu::secondary_clicked_selection_menu(&self.response.ctx)
+    }
+
     /// Show context actions without interpreting canceled or multitouch holds as clicks.
     pub fn context_menu(&self, content: impl FnOnce(&mut Ui)) -> Option<egui::InnerResponse<()>> {
         let mut popup = egui::Popup::context_menu(&self.response);
+        if self.selection_menu_context_requested() {
+            popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+        }
         if !self.context_menu_allowed {
             popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(false)));
         }

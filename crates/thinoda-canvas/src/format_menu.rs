@@ -4,11 +4,11 @@ use egui::{Context, Id, Rect, Response, Ui, Vec2, pos2, vec2};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Section {
+    Actions,
     #[default]
     Text,
     Style,
     Arrange,
-    Actions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +33,33 @@ pub fn claim(ctx: &Context, producer: Producer) -> bool {
     })
 }
 
+/// Whether this pass right-clicked the nearby selection menu.
+///
+/// The menu may cover part of a small selection; right-clicking it then opens
+/// the selection's full context menu, as right-clicking the object would.
+/// Text-editing producers keep their own pointer handling.
+pub fn secondary_clicked_selection_menu(ctx: &Context) -> bool {
+    let Some(pos) = ctx.input(|input| {
+        input
+            .pointer
+            .secondary_clicked()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    }) else {
+        return false;
+    };
+    let id = area_id(ctx);
+    let layer = egui::LayerId::new(ORDER, id);
+    let selection = ctx
+        .data(|data| data.get_temp::<(u64, Producer)>(id.with("producer")))
+        .is_some_and(|(_, producer)| producer == Producer::Selection);
+    selection
+        && ctx.memory(|memory| {
+            memory.areas().visible_last_frame(&layer)
+                && memory.area_rect(id).is_some_and(|rect| rect.contains(pos))
+        })
+        && ctx.layer_id_at(pos) == Some(layer)
+}
 fn measure_id(ctx: &Context, owner: Id, section: Section, width: f32) -> Id {
     area_id(ctx).with(("measure", owner, section, width.to_bits()))
 }
@@ -56,6 +83,11 @@ pub fn measured(ctx: &Context, owner: Id, section: Section, width: f32, expected
     }
 }
 
+/// The nearby menu is a persistent tool surface like the old toolbars: it sits
+/// below auxiliary windows and every Foreground popup, including the canvas
+/// context menu opened by the same right-click that selects an object.
+pub const ORDER: egui::Order = egui::Order::Middle;
+
 pub fn area_id(ctx: &Context) -> Id {
     Id::unique(("thinoda_selection_menu", ctx.viewport_id()))
 }
@@ -63,7 +95,9 @@ pub fn area_id(ctx: &Context) -> Id {
 pub fn prepare(ctx: &Context, owner: Id) {
     let id = area_id(ctx).with("owner");
     let previous = ctx.data(|data| data.get_temp::<Id>(id));
-    if previous.is_some_and(|previous| previous != owner) {
+    // A right-click both selects and opens the canvas context menu; keep it.
+    let canvas_menu = egui::Popup::is_id_open(ctx, crate::MapCanvas::id().with("popup"));
+    if previous.is_some_and(|previous| previous != owner) && !canvas_menu {
         egui::Popup::close_all(ctx);
     }
     ctx.data_mut(|data| data.insert_temp(id, owner));
@@ -104,8 +138,11 @@ pub fn tabs(
     enabled: bool,
 ) -> Vec<Response> {
     let mut responses = Vec::new();
+    // Every producer shows the same tab order, whatever order it lists them in.
+    let mut sections = sections.to_vec();
+    sections.sort_by_key(|(section, _)| *section as u8);
     ui.horizontal_wrapped(|ui| {
-        for &(section, label) in sections {
+        for (section, label) in sections {
             let response = ui.add_enabled(
                 enabled,
                 egui::Button::selectable(*selected == section, label),
@@ -163,7 +200,12 @@ pub fn place(canvas: Rect, anchor: Rect, desired: Vec2, avoid: &[Rect]) -> Rect 
                     0.0
                 }
             })
-            .sum::<f32>();
+            .sum::<f32>()
+            + if covers_target(rect, anchor, canvas) {
+                1.0e9
+            } else {
+                0.0
+            };
         if overlap < best_overlap {
             best = rect;
             best_overlap = overlap;
@@ -173,6 +215,13 @@ pub fn place(canvas: Rect, anchor: Rect, desired: Vec2, avoid: &[Rect]) -> Rect 
         }
     }
     best
+}
+
+/// Whether `menu` covers the visible centre of the selection, where pointer
+/// gestures such as right-click and double-click are aimed.
+pub fn covers_target(menu: Rect, anchor: Rect, canvas: Rect) -> bool {
+    let visible = anchor.intersect(canvas);
+    visible.is_positive() && menu.contains(visible.center())
 }
 
 #[cfg(test)]
@@ -230,5 +279,19 @@ mod tests {
         let menu = place(canvas, anchor, vec2(324.0, 160.0), &[toolbox]);
         assert!(!menu.intersects(anchor));
         assert!(!menu.intersects(toolbox));
+    }
+
+    #[test]
+    fn placement_keeps_the_selection_centre_free_when_full_avoidance_fails() {
+        let canvas = Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 200.0));
+        let anchor = Rect::from_min_size(pos2(300.0, 70.0), vec2(100.0, 60.0));
+        let menu = place(canvas, anchor, vec2(324.0, 180.0), &[]);
+        assert!(menu.intersects(anchor));
+        assert!(!covers_target(menu, anchor, canvas), "{menu:?}");
+
+        let centred = Rect::from_center_size(pos2(320.0, 120.0), vec2(100.0, 30.0));
+        let canvas = Rect::from_min_size(pos2(0.0, 70.0), vec2(640.0, 150.0));
+        let menu = place(canvas, centred, vec2(324.0, 108.0), &[]);
+        assert!(covers_target(menu, centred, canvas));
     }
 }
