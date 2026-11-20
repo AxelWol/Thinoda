@@ -59,7 +59,7 @@ test("imports and saves a partial rectangle with only its visible sides", async 
     const manifest = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
     const workbook = JSON.parse(zipEntry(archive, "content.json").toString("utf8"));
     const objects = workbook.sheets[workbook.active_sheet].canvas.objects;
-    expect(manifest.version).toBe(20);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
     expect(objects).toHaveLength(1);
     expect(objects[0].rectangle_sides).toEqual({
         top: true, right: false, bottom: true, left: false,

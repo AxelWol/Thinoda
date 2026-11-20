@@ -1,7 +1,7 @@
 use crate::{ExportOptions, ImportReport, ImportWarning, IoError, zip_entry};
 use serde_json::json;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::{Cursor, Write},
 };
 use thinoda_core::{
@@ -9,6 +9,9 @@ use thinoda_core::{
     outline::{parse_indented_text, to_indented_text},
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+pub(crate) const MAX_XMINDMARK_BYTES: usize = 32 * 1024 * 1024;
+const MAX_XMINDMARK_TOPICS: usize = 200_000;
 
 pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     let mut out = Cursor::new(Vec::new());
@@ -670,6 +673,723 @@ pub(crate) fn markdown_import(b: &[u8]) -> Result<Workbook, IoError> {
         &root,
     )))
 }
+
+#[derive(Default)]
+struct XMindMarkNode {
+    title: String,
+    line: usize,
+    indent: isize,
+    children: Vec<usize>,
+    groups: Vec<String>,
+    links: Vec<XMindMarkLink>,
+}
+
+#[derive(Clone)]
+struct XMindMarkLink {
+    number: String,
+    source: bool,
+    title: Option<String>,
+    line: usize,
+}
+
+#[derive(Default)]
+struct XMindMarkGroup {
+    title: Option<String>,
+    title_line: Option<usize>,
+    summary_node: Option<usize>,
+    member_line: Option<usize>,
+}
+
+enum XMindMarkSuffix {
+    Group(String),
+    Link {
+        number: String,
+        source: bool,
+        title: Option<String>,
+    },
+}
+
+fn xmindmark_error(line: usize, message: &str) -> IoError {
+    IoError::Invalid(format!("XMindMark line {line}: {message}"))
+}
+
+fn xmindmark_unescape(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\\'
+            && chars
+                .peek()
+                .is_some_and(|next| matches!(next, '\\' | '[' | ']'))
+        {
+            output.push(chars.next().unwrap_or_default());
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn xmindmark_suffix(text: &str, line: usize) -> Result<(String, Vec<XMindMarkSuffix>), IoError> {
+    fn escaped(text: &str, index: usize) -> bool {
+        let slashes = text[..index]
+            .bytes()
+            .rev()
+            .take_while(|byte| *byte == b'\\')
+            .count();
+        slashes % 2 == 1
+    }
+
+    let mut end = text.trim_end().len();
+    let mut suffixes = Vec::new();
+    loop {
+        let parsed = if text[..end].ends_with(')') {
+            let mut candidate = end - 1;
+            let mut found = None;
+            while let Some(close_open) = text[..candidate].rfind("](") {
+                if !escaped(text, close_open) {
+                    let mut marker_end = close_open;
+                    while let Some(marker_open) = text[..marker_end].rfind("[^") {
+                        let number = &text[marker_open + 2..close_open];
+                        if !escaped(text, marker_open)
+                            && !number.is_empty()
+                            && number.bytes().all(|byte| byte.is_ascii_digit())
+                        {
+                            found = Some((
+                                marker_open,
+                                XMindMarkSuffix::Link {
+                                    number: number.to_owned(),
+                                    source: true,
+                                    title: (close_open + 2 < end - 1).then(|| {
+                                        xmindmark_unescape(&text[close_open + 2..end - 1])
+                                    }),
+                                },
+                            ));
+                            break;
+                        }
+                        marker_end = marker_open;
+                    }
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                candidate = close_open;
+            }
+            found
+        } else {
+            let Some(open) = text[..end].rfind('[') else {
+                break;
+            };
+            if escaped(text, open) {
+                break;
+            }
+            let marker = &text[open..end];
+            let Some(number) = marker
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+            else {
+                break;
+            };
+            let parsed = if let Some(number) = number.strip_prefix('^')
+                && !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                Some(XMindMarkSuffix::Link {
+                    number: number.to_owned(),
+                    source: true,
+                    title: None,
+                })
+            } else if let Some(group) = number.strip_prefix('B')
+                && group.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                Some(XMindMarkSuffix::Group(format!("B{group}")))
+            } else if let Some(group) = number.strip_prefix('S')
+                && group.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                Some(XMindMarkSuffix::Group(format!("S{group}")))
+            } else if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) {
+                Some(XMindMarkSuffix::Link {
+                    number: number.to_owned(),
+                    source: false,
+                    title: None,
+                })
+            } else {
+                None
+            };
+            parsed.map(|suffix| (open, suffix))
+        };
+        let Some((open, parsed)) = parsed else {
+            break;
+        };
+        suffixes.push(parsed);
+        end = text[..open].trim_end().len();
+    }
+    if suffixes.len() > 64 {
+        return Err(xmindmark_error(line, "topic has too many trailing markers"));
+    }
+    Ok((xmindmark_unescape(text[..end].trim_end()), suffixes))
+}
+
+fn xmindmark_group_directive(text: &str) -> Option<(&str, &str)> {
+    let close = text.find(']')?;
+    let key = text.get(1..close)?;
+    if !text.starts_with('[') || !matches!(key.chars().next()?, 'B' | 'S') {
+        return None;
+    }
+    if !key[1..].bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let rest = text.get(close + 1..)?.strip_prefix(':')?.trim_start();
+    Some((key, rest))
+}
+
+fn xmindmark_indentation(line_text: &str, line: usize) -> Result<(usize, &str), IoError> {
+    let mut columns = 0usize;
+    let mut byte_offset = 0usize;
+    for (offset, character) in line_text.char_indices() {
+        match character {
+            ' ' => columns += 1,
+            '\t' => columns += 4,
+            _ => {
+                byte_offset = offset;
+                break;
+            }
+        }
+        byte_offset = offset + character.len_utf8();
+    }
+    if columns > 8000 {
+        return Err(xmindmark_error(line, "indentation exceeds 2000 levels"));
+    }
+    Ok((columns, &line_text[byte_offset..]))
+}
+
+pub(crate) fn xmindmark_import(bytes: &[u8]) -> Result<Workbook, IoError> {
+    if bytes.len() > MAX_XMINDMARK_BYTES {
+        return Err(IoError::Invalid(
+            "XMindMark input exceeds the 32 MiB limit".into(),
+        ));
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| IoError::Invalid("XMindMark input is not valid UTF-8".into()))?;
+    let mut nodes = vec![XMindMarkNode {
+        indent: -1,
+        ..Default::default()
+    }];
+    let mut stack = vec![0usize];
+    let mut groups = BTreeMap::<(usize, String), XMindMarkGroup>::new();
+    let mut root_seen = false;
+    for (line_index, raw_line) in text.lines().enumerate() {
+        let line = line_index + 1;
+        if raw_line.trim().is_empty() {
+            continue;
+        }
+        let (indent, content) = xmindmark_indentation(raw_line, line)?;
+        if !root_seen {
+            if indent != 0 || content.starts_with("- ") || content.starts_with("* ") {
+                return Err(xmindmark_error(
+                    line,
+                    "the first non-empty line must be the central topic",
+                ));
+            }
+            let (title, suffixes) = xmindmark_suffix(content, line)?;
+            if title.is_empty() {
+                return Err(xmindmark_error(line, "central topic title is empty"));
+            }
+            for suffix in suffixes {
+                match suffix {
+                    XMindMarkSuffix::Link {
+                        number,
+                        source,
+                        title,
+                    } => nodes[0].links.push(XMindMarkLink {
+                        number,
+                        source,
+                        title,
+                        line,
+                    }),
+                    XMindMarkSuffix::Group(_) => {
+                        return Err(xmindmark_error(
+                            line,
+                            "the central topic cannot belong to a sibling group",
+                        ));
+                    }
+                }
+            }
+            nodes[0].title = title;
+            nodes[0].line = line;
+            root_seen = true;
+            continue;
+        }
+
+        while stack.len() > 1 && nodes[*stack.last().unwrap()].indent >= indent as isize {
+            stack.pop();
+        }
+        let parent = *stack
+            .last()
+            .ok_or_else(|| xmindmark_error(line, "topic has no parent"))?;
+        if nodes[parent].indent >= indent as isize {
+            return Err(xmindmark_error(line, "invalid topic indentation"));
+        }
+        if let Some((key, value)) = xmindmark_group_directive(content) {
+            let group_key = key.to_owned();
+            let group_kind = key.chars().next().unwrap_or('B');
+            let (title, suffixes) = xmindmark_suffix(value, line)?;
+            let metadata = groups.entry((parent, group_key.clone())).or_default();
+            if metadata.title_line.is_some() {
+                return Err(xmindmark_error(line, "duplicate group title"));
+            }
+            metadata.title = Some(title);
+            metadata.title_line = Some(line);
+            let mut summary_node = None;
+            if group_kind == 'S' {
+                if nodes.len() >= MAX_XMINDMARK_TOPICS {
+                    return Err(xmindmark_error(
+                        line,
+                        "topic count exceeds the supported limit",
+                    ));
+                }
+                let id = nodes.len();
+                nodes.push(XMindMarkNode {
+                    title: metadata.title.clone().unwrap_or_default(),
+                    line,
+                    indent: indent as isize,
+                    ..Default::default()
+                });
+                summary_node = Some(id);
+                metadata.summary_node = Some(id);
+            }
+            for suffix in suffixes {
+                match suffix {
+                    XMindMarkSuffix::Link {
+                        number,
+                        source,
+                        title,
+                    } if summary_node.is_some() => {
+                        nodes[summary_node.unwrap()].links.push(XMindMarkLink {
+                            number,
+                            source,
+                            title,
+                            line,
+                        })
+                    }
+                    XMindMarkSuffix::Link { .. } => {
+                        return Err(xmindmark_error(
+                            line,
+                            "relationships cannot attach to boundary titles",
+                        ));
+                    }
+                    XMindMarkSuffix::Group(_) => {
+                        return Err(xmindmark_error(
+                            line,
+                            "group title lines cannot carry group markers",
+                        ));
+                    }
+                }
+            }
+            if let Some(summary_node) = summary_node {
+                stack.push(summary_node);
+            }
+            continue;
+        }
+
+        let title = if let Some(title) = content.strip_prefix("- ") {
+            title
+        } else if let Some(title) = content.strip_prefix("* ") {
+            title
+        } else {
+            return Err(xmindmark_error(
+                line,
+                "expected a '- ' or '* ' topic, or a [B]/[S] group title",
+            ));
+        };
+        let (title, suffixes) = xmindmark_suffix(title.trim_start(), line)?;
+        if title.is_empty() {
+            return Err(xmindmark_error(line, "topic title is empty"));
+        }
+        if nodes.len() >= MAX_XMINDMARK_TOPICS {
+            return Err(xmindmark_error(
+                line,
+                "topic count exceeds the supported limit",
+            ));
+        }
+        let id = nodes.len();
+        nodes.push(XMindMarkNode {
+            title,
+            line,
+            indent: indent as isize,
+            ..Default::default()
+        });
+        nodes[parent].children.push(id);
+        for suffix in suffixes {
+            match suffix {
+                XMindMarkSuffix::Group(key) => {
+                    if nodes[id].groups.contains(&key) {
+                        return Err(xmindmark_error(line, "duplicate group marker"));
+                    }
+                    nodes[id].groups.push(key.clone());
+                    groups
+                        .entry((parent, key))
+                        .or_default()
+                        .member_line
+                        .get_or_insert(line);
+                }
+                XMindMarkSuffix::Link {
+                    number,
+                    source,
+                    title,
+                } => nodes[id].links.push(XMindMarkLink {
+                    number,
+                    source,
+                    title,
+                    line,
+                }),
+            }
+        }
+        stack.push(id);
+    }
+    if !root_seen {
+        return Err(xmindmark_error(1, "central topic is missing"));
+    }
+    for ((_, key), group) in &groups {
+        if group.member_line.is_none() {
+            return Err(xmindmark_error(
+                group.title_line.unwrap_or(nodes[0].line),
+                &format!("group [{key}] has no member topics"),
+            ));
+        }
+    }
+
+    let mut sheet = Sheet::new("XMindMark", &nodes[0].title);
+    let mut topic_ids = vec![None; nodes.len()];
+    topic_ids[0] = Some(sheet.root);
+    fn build_children(
+        sheet: &mut Sheet,
+        parent_index: usize,
+        parent_id: TopicId,
+        nodes: &[XMindMarkNode],
+        groups: &BTreeMap<(usize, String), XMindMarkGroup>,
+        topic_ids: &mut [Option<TopicId>],
+    ) -> Result<(), IoError> {
+        for child_index in &nodes[parent_index].children {
+            let id = sheet.add_child(parent_id, None, &nodes[*child_index].title);
+            topic_ids[*child_index] = Some(id);
+            build_children(sheet, *child_index, id, nodes, groups, topic_ids)?;
+        }
+        let group_keys: Vec<_> = groups
+            .keys()
+            .filter(|(parent, _)| *parent == parent_index)
+            .map(|(_, key)| key.clone())
+            .collect();
+        for key in group_keys {
+            let mut ranges = Vec::new();
+            let mut index = 0;
+            while index < nodes[parent_index].children.len() {
+                let child = nodes[parent_index].children[index];
+                if !nodes[child].groups.contains(&key) {
+                    index += 1;
+                    continue;
+                }
+                let start = index;
+                while index + 1 < nodes[parent_index].children.len()
+                    && nodes[nodes[parent_index].children[index + 1]]
+                        .groups
+                        .contains(&key)
+                {
+                    index += 1;
+                }
+                ranges.push(start..=index);
+                index += 1;
+            }
+            let metadata = &groups[&(parent_index, key.clone())];
+            let title = metadata
+                .title
+                .as_deref()
+                .filter(|title| !title.is_empty())
+                .unwrap_or("Summary");
+            let kind = key.chars().next().unwrap_or('B');
+            if kind == 'S' && ranges.len() != 1 {
+                return Err(xmindmark_error(
+                    metadata.member_line.unwrap_or(1),
+                    "summary groups must be contiguous",
+                ));
+            }
+            for range in ranges {
+                let members: Vec<_> = range
+                    .map(|index| topic_ids[nodes[parent_index].children[index]].unwrap())
+                    .collect();
+                if kind == 'B' {
+                    let id = sheet.add_boundary(&members).map_err(|error| {
+                        xmindmark_error(metadata.member_line.unwrap_or(1), &error.to_string())
+                    })?;
+                    sheet
+                        .set_boundary_title(id, metadata.title.clone())
+                        .map_err(|error| {
+                            xmindmark_error(metadata.member_line.unwrap_or(1), &error.to_string())
+                        })?;
+                } else {
+                    let summary = sheet.add_summary(&members, title).map_err(|error| {
+                        xmindmark_error(metadata.member_line.unwrap_or(1), &error.to_string())
+                    })?;
+                    if let Some(summary_node) = metadata.summary_node {
+                        topic_ids[summary_node] = Some(summary);
+                        build_children(sheet, summary_node, summary, nodes, groups, topic_ids)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    let root_id = sheet.root;
+    build_children(&mut sheet, 0, root_id, &nodes, &groups, &mut topic_ids)?;
+
+    let mut relationships =
+        BTreeMap::<String, (Option<(TopicId, usize)>, Option<(TopicId, String, usize)>)>::new();
+    for (node_index, node) in nodes.iter().enumerate() {
+        let Some(topic_id) = topic_ids[node_index] else {
+            continue;
+        };
+        for link in &node.links {
+            let pair = relationships.entry(link.number.clone()).or_default();
+            if link.source {
+                if pair
+                    .1
+                    .replace((topic_id, link.title.clone().unwrap_or_default(), link.line))
+                    .is_some()
+                {
+                    return Err(xmindmark_error(
+                        link.line,
+                        "duplicate relationship source marker",
+                    ));
+                }
+            } else if pair.0.replace((topic_id, link.line)).is_some() {
+                return Err(xmindmark_error(
+                    link.line,
+                    "duplicate relationship target marker",
+                ));
+            }
+        }
+    }
+    for (number, (target, source)) in relationships {
+        let (from, title, source_line, to, target_line) = match (target, source) {
+            (Some((to, target_line)), Some((from, title, source_line))) => {
+                (from, title, source_line, to, target_line)
+            }
+            (Some((_, line)), None) | (None, Some((_, _, line))) => {
+                return Err(xmindmark_error(
+                    line,
+                    &format!("relationship [{number}] is missing its source or target"),
+                ));
+            }
+            (None, None) => continue,
+        };
+        let relation = sheet
+            .add_relationship(from, to)
+            .map_err(|error| xmindmark_error(source_line.max(target_line), &error.to_string()))?;
+        sheet
+            .set_relationship_title(relation, &title)
+            .map_err(|error| xmindmark_error(source_line, &error.to_string()))?;
+    }
+    Ok(Workbook::new(sheet))
+}
+
+fn xmindmark_escape(text: &str) -> Result<String, IoError> {
+    if text.contains('\n') || text.contains('\r') {
+        return Err(IoError::Invalid(
+            "XMindMark cannot represent multiline topic or relationship titles".into(),
+        ));
+    }
+    Ok(text
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]"))
+}
+
+struct XMindMarkWriter<'a> {
+    sheet: &'a Sheet,
+    group_tags: HashMap<TopicId, Vec<String>>,
+    relation_tags: HashMap<TopicId, Vec<String>>,
+    boundaries_by_parent: HashMap<TopicId, Vec<(String, Option<String>)>>,
+    summaries_by_parent: HashMap<TopicId, Vec<(String, TopicId)>>,
+    output: String,
+}
+
+impl XMindMarkWriter<'_> {
+    fn render_annotations(&mut self, parent_id: TopicId, indent: usize) -> Result<(), IoError> {
+        if let Some(boundaries) = self.boundaries_by_parent.get(&parent_id) {
+            for (group, title) in boundaries {
+                if let Some(title) = title {
+                    self.output.push_str(&"    ".repeat(indent));
+                    self.output.push('[');
+                    self.output.push_str(group);
+                    self.output.push_str("]: ");
+                    self.output.push_str(&xmindmark_escape(title)?);
+                    self.output.push('\n');
+                }
+            }
+        }
+        if let Some(summaries) = self.summaries_by_parent.get(&parent_id).cloned() {
+            for (group, summary_id) in summaries {
+                let (summary_title, children) = self
+                    .sheet
+                    .topic(summary_id)
+                    .map(|summary| (summary.title.clone(), summary.children.clone()))
+                    .ok_or_else(|| IoError::Invalid("summary topic is missing".into()))?;
+                self.output.push_str(&"    ".repeat(indent));
+                self.output.push('[');
+                self.output.push_str(&group);
+                self.output.push_str("]: ");
+                self.output.push_str(&xmindmark_escape(&summary_title)?);
+                if let Some(markers) = self.relation_tags.get(&summary_id)
+                    && !markers.is_empty()
+                {
+                    self.output.push(' ');
+                    self.output.push_str(&markers.join(""));
+                }
+                self.output.push('\n');
+                for child in children {
+                    self.render_topic(child, indent + 1, false)?;
+                }
+                self.render_annotations(summary_id, indent + 1)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn render_topic(&mut self, id: TopicId, depth: usize, is_root: bool) -> Result<(), IoError> {
+        let topic = self
+            .sheet
+            .topic(id)
+            .ok_or_else(|| IoError::Invalid("XMindMark topic is missing".into()))?;
+        let title = xmindmark_escape(&topic.title)?;
+        let mut markers = self.group_tags.get(&id).cloned().unwrap_or_default();
+        markers.extend(self.relation_tags.get(&id).cloned().unwrap_or_default());
+        let suffix = if markers.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", markers.join(""))
+        };
+        if is_root {
+            self.output.push_str(&title);
+            self.output.push_str(&suffix);
+            self.output.push('\n');
+        } else {
+            self.output.push_str(&"    ".repeat(depth));
+            self.output.push_str("- ");
+            self.output.push_str(&title);
+            self.output.push_str(&suffix);
+            self.output.push('\n');
+        }
+        let child_depth = if is_root { depth } else { depth + 1 };
+        for child in &topic.children {
+            self.render_topic(*child, child_depth, false)?;
+        }
+        self.render_annotations(id, child_depth)
+    }
+}
+
+pub(crate) fn xmindmark_export(
+    workbook: &Workbook,
+    options: &ExportOptions,
+) -> Result<Vec<u8>, IoError> {
+    let sheet_index = options
+        .sheet
+        .unwrap_or(workbook.active_sheet)
+        .min(workbook.sheets.len().saturating_sub(1));
+    let sheet = workbook
+        .sheets
+        .get(sheet_index)
+        .ok_or_else(|| IoError::Invalid("XMindMark export requires a sheet".into()))?;
+    let mut group_tags = HashMap::<TopicId, Vec<String>>::new();
+    let mut boundaries_by_parent = HashMap::<TopicId, Vec<(String, Option<String>)>>::new();
+    let mut summaries_by_parent = HashMap::<TopicId, Vec<(String, TopicId)>>::new();
+
+    for boundary in &sheet.boundaries {
+        let Some(range) = boundary.range else {
+            continue;
+        };
+        let children = &sheet
+            .topic(boundary.parent)
+            .ok_or_else(|| IoError::Invalid("boundary parent is missing".into()))?
+            .children;
+        if range.end >= children.len() || range.start > range.end {
+            return Err(IoError::Invalid(
+                "XMindMark boundary range is invalid".into(),
+            ));
+        }
+        let group = format!(
+            "B{}",
+            boundaries_by_parent
+                .get(&boundary.parent)
+                .map_or(1, |groups| groups.len() + 1)
+        );
+        for id in &children[range.start..=range.end] {
+            group_tags
+                .entry(*id)
+                .or_default()
+                .push(format!("[{group}]"));
+        }
+        boundaries_by_parent
+            .entry(boundary.parent)
+            .or_default()
+            .push((group, boundary.title.clone()));
+    }
+    for summary in &sheet.summaries {
+        let children = &sheet
+            .topic(summary.parent)
+            .ok_or_else(|| IoError::Invalid("summary parent is missing".into()))?
+            .children;
+        if summary.range.end >= children.len() || summary.range.start > summary.range.end {
+            return Err(IoError::Invalid(
+                "XMindMark summary range is invalid".into(),
+            ));
+        }
+        let group = format!(
+            "S{}",
+            summaries_by_parent
+                .get(&summary.parent)
+                .map_or(1, |groups| groups.len() + 1)
+        );
+        for id in &children[summary.range.start..=summary.range.end] {
+            group_tags
+                .entry(*id)
+                .or_default()
+                .push(format!("[{group}]"));
+        }
+        summaries_by_parent
+            .entry(summary.parent)
+            .or_default()
+            .push((group, summary.topic));
+    }
+
+    let mut relation_tags = HashMap::<TopicId, Vec<String>>::new();
+    for (index, relationship) in sheet.relationships.iter().enumerate() {
+        let number = (index + 1).to_string();
+        let title = xmindmark_escape(&relationship.title)?;
+        relation_tags
+            .entry(relationship.from)
+            .or_default()
+            .push(if title.is_empty() {
+                format!("[^{number}]")
+            } else {
+                format!("[^{number}]({title})")
+            });
+        relation_tags
+            .entry(relationship.to)
+            .or_default()
+            .push(format!("[{number}]"));
+    }
+    let mut writer = XMindMarkWriter {
+        sheet,
+        group_tags,
+        relation_tags,
+        boundaries_by_parent,
+        summaries_by_parent,
+        output: String::new(),
+    };
+    writer.render_topic(sheet.root, 0, true)?;
+    Ok(writer.output.into_bytes())
+}
+
 pub(crate) fn opml_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
     let s = &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)];
     let mut out = format!(
@@ -1117,6 +1837,17 @@ pub(crate) fn textbundle_import(bytes: &[u8]) -> Result<ImportReport, IoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn topic_titles(sheet: &Sheet, parent: TopicId) -> Vec<String> {
+        sheet
+            .topic(parent)
+            .unwrap()
+            .children
+            .iter()
+            .map(|id| sheet.topic(*id).unwrap().title.clone())
+            .collect()
+    }
+
     #[test]
     fn plain_text_roots_roundtrip() {
         let w = text_import(b"Root\n\tChild\n").unwrap();
@@ -1130,5 +1861,235 @@ mod tests {
         )
         .unwrap();
         assert_eq!(w.active().root_topic().title, "Root");
+    }
+
+    #[test]
+    fn xmindmark_imports_groups_relationships_escapes_and_summary_children() {
+        let source = r"Root \[map\]
+- Alpha [B1][1]
+- Beta [B1][^1](why \[yes\] and \[^2\])
+- Before [S1]
+- After [S1]
+[B1]: Team
+[S1]: Segment
+    - Detail
+";
+        let workbook = xmindmark_import(source.as_bytes()).unwrap();
+        let sheet = workbook.active();
+
+        assert_eq!(sheet.root_topic().title, "Root [map]");
+        assert_eq!(
+            topic_titles(sheet, sheet.root),
+            ["Alpha", "Beta", "Before", "After"]
+        );
+        assert_eq!(sheet.boundaries.len(), 1);
+        assert_eq!(sheet.boundaries[0].title.as_deref(), Some("Team"));
+        assert_eq!(sheet.summaries.len(), 1);
+        let summary = sheet.topic(sheet.summaries[0].topic).unwrap();
+        assert_eq!(summary.title, "Segment");
+        assert_eq!(topic_titles(sheet, summary.id), ["Detail"]);
+        assert_eq!(sheet.relationships.len(), 1);
+        assert_eq!(sheet.relationships[0].title, "why [yes] and [^2]");
+        assert_eq!(
+            sheet.topic(sheet.relationships[0].from).unwrap().title,
+            "Beta"
+        );
+        assert_eq!(
+            sheet.topic(sheet.relationships[0].to).unwrap().title,
+            "Alpha"
+        );
+    }
+
+    #[test]
+    fn xmindmark_tabs_indicate_four_space_indentation() {
+        let workbook = xmindmark_import(b"Root\n- Parent\n\t- Child\n").unwrap();
+        let sheet = workbook.active();
+        let parent = sheet.topic(sheet.root).unwrap().children[0];
+        assert_eq!(topic_titles(sheet, parent), ["Child"]);
+    }
+
+    #[test]
+    fn xmindmark_is_registered_and_has_a_bounded_file_read_policy() {
+        let path = std::path::Path::new("example.xmindmark");
+        assert_eq!(
+            crate::Format::from_path(path),
+            Some(crate::Format::XMindMark)
+        );
+        assert!(crate::Format::XMindMark.can_import());
+        assert!(crate::Format::XMindMark.can_export());
+        assert_eq!(crate::import_read_limit(path), Some(MAX_XMINDMARK_BYTES));
+    }
+
+    #[test]
+    fn xmindmark_reports_malformed_lines_with_source_line_numbers() {
+        let error = xmindmark_import(b"Root\n- Good\n    Invalid\n").unwrap_err();
+        assert!(error.to_string().contains("XMindMark line 3:"));
+    }
+
+    #[test]
+    fn xmindmark_rejects_unpaired_and_duplicate_relationship_markers_at_their_lines() {
+        let unpaired = xmindmark_import(b"Root\n- Orphan [1]\n").unwrap_err();
+        assert!(unpaired.to_string().contains("XMindMark line 2:"));
+        let duplicate = xmindmark_import(b"Root\n- One [1]\n- Two [1]\n- From [^1]\n").unwrap_err();
+        assert!(duplicate.to_string().contains("XMindMark line 3:"));
+    }
+
+    #[test]
+    fn xmindmark_roundtrips_relationships_without_titles() {
+        let workbook = xmindmark_import(b"Root\n- From [^1]\n- To [1]\n").unwrap();
+        assert_eq!(workbook.active().relationships.len(), 1);
+        assert_eq!(workbook.active().relationships[0].title, "");
+        let output = crate::export_bytes(
+            &workbook,
+            crate::Format::XMindMark,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        let reopened = xmindmark_import(&output).unwrap();
+        assert_eq!(reopened.active().relationships.len(), 1);
+        assert_eq!(reopened.active().relationships[0].title, "");
+    }
+
+    #[test]
+    fn xmindmark_writer_is_deterministic_and_roundtrips_supported_annotations() {
+        let source = r"Root \[map\]
+- Alpha [B1][1]
+- Beta [B1][^1](why \[yes\] and \[^2\])
+- Before [S1]
+- After [S1]
+[B1]: Team
+[S1]: Segment
+    - Detail
+";
+        let workbook = xmindmark_import(source.as_bytes()).unwrap();
+        let first = crate::export_bytes(
+            &workbook,
+            crate::Format::XMindMark,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        let second = crate::export_bytes(
+            &workbook,
+            crate::Format::XMindMark,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(first, second);
+
+        let reopened =
+            crate::import_named_bytes(std::path::Path::new("example.xmindmark"), &first).unwrap();
+        let sheet = reopened.active();
+        assert_eq!(sheet.root_topic().title, "Root [map]");
+        assert_eq!(sheet.boundaries[0].title.as_deref(), Some("Team"));
+        assert_eq!(sheet.summaries.len(), 1);
+        assert_eq!(
+            sheet.topic(sheet.summaries[0].topic).unwrap().title,
+            "Segment"
+        );
+        assert_eq!(sheet.relationships[0].title, "why [yes] and [^2]");
+    }
+
+    #[test]
+    fn xmindmark_roundtrips_annotations_nested_under_summary_topics() {
+        let source = r"Root
+- One [B1][S1]
+- Two [B1][S1]
+[B1]: Outer
+[S1]: Group
+    - Alpha [B1]
+    - Beta [B1]
+    - Before [S2]
+    - After [S2]
+    [B1]: Inner
+    [S2]: Nested
+        - Leaf
+";
+        let workbook = xmindmark_import(source.as_bytes()).unwrap();
+        let output = crate::export_bytes(
+            &workbook,
+            crate::Format::XMindMark,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        let reopened =
+            crate::import_named_bytes(std::path::Path::new("nested.xmindmark"), &output).unwrap();
+        let sheet = reopened.active();
+        let group = sheet.topic(sheet.summaries[0].topic).unwrap();
+        assert_eq!(group.title, "Group");
+        assert_eq!(sheet.boundaries.len(), 2);
+        let outer = sheet
+            .boundaries
+            .iter()
+            .find(|boundary| boundary.title.as_deref() == Some("Outer"))
+            .unwrap();
+        let inner = sheet
+            .boundaries
+            .iter()
+            .find(|boundary| boundary.title.as_deref() == Some("Inner"))
+            .unwrap();
+        assert_eq!(outer.parent, sheet.root);
+        assert_eq!(inner.parent, group.id);
+        assert_eq!(sheet.summaries.len(), 2);
+        let nested = sheet
+            .summaries
+            .iter()
+            .map(|summary| sheet.topic(summary.topic).unwrap())
+            .find(|topic| topic.title == "Nested")
+            .unwrap();
+        assert_eq!(topic_titles(sheet, nested.id), ["Leaf"]);
+    }
+
+    #[test]
+    fn xmindmark_exports_only_the_selected_sheet_and_reports_others() {
+        let mut workbook = xmindmark_import(b"Root\n- Child\n").unwrap();
+        workbook.sheets.push(Sheet::new("Other", "Second root"));
+        let mut options = ExportOptions {
+            sheet: Some(1),
+            ..Default::default()
+        };
+        let output = crate::export_bytes(&workbook, crate::Format::XMindMark, &options).unwrap();
+        let reopened = xmindmark_import(&output).unwrap();
+        assert_eq!(reopened.active().root_topic().title, "Second root");
+        assert!(
+            crate::export_losses(&workbook, crate::Format::XMindMark, &options)
+                .contains(&crate::ExportLoss::OtherSheetsDropped(1))
+        );
+        options.sheet = Some(0);
+        assert_eq!(
+            xmindmark_import(
+                &crate::export_bytes(&workbook, crate::Format::XMindMark, &options,).unwrap()
+            )
+            .unwrap()
+            .active()
+            .root_topic()
+            .title,
+            "Root"
+        );
+    }
+
+    #[test]
+    fn xmindmark_reports_and_omits_master_boundaries() {
+        let mut sheet = Sheet::new("One", "Root");
+        let root = sheet.root;
+        let child = sheet.add_child(root, None, "Child");
+        sheet.add_boundary(&[child]).unwrap();
+        sheet.boundaries[0].range = None;
+        let workbook = Workbook::new(sheet);
+
+        assert!(
+            crate::export_losses(
+                &workbook,
+                crate::Format::XMindMark,
+                &ExportOptions::default()
+            )
+            .contains(&crate::ExportLoss::BoundariesDropped(1))
+        );
+        let output = crate::export_bytes(
+            &workbook,
+            crate::Format::XMindMark,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(xmindmark_import(&output).unwrap().active().topic_count(), 2);
     }
 }

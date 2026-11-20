@@ -1,4 +1,4 @@
-_Last updated: 2026-11-13 14:21:57 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 16:11:51 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 
@@ -3363,6 +3363,10 @@ including category, overview and recent cards, without replacing unsaved maps.
    and apply each choice in one undoable transaction preserving content/relationships.
    Include palette/add-theme, color variants, background, global font and branch-width
    controls; keep popup columns responsive and current selection visible.
+   The structure popup fixes its viewport-bounded width on every frame, including
+   frame margins, and disables horizontal scroll-area shrinking. Thumbnail-grid
+   measurements must not feed back into popup width/position; cover stationary
+   cards at fractional positions and Windows display scales in regression tests.
 
 **Exit:** every template validates and opens, previews match created maps, Cancel
 creates nothing, recent/filter state persists correctly and licensed assets are tracked.

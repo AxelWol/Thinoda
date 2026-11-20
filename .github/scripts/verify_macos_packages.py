@@ -62,13 +62,24 @@ def run_with_ticket_retry(
             is_apple_cloudkit_url(url)
             for url in re.findall(r"https?://[^\s\"<>]+", result.stdout)
         )
-        transient = cloudkit_url and (
+        ticket_failure = cloudkit_url and (
             "Code=-1005" in result.stdout or "network connection was lost" in result.stdout
         )
+        signing_command = Path(command[0]).name
+        timestamp_failure = (
+            signing_command in ("codesign", "cargo-packager")
+            and "A timestamp was expected but was not found." in result.stdout
+            and (
+                signing_command == "codesign"
+                or "Failed to run codesign utility" in result.stdout
+            )
+        )
+        transient = ticket_failure or timestamp_failure
         if not transient or delay is None:
             raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
         print(
-            f"Transient Apple ticket lookup failure; retrying {command[0]} "
+            f"Transient Apple {'timestamp' if timestamp_failure else 'ticket lookup'} "
+            f"failure; retrying {command[0]} "
             f"({attempt}/{len(TICKET_RETRY_DELAYS) + 1}) in {delay}s.",
             flush=True,
         )

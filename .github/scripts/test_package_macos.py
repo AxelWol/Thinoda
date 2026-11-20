@@ -23,6 +23,7 @@ TICKET_FAILURE = (
     "com.apple.gk.ticket-delivery/production/public/records/lookup\n"
     "The staple and validate action failed! Error 68.\n"
 )
+TIMESTAMP_FAILURE = "Thinoda.app/Contents/MacOS/thinoda: A timestamp was expected but was not found.\n"
 
 
 class PackageConfigTests(unittest.TestCase):
@@ -100,6 +101,7 @@ class PackageTests(unittest.TestCase):
             "No ticket found. The staple and validate action failed! Error 68.",
             "NSURLErrorDomain Code=-1005",
             "Notarization status Invalid: missing secure timestamp",
+            TIMESTAMP_FAILURE,
         ):
             with self.subTest(output=output):
                 command.reset_mock()
@@ -110,6 +112,46 @@ class PackageTests(unittest.TestCase):
                     run_with_ticket_retry(["cargo-packager"], cwd=Path("."))
                 command.assert_called_once()
                 sleep.assert_not_called()
+
+    @patch("verify_macos_packages.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_retries_only_confirmed_codesign_timestamp_failures(self, command, sleep):
+        for args, output in (
+            (["cargo-packager"], "ERROR Failed to run codesign utility\n" + TIMESTAMP_FAILURE),
+            (["codesign", "--timestamp", "Thinoda.dmg"], TIMESTAMP_FAILURE),
+        ):
+            with self.subTest(args=args):
+                command.reset_mock()
+                sleep.reset_mock()
+                command.side_effect = [
+                    subprocess.CompletedProcess(args, 1, stdout=output),
+                    subprocess.CompletedProcess(args, 0, stdout="Signed\n"),
+                ]
+                self.assertEqual(run_with_ticket_retry(args, timeout=120), "Signed\n")
+                self.assertEqual(command.call_count, 2)
+                sleep.assert_called_once_with(15)
+
+    @patch("verify_macos_packages.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_timestamp_retry_exhaustion_preserves_failure(self, command, sleep):
+        command.return_value = subprocess.CompletedProcess(
+            ["codesign"], 1, stdout=TIMESTAMP_FAILURE,
+        )
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            run_with_ticket_retry(["codesign", "--timestamp", "Thinoda.dmg"], timeout=120)
+        self.assertEqual(command.call_count, len(TICKET_RETRY_DELAYS) + 1)
+        self.assertEqual(sleep.call_args_list, [call(delay) for delay in TICKET_RETRY_DELAYS])
+        self.assertEqual(error.exception.output, TIMESTAMP_FAILURE)
+
+    @patch("verify_macos_packages.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_notarization_timestamp_rejection_is_not_retried(self, command, sleep):
+        args = ["xcrun", "notarytool", "submit", "Thinoda.dmg"]
+        command.return_value = subprocess.CompletedProcess(args, 1, stdout=TIMESTAMP_FAILURE)
+        with self.assertRaises(subprocess.CalledProcessError):
+            run_with_ticket_retry(args)
+        command.assert_called_once()
+        sleep.assert_not_called()
 
     @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
@@ -181,9 +223,9 @@ class PackageTests(unittest.TestCase):
                     create.assert_called_once_with(
                         app, image, root / "crates" / "thinoda-app" / "../../LICENSE.md",
                     )
-                    check.assert_any_call(
+                    pack.assert_any_call([
                         "codesign", "--force", "--timestamp", "--sign", IDENTITY, str(image),
-                    )
+                    ], timeout=120)
                     notarize.assert_called_once_with(image)
 
     @patch("package_macos.subprocess.run")

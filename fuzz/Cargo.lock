@@ -1948,10 +1948,11 @@ dependencies = [
 
 [[package]]
 name = "thinoda-core"
-version = "0.27.0"
+version = "0.27.2"
 dependencies = [
  "base64 0.23.1",
  "image",
+ "log",
  "pulldown-cmark",
  "quick-xml 0.42.0",
  "serde",
@@ -1962,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-io"
-version = "0.27.0"
+version = "0.27.2"
 dependencies = [
  "base64 0.23.1",
  "crc32fast",

@@ -1636,6 +1636,20 @@ fn colored_marker_svg(id: &str, r: thinoda_core::Rect, color: Color) -> String {
             )
         ),
         "task" => {
+            if id == "task-pause" {
+                return format!(
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{detail}\" stroke=\"{ink}\" stroke-width=\"1.2\"/><path d=\"M {} {} v {} M {} {} v {}\" fill=\"none\" stroke=\"{ink}\" stroke-width=\"1.8\"/>",
+                    c.x,
+                    c.y,
+                    rad - 0.5,
+                    c.x - rad * 0.18,
+                    c.y - rad * 0.42,
+                    rad * 0.84,
+                    c.x + rad * 0.18,
+                    c.y - rad * 0.42,
+                    rad * 0.84,
+                );
+            }
             let fraction = markers::task_fraction(id);
             let mut svg = format!(
                 "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{ink}\" stroke-width=\"1.2\"/>",
@@ -1942,6 +1956,14 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use thinoda_core::{Rect, Sheet};
+
+    #[test]
+    fn task_pause_marker_renders_pause_bars_not_a_completion_check() {
+        let rect = Rect::from_min_size(Vec2::ZERO, Vec2::new(18.0, 18.0));
+        let svg = colored_marker_svg("task-pause", rect, Color::rgb(60, 179, 113));
+        assert!(svg.contains("<path"));
+        assert!(!svg.contains("<polyline"));
+    }
 
     #[test]
     fn partial_rectangle_svg_pixels_match_the_published_open_path() {

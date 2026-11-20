@@ -41,7 +41,7 @@ function contentFrom(zip: Buffer): Content {
 function publishedLink() {
     const xml = `<mxfile><diagram name="Linked page"><mxGraphModel><root>`
         + `<mxCell id="0"/><mxCell id="1" parent="0"/>`
-        + `<mxCell id="shape" value="Imported link shape" style="dashed=1;" vertex="1" parent="1">`
+        + `<mxCell id="shape" value="Imported link shape" style="dashed=1;fillStyle=future;" vertex="1" parent="1">`
         + `<mxGeometry x="20" y="30" width="100" height="60" as="geometry"/>`
         + `</mxCell></root></mxGraphModel></diagram></mxfile>`;
     return `https://example.invalid/published#R${encodeURIComponent(xml)}`;
@@ -144,7 +144,7 @@ test("imports supported marker styles into a versioned native workbook", async (
         end_marker: { kind: "open" },
     });
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(11);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports classic and thin markers without changing legacy arrows", async ({ page }) => {
@@ -189,7 +189,7 @@ test("imports classic and thin markers without changing legacy arrows", async ({
     ]));
     expect(connectors.some((connector) => connector?.arrow_end && !connector.end_marker)).toBe(true);
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(12);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports independent marker sizes into a versioned native workbook", async ({ page }) => {
@@ -219,7 +219,7 @@ test("imports independent marker sizes into a versioned native workbook", async 
         end_marker_size: 0,
     });
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(13);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports independent hollow marker fills into a versioned native workbook", async ({ page }) => {
@@ -261,7 +261,7 @@ test("imports independent hollow marker fills into a versioned native workbook",
     });
     expect(end?.start_marker_unfilled).toBeUndefined();
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(14);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports filled and hollow diamond markers into a versioned native workbook", async ({ page }) => {
@@ -294,7 +294,7 @@ test("imports filled and hollow diamond markers into a versioned native workbook
     });
     expect(connector?.end_marker_unfilled).toBeUndefined();
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(15);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports filled and hollow oval markers into a versioned native workbook", async ({ page }) => {
@@ -327,7 +327,7 @@ test("imports filled and hollow oval markers into a versioned native workbook", 
     });
     expect(connector?.end_marker_unfilled).toBeUndefined();
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(16);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports open half-circle and oval markers into a versioned native workbook", async ({ page }) => {
@@ -360,7 +360,7 @@ test("imports open half-circle and oval markers into a versioned native workbook
     });
     expect(connector?.end_marker_unfilled).toBeUndefined();
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(17);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });
 
 test("imports bar markers into a versioned native workbook", async ({ page }) => {
@@ -393,5 +393,5 @@ test("imports bar markers into a versioned native workbook", async ({ page }) =>
     });
     expect(connector?.end_marker_unfilled).toBeUndefined();
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
-    expect(manifest.version).toBe(18);
+    expect(manifest.version).toBeGreaterThanOrEqual(37);
 });

@@ -1218,6 +1218,8 @@ fn structure_gallery_is_bounded_and_keyboard_does_not_edit_the_map() {
         (480.0, 1.0, false),
         (640.0, 1.5, true),
         (1280.0, 1.0, false),
+        (1743.3334, 1.5, true),
+        (1279.5, 1.25, true),
     ] {
         let mut app = ThinodaApp::headless();
         if width < 500.0 {
@@ -1228,11 +1230,12 @@ fn structure_gallery_is_bounded_and_keyboard_does_not_edit_the_map() {
         let selection = app.doc().unwrap().view.selection.clone();
         let mut h = Harness::builder()
             .with_size(egui::vec2(width, 800.0))
+            .with_pixels_per_point(scale)
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         h.ctx
             .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
-        h.ctx.set_pixels_per_point(scale);
         h.run_steps(4);
+        assert_eq!(h.ctx.pixels_per_point(), scale);
         h.get_by_role_and_label(Role::Tab, "Map").click();
         h.run_steps(4);
         h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
@@ -1247,6 +1250,20 @@ fn structure_gallery_is_bounded_and_keyboard_does_not_edit_the_map() {
                 .toggled(),
             Some(Toggled::True)
         );
+        h.run_steps(20);
+        let settled = h
+            .get_by_role_and_label(Role::Button, "Logic Chart (right)")
+            .rect();
+        for frame in 0..30 {
+            h.run_steps(1);
+            let actual = h
+                .get_by_role_and_label(Role::Button, "Logic Chart (right)")
+                .rect();
+            assert_eq!(
+                actual, settled,
+                "structure gallery moved on frame {frame} at {width}/{scale}"
+            );
+        }
         for label in [
             "Mind Map",
             "Mind Map (anticlockwise)",

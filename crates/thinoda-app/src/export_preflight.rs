@@ -241,8 +241,12 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     (*count, "Cards may show folded corners in draw.io")
                 }
                 ExportLoss::TopicDetailsDropped(count) => {
-                    (*count, "Topic notes, labels, markers or tasks omitted")
+                    (*count, "Topic details omitted")
                 }
+                ExportLoss::AnnotationDetailsDropped(count) => {
+                    (*count, "Boundary and relationship styling or routing omitted")
+                }
+                ExportLoss::OtherSheetsDropped(count) => (*count, "Other sheets omitted"),
                 ExportLoss::SlidesDropped(count) => (*count, "Presentation slides omitted"),
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();

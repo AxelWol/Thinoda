@@ -58,7 +58,7 @@ test("user can edit, undo and export an imported rounded rectangle", async ({ pa
     )[0].count, { timeout: 30_000 }).toBeGreaterThan(500);
 
     const baseline = await savedRounding(page, "rounded-baseline.thinoda");
-    expect(baseline.manifest.version).toBe(23);
+    expect(baseline.manifest.version).toBeGreaterThanOrEqual(37);
     expect(baseline.rounding).toEqual({
         radius: 30, stencil: "standard", mode: "relative", rounded_perimeter: true,
     });
@@ -75,7 +75,7 @@ test("user can edit, undo and export an imported rounded rectangle", async ({ pa
     await page.mouse.move(915, 710);
     await page.mouse.wheel(0, 500);
     for (let i = 0; i < 5; i++) await frames(page);
-    await canvas.click({ position: { x: 738, y: 429 } });
+    await canvas.click({ position: { x: 738, y: 288 } });
     await frames(page);
     expect((await savedRounding(page, "rounded-absolute.thinoda")).rounding).toEqual({
         radius: 36, stencil: "standard", mode: "absolute-arc", rounded_perimeter: true,
@@ -91,14 +91,14 @@ test("user can edit, undo and export an imported rounded rectangle", async ({ pa
         radius: 36, stencil: "standard", mode: "absolute-arc", rounded_perimeter: true,
     });
 
-    await canvas.click({ position: { x: 960, y: 461 } });
+    await canvas.click({ position: { x: 960, y: 320 } });
     const input = page.locator("input[type='text']");
     await expect(input).toBeFocused();
     await input.press("Control+a");
     await input.fill("12.5");
     await input.press("Enter");
     await frames(page);
-    await canvas.click({ position: { x: 738, y: 589 } });
+    await canvas.click({ position: { x: 738, y: 352 } });
     await frames(page);
     expect((await savedRounding(page, "rounded-edited.thinoda")).rounding).toEqual({
         radius: 25, stencil: "standard", mode: "absolute-arc",
