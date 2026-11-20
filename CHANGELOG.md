@@ -39,6 +39,18 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.28.0](https://github.com/AxelWol/Thinoda/compare/v0.27.2...v0.28.0) (2026-11-20)
+
+
+### Features
+
+* **xmind:** improve XMind support and add XMindMark ([fddd600](https://github.com/AxelWol/Thinoda/commit/fddd6001248bdf64928921f8814883477f7d1a4a))
+
+
+### Bug Fixes
+
+* **ui:** stabilize structure picker popup geometry ([cd6c2a9](https://github.com/AxelWol/Thinoda/commit/cd6c2a932e238116fbfb50e1b3a56f92daad9170))
+
 ## [0.27.2](https://github.com/AxelWol/Thinoda/compare/v0.27.1...v0.27.2) (2026-11-19)
 
 
