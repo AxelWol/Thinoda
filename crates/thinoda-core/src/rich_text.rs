@@ -13,7 +13,7 @@ pub const MAX_INLINE_FONT_SIZE: f32 = 256.0;
 pub const FORMATTED_CARD_REQUIRED: &str =
     "Formatted card text must remain on a floating sticky note or text card.";
 
-/// Baseline override for a run within a shape label.
+/// Baseline override for a formatted text run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InlineBaseline {
@@ -57,7 +57,7 @@ impl InlineTextStyle {
             && self.baseline.is_none()
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if self.font_family.as_ref().is_some_and(|family| {
             family.trim().is_empty()
                 || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
@@ -110,6 +110,11 @@ pub struct InlineText {
 }
 
 impl InlineText {
+    /// Whether any run carries a baseline override.
+    pub fn has_baseline_overrides(&self) -> bool {
+        self.runs.iter().any(|run| run.style.baseline.is_some())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty() && self.paragraphs.is_empty()
     }
@@ -300,11 +305,6 @@ impl InlineText {
         range: Range<usize>,
         replacement: &str,
     ) -> Result<(String, Self), String> {
-        self.validate(text)?;
-        let char_count = text.chars().count();
-        if range.start > range.end || range.end > char_count {
-            return Err("inline text replacement has an invalid range".into());
-        }
         let style_position = if range.start == range.end && range.start > 0 {
             range.start - 1
         } else {
@@ -316,6 +316,25 @@ impl InlineText {
             .find(|run| run.start as usize <= style_position && style_position < run.end as usize)
             .map_or_else(InlineTextStyle::default, |run| run.style.clone());
 
+        self.replace_label_range_with_style(text, range, replacement, &replacement_style)
+    }
+
+    /// Replaces a label range with an explicit typing style while preserving lists.
+    ///
+    /// The caller controls style inheritance and grapheme boundaries.
+    pub fn replace_label_range_with_style(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        replacement: &str,
+        replacement_style: &InlineTextStyle,
+    ) -> Result<(String, Self), String> {
+        self.validate(text)?;
+        let char_count = text.chars().count();
+        if range.start > range.end || range.end > char_count {
+            return Err("inline text replacement has an invalid range".into());
+        }
+        replacement_style.validate()?;
         let first = text
             .chars()
             .take(range.start)
@@ -332,7 +351,7 @@ impl InlineText {
             paragraphs: Vec::new(),
         };
         let (updated_text, mut updated) =
-            without_paragraphs.replace_range(text, range, replacement, &replacement_style)?;
+            without_paragraphs.replace_range(text, range, replacement, replacement_style)?;
         let first_list = self
             .paragraphs
             .iter()
@@ -806,6 +825,88 @@ mod tests {
     }
 
     #[test]
+    fn explicit_label_typing_style_survives_paragraph_replacement() {
+        let text = "a🙂\nlast";
+        let mut rich = InlineText {
+            runs: Vec::new(),
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+        };
+        rich.update_range(text, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let typing = InlineTextStyle {
+            italic: Some(true),
+            ..Default::default()
+        };
+        let (updated_text, updated) = rich
+            .replace_label_range_with_style(text, 1..2, "X\nY", &typing)
+            .unwrap();
+        assert_eq!(updated_text, "aX\nY\nlast");
+        assert_eq!(
+            updated.runs,
+            vec![
+                InlineTextRun {
+                    start: 0,
+                    end: 1,
+                    style: bold(),
+                },
+                InlineTextRun {
+                    start: 1,
+                    end: 4,
+                    style: typing,
+                },
+            ]
+        );
+        assert_eq!(
+            updated.paragraphs,
+            vec![
+                InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                }
+            ]
+        );
+        updated.validate(&updated_text).unwrap();
+        assert_eq!(rich.runs[0].end, 2);
+    }
+
+    #[test]
+    fn explicit_label_typing_style_rejects_invalid_input_without_mutation() {
+        let mut rich = InlineText::default();
+        rich.update_range("ab", 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let before = rich.clone();
+        let invalid = InlineTextStyle {
+            font_size: Some(f32::NAN),
+            ..Default::default()
+        };
+        assert!(
+            rich.replace_label_range_with_style("ab", 1..1, "x", &invalid)
+                .is_err()
+        );
+        assert!(
+            rich.replace_label_range_with_style("ab", 3..3, "x", &InlineTextStyle::default())
+                .is_err()
+        );
+        assert!(
+            rich.replace_label_range_with_style(
+                "ab",
+                1..1,
+                &"x".repeat(MAX_INLINE_TEXT_CHARS),
+                &InlineTextStyle::default()
+            )
+            .is_err()
+        );
+        assert_eq!(rich, before);
+    }
+
+    #[test]
     fn reconciling_a_label_retains_unedited_styles_and_is_atomic_on_limits() {
         let mut rich = InlineText::default();
         rich.update_range("A🙂B", 2..3, |style| style.italic = Some(true))
@@ -891,6 +992,93 @@ mod tests {
                 .unwrap_err()
                 .contains("without a sticky or text card")
         );
+    }
+
+    #[test]
+    fn card_title_and_rich_text_commit_atomically_and_respect_locks() {
+        let mut sheet = crate::Sheet::new("Board", "Root");
+        let card = sheet
+            .add_card(
+                "Old",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Sticky, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let image = sheet
+            .add_card(
+                "Image",
+                crate::Vec2::new(200.0, 0.0),
+                crate::Card::new(crate::CardKind::Image, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let text_card = sheet
+            .add_card(
+                "Text",
+                crate::Vec2::new(400.0, 0.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let root = sheet.root;
+        let mut doc = crate::Document::new(crate::Workbook::new(sheet));
+        let original = doc.workbook().clone();
+        let mut rich = InlineText::default();
+        rich.update_range("A🙂\nB", 1..2, |style| {
+            style.bold = Some(true);
+            style.baseline = Some(InlineBaseline::Superscript);
+        })
+        .unwrap();
+        rich.paragraphs.push(InlineParagraph {
+            index: 1,
+            list: ListKind::Bulleted,
+        });
+
+        let mut candidate = original.active().clone();
+        assert!(
+            candidate
+                .set_card_title_with_rich_text(card, "A", rich.clone())
+                .is_err()
+        );
+        assert_eq!(&candidate, original.active());
+        assert!(
+            doc.set_card_title_with_rich_text(card, "A", rich.clone())
+                .is_err()
+        );
+        assert!(
+            doc.set_card_title_with_rich_text(image, "A🙂\nB", rich.clone())
+                .is_err()
+        );
+        assert!(
+            doc.set_card_title_with_rich_text(root, "A🙂\nB", rich.clone())
+                .is_err()
+        );
+        assert_eq!(doc.workbook(), &original);
+        assert!(!doc.undo());
+        doc.set_card_title_with_rich_text(card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert_eq!(doc.sheet().topic(card).unwrap().title, "A🙂\nB");
+        assert_eq!(doc.sheet().topic(card).unwrap().inline_text, rich);
+        doc.workbook().validate().unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &original);
+        assert!(doc.redo());
+        assert_eq!(doc.sheet().topic(card).unwrap().inline_text, rich);
+        doc.set_card_title_with_rich_text(card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &original);
+        assert!(doc.redo());
+
+        doc.set_board_members_locked(&[crate::board::BoardMember::Card(card)], true)
+            .unwrap();
+        let locked = doc.workbook().clone();
+        assert!(
+            doc.set_card_title_with_rich_text(card, "Changed", InlineText::default())
+                .is_err()
+        );
+        assert_eq!(doc.workbook(), &locked);
+        doc.set_card_title_with_rich_text(text_card, "A🙂\nB", rich.clone())
+            .unwrap();
+        assert_eq!(doc.sheet().topic(text_card).unwrap().inline_text, rich);
     }
 
     #[test]

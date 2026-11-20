@@ -4,7 +4,9 @@ use egui::{
     Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense,
     TextEdit, Ui, vec2,
 };
-use thinoda_canvas::{Action, BoardTool, MapCanvas, MapView, ObjectSelection};
+use thinoda_canvas::{
+    Action, BoardTool, CardTitleFormat, CardTitleStyle, MapCanvas, MapView, ObjectSelection,
+};
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
     CardKind, Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers,
@@ -500,7 +502,13 @@ fn card_text_icon_response(
     )
 }
 
-fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool, owned: &mut Vec<egui::Id>) -> bool {
+fn card_text_swatch(
+    ui: &mut Ui,
+    color: Color,
+    selected: bool,
+    label: &str,
+    owned: &mut Vec<egui::Id>,
+) -> bool {
     let value = from_color(color);
     let hex = if color.a == 255 {
         format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
@@ -510,7 +518,7 @@ fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool, owned: &mut Vec<e
             color.r, color.g, color.b, color.a
         )
     };
-    let label = format!("{} {hex}", t("Text Color"));
+    let label = format!("{label} {hex}");
     let palette = Palette::of_ui(ui);
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
     owned.push(response.id);
@@ -687,6 +695,101 @@ pub(crate) fn touch_numeric_value(
         return (response, true);
     }
     (response, false)
+}
+
+fn card_inline_size_control(
+    ui: &mut Ui,
+    slot: egui::Id,
+    owner: egui::Id,
+    mut size: f32,
+    owned: &mut Vec<egui::Id>,
+) -> (Option<f32>, bool) {
+    let ctx = ui.ctx().clone();
+    let was_editing = ctx
+        .data(|data| data.get_temp::<bool>(slot.with("inline_size_editing")))
+        .unwrap_or(false);
+    let rect = ctx.data(|data| data.get_temp::<egui::Rect>(slot.with("inline_size_rect")));
+    let focus = ctx.data(|data| data.get_temp::<egui::Id>(slot.with("inline_size_focus")));
+    let pending = was_editing
+        && ctx.input(|input| {
+            (input.pointer.any_pressed() || input.pointer.any_released())
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| rect.is_some_and(|rect| !rect.contains(position)))
+                && input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Text(_) | egui::Event::Paste(_)))
+        });
+    let previous_focus = ctx.memory(|memory| memory.focused());
+    if pending
+        && let Some(id) = focus
+        && previous_focus != Some(id)
+    {
+        ctx.memory_mut(|memory| memory.request_focus(id));
+    }
+    let (response, commit) = touch_numeric_value(
+        ui,
+        &mut size,
+        "inline-card-text-size",
+        Some(owner),
+        |ui, value| {
+            let pointer =
+                pending.then(|| ctx.input_mut(|input| std::mem::take(&mut input.pointer)));
+            let response = ui
+                .add_sized(
+                    vec2(62.0, Tokens::ICON_BUTTON),
+                    egui::DragValue::new(value)
+                        .range(
+                            thinoda_core::rich_text::MIN_INLINE_FONT_SIZE
+                                ..=thinoda_core::rich_text::MAX_INLINE_FONT_SIZE,
+                        )
+                        .speed(0.5),
+                )
+                .accessible_name(t("Inline Font Size"));
+            if let Some(pointer) = pointer {
+                ctx.input_mut(|input| input.pointer = pointer);
+            }
+            response
+        },
+    );
+    if pending
+        && let Some(id) = focus
+        && previous_focus != Some(id)
+    {
+        ctx.memory_mut(|memory| {
+            if let Some(previous) = previous_focus {
+                memory.request_focus(previous);
+            } else {
+                memory.surrender_focus(id);
+            }
+        });
+    }
+    owned.push(response.id);
+    let editing = response.has_focus() && ctx.text_edit_focused();
+    let focused = ctx.memory(|memory| memory.focused());
+    ctx.data_mut(|data| {
+        data.insert_temp(slot.with("inline_size_editing"), editing);
+        data.insert_temp(slot.with("inline_size_rect"), response.rect);
+        if editing {
+            if let Some(focused) = focused {
+                data.insert_temp(slot.with("inline_size_focus"), focused);
+            }
+        } else {
+            data.remove::<egui::Id>(slot.with("inline_size_focus"));
+        }
+    });
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    if response.lost_focus() && ui.is_enabled() {
+        ctx.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter);
+            input.consume_key(Modifiers::NONE, Key::Escape);
+        });
+    }
+    (commit.then_some(size), editing)
 }
 
 pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
@@ -1445,39 +1548,151 @@ fn font_choice(
     value: &mut Option<String>,
     default_label: &str,
     generic_monospace: bool,
-    mut owned: Option<&mut Vec<egui::Id>>,
+    owned: Option<&mut Vec<egui::Id>>,
 ) -> egui::Response {
+    font_choice_with_mixed(
+        ui,
+        fonts,
+        value,
+        default_label,
+        generic_monospace,
+        owned,
+        FontChoiceMode {
+            mixed: false,
+            searchable: false,
+        },
+    )
+    .0
+}
+
+struct FontChoiceMode {
+    mixed: bool,
+    searchable: bool,
+}
+
+fn font_choice_with_mixed(
+    ui: &mut Ui,
+    fonts: &mut thinoda_ui::fonts::SystemFonts,
+    value: &mut Option<String>,
+    default_label: &str,
+    generic_monospace: bool,
+    mut owned: Option<&mut Vec<egui::Id>>,
+    mode: FontChoiceMode,
+) -> (egui::Response, bool) {
+    let mixed = mode.mixed;
+    let search_id = ui.make_persistent_id("font_family_search");
+    let composing_id = search_id.with("composing");
+    let open_id = search_id.with("open");
+    if mode.searchable
+        && !ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(open_id))
+            .unwrap_or(false)
+    {
+        ui.ctx().data_mut(|data| data.remove::<String>(search_id));
+    }
+    let mut composing = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(composing_id))
+        .unwrap_or(false);
+    if mode.searchable && ui.memory(|memory| memory.has_focus(search_id)) {
+        thinoda_canvas::protect_ime_candidate_keys(ui.ctx(), search_id, &mut composing);
+    } else {
+        composing = false;
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(composing_id, composing));
+    let dismiss = mode.searchable
+        && !composing
+        && ui.memory(|memory| memory.has_focus(search_id))
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let mut chosen = false;
     let response = egui::ComboBox::from_id_salt("font_family")
-        .selected_text(match value.as_deref() {
-            None => default_label,
-            Some("monospace") => t("Monospace"),
-            Some(name) => name,
+        .close_behavior(if mode.searchable {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        } else {
+            egui::PopupCloseBehavior::CloseOnClick
+        })
+        .selected_text(match (mixed, value.as_deref()) {
+            (true, _) => t("Mixed"),
+            (false, None) => default_label,
+            (false, Some("monospace")) => t("Monospace"),
+            (false, Some(name)) => name,
         })
         .width(ui.available_width())
         .truncate()
         .show_ui(ui, |ui| {
-            let response = ui.selectable_value(value, None, default_label);
-            if let Some(owned) = owned.as_deref_mut() {
-                owned.push(response.id);
-            }
-            if generic_monospace {
-                let response = ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+            let mut query = ui
+                .ctx()
+                .data(|data| data.get_temp::<String>(search_id))
+                .unwrap_or_default();
+            if mode.searchable {
+                let response = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut query)
+                            .id(search_id)
+                            .char_limit(thinoda_core::rich_text::MAX_INLINE_FONT_FAMILY_BYTES)
+                            .hint_text(t("Search")),
+                    )
+                    .accessible_name(t("Search fonts"));
                 if let Some(owned) = owned.as_deref_mut() {
                     owned.push(response.id);
                 }
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(search_id, query.clone()));
             }
-            for name in fonts.names() {
-                let response = ui.selectable_value(value, Some(name.clone()), name);
-                if let Some(owned) = owned.as_deref_mut() {
-                    owned.push(response.id);
+            let query = query.trim().to_lowercase();
+            let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
+            ui.add_enabled_ui(!composing, |ui| {
+                if matches(default_label) {
+                    let response = ui.selectable_label(!mixed && value.is_none(), default_label);
+                    if response.clicked() {
+                        *value = None;
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
                 }
+                if generic_monospace && matches(t("Monospace")) {
+                    let response = ui.selectable_label(
+                        !mixed && value.as_deref() == Some("monospace"),
+                        t("Monospace"),
+                    );
+                    if response.clicked() {
+                        *value = Some("monospace".into());
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
+                }
+                for name in fonts.names().iter().filter(|name| matches(name)) {
+                    let response =
+                        ui.selectable_label(!mixed && value.as_ref() == Some(name), name);
+                    if response.clicked() {
+                        *value = Some(name.clone());
+                        chosen = true;
+                    }
+                    if let Some(owned) = owned.as_deref_mut() {
+                        owned.push(response.id);
+                    }
+                }
+            });
+            if (chosen || dismiss) && mode.searchable {
+                ui.ctx().data_mut(|data| data.remove::<String>(search_id));
+                ui.close();
             }
         })
         .response;
+    if mode.searchable {
+        let open = egui::ComboBox::is_open(ui.ctx(), response.id);
+        ui.ctx().data_mut(|data| data.insert_temp(open_id, open));
+    }
     if let Some(owned) = owned {
         owned.push(response.id);
     }
-    response
+    (response, chosen)
 }
 
 pub use thinoda_canvas::FORMAT_SWATCHES as SWATCHES;
@@ -2002,7 +2217,11 @@ impl ThinodaApp {
         let draft_font_source: std::collections::BTreeSet<_> = self
             .doc()
             .into_iter()
-            .flat_map(|doc| doc.view.board_label_draft_font_families())
+            .flat_map(|doc| {
+                doc.view
+                    .board_label_draft_font_families()
+                    .chain(doc.view.title_draft_font_families())
+            })
             .map(str::to_owned)
             .collect();
         let preferred_fallback = (!crate::files::is_web())
@@ -3302,6 +3521,7 @@ impl ThinodaApp {
             data.insert_temp(slot, target);
             data.insert_temp(slot.with("focus"), true);
             data.insert_temp(slot.with("size_editing"), false);
+            data.insert_temp(slot.with("inline_size_editing"), false);
         });
         ctx.request_repaint();
     }
@@ -3454,10 +3674,16 @@ impl ThinodaApp {
             .is_some_and(|doc| doc.view.editing_topic() == Some(target.topic))
             && focused == Some(MapCanvas::title_editor_id());
         let size_editing = ctx.data(|data| {
-            data.get_temp::<bool>(slot.with("size_editing"))
-                .unwrap_or(false)
-                && focused.is_some()
-                && data.get_temp::<egui::Id>(slot.with("size_focus")) == focused
+            [
+                ("size_editing", "size_focus"),
+                ("inline_size_editing", "inline_size_focus"),
+            ]
+            .into_iter()
+            .any(|(editing, focus)| {
+                data.get_temp::<bool>(slot.with(editing)).unwrap_or(false)
+                    && focused.is_some()
+                    && data.get_temp::<egui::Id>(slot.with(focus)) == focused
+            })
         });
         if !title_editing && !size_editing {
             return false;
@@ -3629,16 +3855,43 @@ impl ThinodaApp {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
             return false;
         }
-        let title_active = self
-            .doc()
-            .is_some_and(|doc| doc.view.editing_topic() == Some(target.topic));
-        let ime_active = title_active
-            && self
-                .doc()
-                .is_some_and(|doc| doc.view.title_ime_active(&ctx));
+        let doc = self.doc().unwrap();
+        let title_active = doc.view.editing_topic() == Some(target.topic);
+        let inline_formats = [
+            ("Inline bold", icons::BOLD, CardTitleFormat::Bold),
+            ("Inline italic", icons::ITALIC, CardTitleFormat::Italic),
+            (
+                "Inline underline",
+                icons::UNDERLINE,
+                CardTitleFormat::Underline,
+            ),
+            (
+                "Inline strikethrough",
+                icons::STRIKE,
+                CardTitleFormat::Strikethrough,
+            ),
+            ("Inline subscript", "x₂", CardTitleFormat::Subscript),
+            ("Inline superscript", "x²", CardTitleFormat::Superscript),
+            ("Inline bulleted list", "•", CardTitleFormat::Bulleted),
+            ("Inline numbered list", "1.", CardTitleFormat::Numbered),
+        ];
+        let inline_format_active = if title_active {
+            inline_formats.map(|(_, _, format)| {
+                MapCanvas::title_format_is_active(&ctx, &doc.doc, &doc.view, format)
+            })
+        } else {
+            [false; 8]
+        };
+        let inline_values = title_active
+            .then(|| MapCanvas::title_inline_values(&ctx, &doc.doc, &doc.view))
+            .flatten();
+        let ime_active = title_active && doc.view.title_ime_active(&ctx);
         enabled &= !ime_active;
         let size_was_editing = ctx
             .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
+            .unwrap_or(false);
+        let inline_size_was_editing = ctx
+            .data(|data| data.get_temp::<bool>(slot.with("inline_size_editing")))
             .unwrap_or(false);
         let size_rect = ctx.data(|data| data.get_temp::<egui::Rect>(slot.with("size_rect")));
         let pending_size_input = size_was_editing
@@ -3658,6 +3911,7 @@ impl ThinodaApp {
             && !egui::Popup::is_any_open(&ctx)
             && !ctx.text_edit_focused()
             && !size_was_editing
+            && !inline_size_was_editing
             && (!title_active || toolbar_focused)
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
@@ -3672,7 +3926,6 @@ impl ThinodaApp {
             return false;
         }
 
-        let doc = self.doc().unwrap();
         let sheet = doc.doc.sheet();
         let topic = sheet.topic(target.topic).unwrap();
         let style = topic.style.clone();
@@ -3687,11 +3940,15 @@ impl ThinodaApp {
             focus
         });
         let mut change = None;
+        let mut inline_format_change = None;
+        let mut inline_style_change = None;
+        let mut inline_size_change = None;
         let mut size_change = None;
         let mut close = false;
         let mut command = None;
-        let mut font_popup = None;
+        let mut font_popups = Vec::new();
         let mut size_is_editing = false;
+        let mut inline_size_is_editing = false;
         let mut owned_focus = Vec::new();
         let mut bold_control = None;
         let popup_was_open = ctx
@@ -3860,7 +4117,7 @@ impl ThinodaApp {
                                                         Some(&mut owned_focus),
                                                     )
                                                     .accessible_name(t("Font Family"));
-                                                    font_popup = Some((
+                                                    font_popups.push((
                                                         response.id,
                                                         egui::ComboBox::is_open(&ctx, response.id),
                                                     ));
@@ -3998,11 +4255,110 @@ impl ThinodaApp {
                                                     ui,
                                                     color,
                                                     color == text_color,
+                                                    t("Text Color"),
                                                     &mut owned_focus,
                                                 ) {
                                                     change =
                                                         Some(CardTextChange::Color(Some(color)));
                                                 }
+                                            }
+                                            if let Some(values) = &inline_values {
+                                                ui.add_enabled_ui(!ime_active, |ui| {
+                                                    widgets::vdivider(ui);
+                                                    ui.label(RichText::new(t("Inline formatting")).small());
+                                                    for (index, (label, icon, format)) in
+                                                        inline_formats.into_iter().enumerate()
+                                                    {
+                                                        if card_text_owned_icon(
+                                                            ui,
+                                                            icon,
+                                                            t(label),
+                                                            inline_format_active[index],
+                                                            false,
+                                                            &mut owned_focus,
+                                                        ) {
+                                                            inline_format_change = Some(format);
+                                                        }
+                                                    }
+                                                    widgets::vdivider(ui);
+                                                    let mut family = values.font_family.clone().flatten();
+                                                    let mut family_chosen = false;
+                                                    ui.push_id("inline-card-font-family", |ui| {
+                                                        ui.allocate_ui_with_layout(
+                                                            vec2(120.0, Tokens::ICON_BUTTON),
+                                                            Layout::left_to_right(Align::Center),
+                                                            |ui| {
+                                                                ui.set_max_width(120.0);
+                                                                let (response, chosen) = font_choice_with_mixed(
+                                                                    ui,
+                                                                    &mut self.fonts,
+                                                                    &mut family,
+                                                                    t("Auto"),
+                                                                    true,
+                                                                    Some(&mut owned_focus),
+                                                                    FontChoiceMode {
+                                                                        mixed: values.font_family.is_none(),
+                                                                        searchable: true,
+                                                                    },
+                                                                );
+                                                                let response = response.accessible_name(t("Inline Font Family"));
+                                                                family_chosen = chosen;
+                                                                font_popups.push((
+                                                                    response.id,
+                                                                    egui::ComboBox::is_open(&ctx, response.id),
+                                                                ));
+                                                                if response.gained_focus() {
+                                                                    response.scroll_to_me(None);
+                                                                }
+                                                            },
+                                                        );
+                                                    });
+                                                    if family_chosen && widgets::touch_activation_allowed(&ctx) {
+                                                        inline_style_change =
+                                                            Some(CardTitleStyle::FontFamily(family));
+                                                    }
+                                                    let size = values.font_size.flatten().unwrap_or(resolved.font_size);
+                                                    if values.font_size.is_none() {
+                                                        ui.label(t("Mixed"));
+                                                    }
+                                                    let (size, editing) = card_inline_size_control(
+                                                        ui, slot, numeric_owner.with("inline"), size, &mut owned_focus,
+                                                    );
+                                                    inline_size_is_editing = editing;
+                                                    if let Some(size) = size
+                                                        && (values.font_size.is_none()
+                                                            || values.font_size.flatten() != Some(size))
+                                                        && size.is_finite()
+                                                    {
+                                                        inline_size_change =
+                                                            Some(CardTitleStyle::FontSize(Some(size)));
+                                                    }
+                                                    let auto_size = ui.button(t("Auto"))
+                                                        .accessible_name(t("Inline Font Size Auto"));
+                                                    owned_focus.push(auto_size.id);
+                                                    if auto_size.clicked() && widgets::touch_activation_allowed(&ctx) {
+                                                        inline_style_change = Some(CardTitleStyle::FontSize(None));
+                                                    }
+                                                    widgets::vdivider(ui);
+                                                    ui.label(t("Inline Text Color"));
+                                                    let auto = ui.selectable_label(values.color == Some(None), t("Auto"))
+                                                        .accessible_name(t("Inline Text Color Auto"));
+                                                    owned_focus.push(auto.id);
+                                                    if auto.clicked() && widgets::touch_activation_allowed(&ctx) {
+                                                        inline_style_change = Some(CardTitleStyle::Color(None));
+                                                    }
+                                                    let custom = values.color.flatten().filter(|color| {
+                                                        !SWATCHES.contains(&from_color(*color))
+                                                    });
+                                                    for color in custom.into_iter().chain(SWATCHES.iter().copied().map(to_color)) {
+                                                        if card_text_swatch(
+                                                            ui, color, values.color == Some(Some(color)),
+                                                            t("Inline Text Color"), &mut owned_focus,
+                                                        ) {
+                                                            inline_style_change = Some(CardTitleStyle::Color(Some(color)));
+                                                        }
+                                                    }
+                                                });
                                             }
                                         });
                                         reveal_changed_focus(ui);
@@ -4013,9 +4369,11 @@ impl ThinodaApp {
                         });
                     });
             });
-        let popup_open = font_popup.is_some_and(|(_, open)| open);
-        let popup_rect =
-            font_popup.and_then(|(id, _)| ctx.memory(|memory| memory.area_rect(id.with("popup"))));
+        let popup_open = font_popups.iter().any(|(_, open)| *open);
+        let popup_rects: Vec<_> = font_popups
+            .iter()
+            .filter_map(|(id, _)| ctx.memory(|memory| memory.area_rect(id.with("popup"))))
+            .collect();
         ctx.data_mut(|data| data.insert_temp(slot.with("font_popup"), popup_open));
         let (pointer_event, pointer_released) = ctx.input(|input| {
             let released = input.pointer.any_released();
@@ -4030,7 +4388,7 @@ impl ThinodaApp {
         let pointer_in_companion = pointer_event.is_some_and(|pos| {
             panel_rect.contains(pos)
                 || ((popup_open || popup_was_open)
-                    && popup_rect.is_some_and(|rect| rect.contains(pos)))
+                    && popup_rects.iter().any(|rect| rect.contains(pos)))
         });
         if title_active && ime_active && pointer_in_companion {
             ctx.memory_mut(|memory| memory.request_focus(MapCanvas::title_editor_id()));
@@ -4038,13 +4396,23 @@ impl ThinodaApp {
         ctx.data_mut(|data| data.insert_temp(slot.with("owned_focus"), owned_focus.clone()));
         let focus = ctx.memory(|memory| memory.focused());
         let focused_in_companion = focus.is_some_and(|id| owned_focus.contains(&id));
-        let has_change = size_change.is_some() || change.is_some();
+        let has_change = size_change.is_some()
+            || change.is_some()
+            || inline_format_change.is_some()
+            || inline_size_change.is_some()
+            || inline_style_change.is_some();
         let keyboard_finish = pointer_event.is_none()
-            && ((size_was_editing && !size_is_editing && focus.is_none())
-                || (has_change && (focus.is_none() || (popup_was_open && !popup_open))));
+            && ((popup_was_open && !popup_open)
+                || ((size_was_editing && !size_is_editing
+                    || inline_size_was_editing && !inline_size_is_editing)
+                    && focus.is_none())
+                || (has_change && focus.is_none()));
         let refocus = ime_active
             || keyboard_finish
-            || (pointer_released && (has_change || close || (!popup_open && !size_is_editing)));
+            || (pointer_released
+                && (has_change
+                    || close
+                    || (!popup_open && !size_is_editing && !inline_size_is_editing)));
         if title_active
             && if pointer_event.is_some() {
                 pointer_in_companion
@@ -4077,12 +4445,31 @@ impl ThinodaApp {
         }
         let mut updated_target = target.clone();
         let mut changed = false;
+        let mut inline_format_error = None;
+        if let Some(format) = inline_format_change
+            && let Some(doc) = self.doc_mut()
+        {
+            match MapCanvas::format_title_selection(&ctx, &doc.doc, &mut doc.view, format) {
+                Ok(applied) => changed |= applied,
+                Err(error) => inline_format_error = Some(error),
+            }
+        }
+        for style in inline_size_change.into_iter().chain(inline_style_change) {
+            let Some(doc) = self.doc_mut() else { break };
+            match MapCanvas::style_title_selection(&ctx, &doc.doc, &mut doc.view, style) {
+                Ok(applied) => changed |= applied,
+                Err(error) => inline_format_error = Some(error),
+            }
+        }
         for change in size_change.into_iter().chain(change) {
             let Some(updated) = self.apply_card_text_change(&updated_target, change) else {
                 break;
             };
             updated_target = updated;
             changed = true;
+        }
+        if let Some(error) = inline_format_error {
+            self.toasts.warning(error);
         }
         if close {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));

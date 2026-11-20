@@ -15,6 +15,7 @@ mod strict_json;
 
 /// Version 1 of the portable topic clipboard, including its terminating LF.
 pub const TOPIC_CLIPBOARD_PREFIX: &str = "THINODA-TOPIC-CLIPBOARD-1\n";
+const CARD_BASELINE_TOPIC_CLIPBOARD_PREFIX: &str = "THINODA-TOPIC-CLIPBOARD-2\n";
 
 const SIZE_ERROR: &str = "topic clipboard payload exceeds 16 MiB";
 /// Maximum number of topics in a clipboard selection.
@@ -41,8 +42,13 @@ pub fn encode_topic_payload(payload: &ClipboardPayload) -> Result<String, String
     }
 
     let mut output = BoundedWriter::new();
+    let prefix = if has_card_baseline_overrides(payload) {
+        CARD_BASELINE_TOPIC_CLIPBOARD_PREFIX
+    } else {
+        TOPIC_CLIPBOARD_PREFIX
+    };
     output
-        .write_all(TOPIC_CLIPBOARD_PREFIX.as_bytes())
+        .write_all(prefix.as_bytes())
         .map_err(|error| error.to_string())?;
     if let Err(error) = serde_json::to_writer(&mut output, payload) {
         return Err(if output.exceeded {
@@ -63,13 +69,31 @@ pub fn decode_topic_payload(text: &str) -> Result<ClipboardPayload, String> {
     if text.len() > MAX_BOARD_CLIPBOARD_BYTES {
         return Err(SIZE_ERROR.into());
     }
-    let json = text
-        .strip_prefix(TOPIC_CLIPBOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-TOPIC-CLIPBOARD-1\r\n"))
+    let (version, json) = text
+        .strip_prefix(CARD_BASELINE_TOPIC_CLIPBOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-TOPIC-CLIPBOARD-2\r\n"))
+        .map(|json| (2, json))
+        .or_else(|| {
+            text.strip_prefix(TOPIC_CLIPBOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-TOPIC-CLIPBOARD-1\r\n"))
+                .map(|json| (1, json))
+        })
         .ok_or("clipboard does not contain a supported Thinoda topic selection")?;
     let payload: ClipboardPayload = strict_json::from_str(json)?;
+    if version < 2 && has_card_baseline_overrides(&payload) {
+        return Err("card baseline overrides require topic clipboard version 2".into());
+    }
     validate_payload(&payload)?;
     Ok(payload)
+}
+
+fn has_card_baseline_overrides(payload: &ClipboardPayload) -> bool {
+    payload.subtrees.iter().any(|subtree| {
+        subtree
+            .topics
+            .iter()
+            .any(|topic| topic.inline_text.has_baseline_overrides())
+    })
 }
 
 pub(super) fn validate_for_paste(payload: &ClipboardPayload) -> Result<(), String> {
@@ -183,6 +207,9 @@ fn validate_payload(payload: &ClipboardPayload) -> Result<(), String> {
         let mut topics = HashMap::new();
         let mut remapped = HashMap::new();
         for topic in &subtree.topics {
+            if topic.drawio_source_id.is_some() {
+                return Err("topic clipboard cannot carry draw.io source IDs".into());
+            }
             if topics.insert(topic.id, topic).is_some() {
                 return Err(format!("duplicate topic clipboard ID {}", topic.id));
             }

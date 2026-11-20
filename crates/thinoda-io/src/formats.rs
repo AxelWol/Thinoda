@@ -61,9 +61,34 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "socio-technical data requires native format version 36".into(),
             ));
         }
-        if version < 37 && book.has_drawio_passthrough() {
+        if version < 37 && book.has_drawio_page_passthrough() {
             return Err(IoError::NewerVersion(
                 "draw.io passthrough requires native format version 37".into(),
+            ));
+        }
+        if version < 56 && book.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require native format version 56".into(),
+            ));
+        }
+        if version < 55 && book.has_drawio_topic_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io topic source IDs require native format version 55".into(),
+            ));
+        }
+        if version < 54 && book.has_drawio_zone_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io zone source IDs require native format version 54".into(),
+            ));
+        }
+        if version < 53 && book.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document passthrough requires native format version 53".into(),
+            ));
+        }
+        if version < 52 && book.has_card_baseline_overrides() {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require native format version 52".into(),
             ));
         }
         if version < 51 && book.has_rich_extra_connector_labels() {
@@ -319,6 +344,31 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require native format version 56".into(),
+            ));
+        }
+        if book.has_drawio_topic_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io topic source IDs require native format version 55".into(),
+            ));
+        }
+        if book.has_drawio_zone_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io zone source IDs require native format version 54".into(),
+            ));
+        }
+        if book.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document passthrough requires native format version 53".into(),
+            ));
+        }
+        if book.has_card_baseline_overrides() {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require native format version 52".into(),
+            ));
+        }
         if book.has_rich_extra_connector_labels() {
             return Err(IoError::NewerVersion(
                 "rich extra connector labels require native format version 51".into(),

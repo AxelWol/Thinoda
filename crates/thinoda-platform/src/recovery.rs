@@ -126,6 +126,16 @@ const RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION: &str =
     "THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1";
 const RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str =
     "THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1";
+const CARD_BASELINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-CARD-BASELINE-1";
+const CARD_BASELINE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-CARD-BASELINE-1";
+const DRAWIO_DOCUMENT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-DOCUMENT-1";
+const DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1";
+const DRAWIO_ZONE_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-ZONE-IDS-1";
+const DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-ZONE-IDS-1";
+const DRAWIO_TOPIC_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-TOPIC-IDS-1";
+const DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-TOPIC-IDS-1";
+const DRAWIO_GROUP_IDS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-GROUP-IDS-1";
+const DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-GROUP-IDS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -147,7 +157,17 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_rich_extra_connector_labels() {
+        tuple.serialize_element(if self.workbook.has_drawio_group_source_ids() {
+            DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_topic_source_ids() {
+            DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_zone_source_ids() {
+            DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
+        } else if self.workbook.drawio.is_some() {
+            DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_card_baseline_overrides() {
+            CARD_BASELINE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rich_extra_connector_labels() {
             RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_rich_connector_labels() {
             RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
@@ -289,11 +309,49 @@ struct SnapshotWorkbook {
     pending_ink: Option<String>,
 }
 
+fn finish_recovery_workbook<'de, A: SeqAccess<'de>>(
+    mut seq: A,
+    mut workbook: Workbook,
+    has_pending_ink: bool,
+) -> std::result::Result<SnapshotWorkbook, A::Error> {
+    let pending_ink = if has_pending_ink {
+        let pending_ink: String = seq
+            .next_element()?
+            .ok_or_else(|| A::Error::custom("missing pending ink"))?;
+        if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+            return Err(A::Error::custom("invalid pending ink size"));
+        }
+        Some(pending_ink)
+    } else {
+        None
+    };
+    if seq.next_element::<IgnoredAny>()?.is_some() {
+        return Err(A::Error::custom("unexpected recovery workbook data"));
+    }
+    workbook
+        .hydrate_stencil_packages()
+        .map_err(A::Error::custom)?;
+    Ok(SnapshotWorkbook {
+        workbook,
+        pending_ink,
+    })
+}
+
 fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let version = if workbook.has_rich_extra_connector_labels() {
+    let version = if workbook.has_drawio_group_source_ids() {
+        DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+    } else if workbook.has_drawio_topic_source_ids() {
+        DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+    } else if workbook.has_drawio_zone_source_ids() {
+        DRAWIO_ZONE_IDS_WORKBOOK_VERSION
+    } else if workbook.drawio.is_some() {
+        DRAWIO_DOCUMENT_WORKBOOK_VERSION
+    } else if workbook.has_card_baseline_overrides() {
+        CARD_BASELINE_WORKBOOK_VERSION
+    } else if workbook.has_rich_extra_connector_labels() {
         RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
     } else if workbook.has_rich_connector_labels() {
         RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
@@ -406,6 +464,31 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_drawio_group_source_ids() {
+                return Err(A::Error::custom(
+                    "draw.io group source IDs require a group-ID-aware recovery workbook",
+                ));
+            }
+            if workbook.has_drawio_topic_source_ids() {
+                return Err(A::Error::custom(
+                    "draw.io topic source IDs require a topic-ID-aware recovery workbook",
+                ));
+            }
+            if workbook.has_drawio_zone_source_ids() {
+                return Err(A::Error::custom(
+                    "draw.io zone source IDs require a zone-ID-aware recovery workbook",
+                ));
+            }
+            if workbook.drawio.is_some() {
+                return Err(A::Error::custom(
+                    "draw.io document metadata requires a document-aware recovery workbook",
+                ));
+            }
+            if workbook.has_card_baseline_overrides() {
+                return Err(A::Error::custom(
+                    "card baseline overrides require a card-baseline-aware recovery workbook",
+                ));
+            }
             if workbook.has_rich_labels() {
                 return Err(A::Error::custom(
                     "rich labels require a rich-label-aware recovery workbook",
@@ -615,18 +698,76 @@ where
                 && version != RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
                 && version != RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
                 && version != RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                && version != CARD_BASELINE_WORKBOOK_VERSION
+                && version != CARD_BASELINE_INK_WORKBOOK_VERSION
+                && version != DRAWIO_DOCUMENT_WORKBOOK_VERSION
+                && version != DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION
+                && version != DRAWIO_ZONE_IDS_WORKBOOK_VERSION
+                && version != DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
+                && version != DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+                && version != DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+                && version != DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                && version != DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
                 )));
             }
             let has_pending_ink = version.contains("-INK-");
-            let mut workbook: Workbook = seq
+            let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let group_envelope = version == DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                || version == DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_group_source_ids() != group_envelope {
+                return Err(A::Error::custom(
+                    "draw.io group source IDs require a group-ID-aware recovery workbook",
+                ));
+            }
+            if group_envelope {
+                return finish_recovery_workbook(seq, workbook, has_pending_ink);
+            }
+            let topic_envelope = version == DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+                || version == DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_topic_source_ids() != topic_envelope {
+                return Err(A::Error::custom(
+                    "draw.io topic source IDs require a topic-ID-aware recovery workbook",
+                ));
+            }
+            if topic_envelope {
+                return finish_recovery_workbook(seq, workbook, has_pending_ink);
+            }
+            let zone_envelope = version == DRAWIO_ZONE_IDS_WORKBOOK_VERSION
+                || version == DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_zone_source_ids() != zone_envelope {
+                return Err(A::Error::custom(
+                    "draw.io zone source IDs require a zone-ID-aware recovery workbook",
+                ));
+            }
+            if zone_envelope {
+                return finish_recovery_workbook(seq, workbook, has_pending_ink);
+            }
+            let document_envelope = version == DRAWIO_DOCUMENT_WORKBOOK_VERSION
+                || version == DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION;
+            if workbook.drawio.is_some() != document_envelope {
+                return Err(A::Error::custom(
+                    "draw.io document metadata requires a document-aware recovery workbook",
+                ));
+            }
+            if document_envelope {
+                return finish_recovery_workbook(seq, workbook, has_pending_ink);
+            }
+            let card_baseline_envelope = version == CARD_BASELINE_WORKBOOK_VERSION
+                || version == CARD_BASELINE_INK_WORKBOOK_VERSION;
+            if workbook.has_card_baseline_overrides() != card_baseline_envelope {
+                return Err(A::Error::custom(
+                    "card baseline overrides require a card-baseline-aware recovery workbook",
+                ));
+            }
             let rich_extra_connector_labels_envelope = version
                 == RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
-                || version == RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION;
+                || version == RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                || card_baseline_envelope && workbook.has_rich_extra_connector_labels();
             if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
                 return Err(A::Error::custom(
                     "rich extra connector labels require a rich-extra-connector-label-aware recovery workbook",
@@ -634,7 +775,8 @@ where
             }
             let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
                 || version == RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
-                || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+                || (rich_extra_connector_labels_envelope || card_baseline_envelope)
+                    && workbook.has_rich_connector_labels();
             if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
                 return Err(A::Error::custom(
                     "rich connector labels require a rich-connector-label-aware recovery workbook",
@@ -642,8 +784,10 @@ where
             }
             let rich_labels_envelope = version == RICH_LABELS_WORKBOOK_VERSION
                 || version == RICH_LABELS_INK_WORKBOOK_VERSION
-                || rich_connector_labels_envelope
-                || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+                || (rich_connector_labels_envelope
+                    || rich_extra_connector_labels_envelope
+                    || card_baseline_envelope)
+                    && workbook.has_rich_labels();
             if workbook.has_rich_labels() != rich_labels_envelope {
                 return Err(A::Error::custom(
                     "rich labels require a rich-label-aware recovery workbook",
@@ -651,7 +795,10 @@ where
             }
             let label_styles_envelope = version == LABEL_STYLES_WORKBOOK_VERSION
                 || version == LABEL_STYLES_INK_WORKBOOK_VERSION
-                || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+                || (rich_labels_envelope
+                    || rich_connector_labels_envelope
+                    || rich_extra_connector_labels_envelope
+                    || card_baseline_envelope)
                     && workbook.has_label_styles();
             if workbook.has_label_styles() != label_styles_envelope {
                 return Err(A::Error::custom(
@@ -660,7 +807,9 @@ where
             }
             let version = if !label_styles_envelope
                 && !rich_labels_envelope
+                && !rich_connector_labels_envelope
                 && !rich_extra_connector_labels_envelope
+                && !card_baseline_envelope
             {
                 version
             } else {
@@ -1446,27 +1595,7 @@ where
                     "connector waypoints require a waypoint-aware recovery workbook",
                 ));
             }
-            let pending_ink = if has_pending_ink {
-                let pending_ink: String = seq
-                    .next_element()?
-                    .ok_or_else(|| A::Error::custom("missing pending ink"))?;
-                if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
-                    return Err(A::Error::custom("invalid pending ink size"));
-                }
-                Some(pending_ink)
-            } else {
-                None
-            };
-            if seq.next_element::<IgnoredAny>()?.is_some() {
-                return Err(A::Error::custom("unexpected recovery workbook data"));
-            }
-            workbook
-                .hydrate_stencil_packages()
-                .map_err(A::Error::custom)?;
-            Ok(SnapshotWorkbook {
-                workbook,
-                pending_ink,
-            })
+            finish_recovery_workbook(seq, workbook, has_pending_ink)
         }
     }
 
@@ -3242,6 +3371,337 @@ mod lock_tests {
                     assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn drawio_zone_ids_require_aware_recovery_with_and_without_ink() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        sheet
+            .create_board_frame(
+                "Lane",
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 200.0),
+                ),
+            )
+            .unwrap();
+        sheet.zones[0].drawio_source_id = Some("source-zone".into());
+        book.drawio = Some(Arc::new(
+            thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+                attributes: vec![("owner".into(), "team".into())],
+            },
+        ));
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_ZONE_IDS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION
+            } else {
+                DRAWIO_DOCUMENT_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+            let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            missing["workbook"][1]["sheets"][0]["zones"][0]["drawio_source_id"] =
+                serde_json::Value::Null;
+            assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        }
+    }
+
+    #[test]
+    fn drawio_topic_ids_require_aware_recovery_with_and_without_ink() {
+        let mut book = Workbook::default();
+        let root = book.active().root;
+        book.active_mut().topic_mut(root).unwrap().drawio_source_id = Some("source-topic".into());
+        book.active_mut()
+            .create_board_frame(
+                "Lane",
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 200.0),
+                ),
+            )
+            .unwrap();
+        book.active_mut().zones[0].drawio_source_id = Some("source-zone".into());
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DRAWIO_ZONE_IDS_INK_WORKBOOK_VERSION
+            } else {
+                DRAWIO_ZONE_IDS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+            let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            missing["workbook"][1]["sheets"][0]["topics"][root.0.to_string()]["drawio_source_id"] =
+                serde_json::Value::Null;
+            assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        }
+    }
+
+    #[test]
+    fn drawio_group_ids_require_aware_recovery_with_and_without_ink() {
+        use thinoda_core::{Card, CardKind, Vec2, board::BoardMember};
+
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_card(
+                "A",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                Vec2::new(150.0, 0.0),
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[BoardMember::Card(first), BoardMember::Card(second)])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("source-group".into());
+        sheet.topic_mut(first).unwrap().drawio_source_id = Some("source-topic".into());
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_GROUP_IDS_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_GROUP_IDS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DRAWIO_TOPIC_IDS_INK_WORKBOOK_VERSION
+            } else {
+                DRAWIO_TOPIC_IDS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            raw["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(raw).is_err());
+            let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            missing["workbook"][1]["sheets"][0]["canvas"]["groups"][0]["drawio_source_id"] =
+                serde_json::Value::Null;
+            assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        }
+    }
+
+    #[test]
+    fn drawio_document_metadata_requires_aware_recovery_with_and_without_ink() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "Text",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("Text", 0..1, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+            })
+            .unwrap();
+        book.drawio = Some(Arc::new(
+            thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+                attributes: vec![("owner".into(), "team".into())],
+            },
+        ));
+        book.validate().unwrap();
+        let plain = Workbook {
+            drawio: book.drawio.clone(),
+            ..Workbook::default()
+        };
+        let bytes = Snapshot::to_bytes(SnapshotMeta::default(), &plain).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Snapshot>(&bytes).unwrap().workbook,
+            plain
+        );
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_DOCUMENT_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_DOCUMENT_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                CARD_BASELINE_INK_WORKBOOK_VERSION
+            } else {
+                CARD_BASELINE_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+            let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            missing["workbook"][1]["drawio"] = serde_json::Value::Null;
+            assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+            if ink.is_some() {
+                let mut empty: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                empty["workbook"][2] = serde_json::json!("");
+                assert!(serde_json::from_value::<Snapshot>(empty).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn card_baseline_requires_aware_recovery_with_and_without_pending_ink() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "A🙂B",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("A🙂B", 1..2, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+            })
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    CARD_BASELINE_INK_WORKBOOK_VERSION
+                } else {
+                    CARD_BASELINE_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+            } else {
+                RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+        let mut connector = thinoda_core::board::CanvasConnector::new(
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::ZERO),
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("label", 0..5, |style| style.bold = Some(true))
+            .unwrap();
+        connector
+            .extra_labels
+            .push(thinoda_core::board::ConnectorLabel {
+                text: "label".into(),
+                rich_text: Some(Arc::new(rich.clone())),
+                ..Default::default()
+            });
+        let mut object = thinoda_core::board::CanvasObject::connector(connector);
+        object.set_label("label").unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
         }
     }
 

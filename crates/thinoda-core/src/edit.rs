@@ -584,6 +584,34 @@ impl Sheet {
         Ok(())
     }
 
+    /// Replaces a floating sticky/text card's title and formatting atomically.
+    pub fn set_card_title_with_rich_text(
+        &mut self,
+        id: TopicId,
+        title: &str,
+        rich: crate::rich_text::InlineText,
+    ) -> EditResult<()> {
+        self.require(id)?;
+        let topic = self.topic(id).unwrap();
+        if self.board_member_for_topic(id).is_none()
+            || !topic.card.is_some_and(|card| {
+                matches!(
+                    card.kind,
+                    crate::board::CardKind::Sticky | crate::board::CardKind::Text
+                )
+            })
+        {
+            return Err(EditError::Invalid(
+                "Rich card text requires a floating sticky or text card".into(),
+            ));
+        }
+        rich.validate(title).map_err(EditError::Invalid)?;
+        let topic = self.topic_mut(id).unwrap();
+        topic.title = title.to_owned();
+        topic.inline_text = rich;
+        Ok(())
+    }
+
     pub fn set_notes(&mut self, id: TopicId, notes: Option<String>) -> EditResult<()> {
         self.require(id)?;
         let topic = self.topic_mut(id).unwrap();

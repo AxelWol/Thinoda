@@ -139,6 +139,24 @@ fn set_label_cursor(h: &mut Harness<'_, State>, index: usize) {
     h.run_steps(2);
 }
 
+fn accessible_replace(text: &str) -> egui::Event {
+    egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+        action: egui::accesskit::Action::ReplaceSelectedText,
+        target_node: MapCanvas::board_label_editor_id().accesskit_id(),
+        target_tree: egui::accesskit::TreeId::ROOT,
+        data: Some(egui::accesskit::ActionData::Value(text.into())),
+    })
+}
+
+fn accessible_set_value(text: &str) -> egui::Event {
+    egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+        action: egui::accesskit::Action::SetValue,
+        target_node: MapCanvas::board_label_editor_id().accesskit_id(),
+        target_tree: egui::accesskit::TreeId::ROOT,
+        data: Some(egui::accesskit::ActionData::Value(text.into())),
+    })
+}
+
 fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
     let id = MapCanvas::board_label_editor_id();
     let mut state = egui::TextEdit::load_state(&h.ctx, id).unwrap();
@@ -150,6 +168,95 @@ fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
         )));
     state.store(&h.ctx, id);
     h.run_steps(2);
+}
+
+#[test]
+fn selected_formatting_has_local_rich_undo_and_directional_redo() {
+    let mut h = harness("abcd");
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 3, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    let rich = h.state().view.board_rich_label_draft().unwrap().3.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 3));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert!(h.state().view.board_rich_label_draft().unwrap().3.is_none());
+    let cursor = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap();
+    assert_eq!((cursor.primary.index.0, cursor.secondary.index.0), (3, 1));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    let rich = h.state().view.board_rich_label_draft().unwrap().3.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 3));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn repeated_input_and_deletion_preserve_extra_connector_label_formatting() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set extra label", id, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!("expected connector");
+            };
+            connector.extra_labels[0].text = "aaa".into();
+            connector.extra_labels[0].rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 1);
+    h.event(egui::Event::Text("a".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(&rich));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.extra_labels[0].text, "aaaa");
+    let run = &connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0];
+    assert_eq!((run.start, run.end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.extra_labels[0].text, "aaa");
+    assert_eq!(connector.extra_labels[0].rich_text.as_deref(), Some(&rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
 #[test]
@@ -357,6 +464,1105 @@ fn caret_formatting_expands_new_combining_graphemes() {
     assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
     assert_eq!(rich.runs[0].style.bold, Some(true));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_backspace_and_delete_keep_graphemes_intact() {
+    for (original, cursor, key, expected) in [
+        ("a\u{301}b", 2, Key::Backspace, "b"),
+        ("a\u{301}b", 0, Key::Delete, "b"),
+        ("a🇩🇪b", 3, Key::Backspace, "ab"),
+        ("a🇩🇪b", 1, Key::Delete, "ab"),
+        ("a👩\u{200d}💻b", 4, Key::Backspace, "ab"),
+        ("a👩\u{200d}💻b", 2, Key::Delete, "ab"),
+    ] {
+        let mut h = harness(original);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        let last = original.chars().count();
+        rich.update_range(original, last - 1..last, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, cursor);
+        h.key_press(key);
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, expected, "key={key:?}");
+        let changed = changed.unwrap();
+        assert_eq!(changed.runs[0].end as usize, expected.chars().count());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, original);
+        assert_eq!(restored, Some(rich.clone()));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_delete_expands_partial_grapheme_selection() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    let cursor = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap();
+    assert_eq!((cursor.primary.index.0, cursor.secondary.index.0), (2, 1));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_modified_delete_expands_partial_grapheme_selection() {
+    for (modifiers, key) in [
+        (Modifiers::CTRL, Key::Backspace),
+        (Modifiers::CTRL, Key::Delete),
+        (Modifiers::ALT, Key::Backspace),
+        (Modifiers::ALT, Key::Delete),
+        (Modifiers::COMMAND, Key::Backspace),
+        (Modifiers::COMMAND, Key::Delete),
+    ] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("a👩\u{200d}💻b", 4..5, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "ab",
+            "{modifiers:?} {key:?}"
+        );
+        let (_, _, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (1, 2));
+        assert_eq!(changed.runs[0].style.bold, Some(true));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "a👩\u{200d}💻b");
+        assert_eq!(restored, Some(rich));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_keeps_word_deletion_at_collapsed_caret() {
+    let mut h = harness("hello world");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 11);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Backspace);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "hello ");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_modified_delete_at_interior_caret_keeps_graphemes_intact() {
+    for (key, expected) in [(Key::Backspace, "b"), (Key::Delete, "a")] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::CTRL, key);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            expected,
+            "{key:?}"
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!((range.primary.index.0, range.secondary.index.0), (2, 2));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_at_interior_caret_keeps_typing_style() {
+    for key in [Key::Backspace, Key::Delete] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::CTRL, key);
+        h.run_steps(2);
+        h.event(egui::Event::Text("x".into()));
+        h.run_steps(2);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, if key == Key::Backspace { "xb" } else { "ax" });
+        let rich = rich.unwrap();
+        let start = if key == Key::Backspace { 0 } else { 1 };
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (start, start + 1));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_snaps_interior_caret_in_both_directions() {
+    for (text, interior, start, end) in [
+        ("p a\u{301} z", 3, 2, 4),
+        ("a🇩🇪b", 2, 1, 3),
+        ("a👩\u{200d}💻b", 2, 1, 4),
+    ] {
+        for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::COMMAND] {
+            for key in [Key::Backspace, Key::Delete] {
+                let run = |cursor| {
+                    let mut h = harness(text);
+                    h.ctx
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    double_click_shape(&mut h);
+                    set_label_cursor(&mut h, cursor);
+                    h.key_press_modifiers(modifiers, key);
+                    h.run_steps(2);
+                    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                    h.state().view.board_label_draft().unwrap().2.to_owned()
+                };
+                let boundary = if key == Key::Backspace { end } else { start };
+                assert_eq!(
+                    run(interior),
+                    run(boundary),
+                    "{text:?} {modifiers:?} {key:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn connector_label_deletes_whole_graphemes_and_undoes() {
+    let mut h = harness("Shape");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let id = add_positioned_connector(&mut h);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set connector label", id, |object| {
+            object.set_label("a🇩🇪b").unwrap();
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 3);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_label_modified_delete_expands_partial_selection() {
+    let mut h = harness("Shape");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let id = add_positioned_connector(&mut h);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set connector label", id, |object| {
+            object.set_label("a🇩🇪b").unwrap();
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_replacement_and_cut_expand_partial_graphemes() {
+    for mode in 0..3 {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        h.event(match mode {
+            0 => egui::Event::Text("x".into()),
+            1 => egui::Event::Paste("x".into()),
+            _ => egui::Event::Cut,
+        });
+        h.run_steps(1);
+        if mode == 2 {
+            assert!(
+                h.output()
+                    .platform_output
+                    .commands
+                    .contains(&egui::OutputCommand::CopyText("👩\u{200d}💻".into()))
+            );
+        }
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if mode == 2 { "ab" } else { "axb" }
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_insertion_snaps_a_caret_inside_a_grapheme() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "a👩\u{200d}💻xb");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (4, 5));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_ignored_text_input_does_not_move_grapheme_selection() {
+    for event in [
+        egui::Event::Text(String::new()),
+        egui::Event::Text("\n".into()),
+        egui::Event::Text("\r".into()),
+        egui::Event::Paste(String::new()),
+    ] {
+        for selected in [true, false] {
+            let mut h = harness("a👩\u{200d}💻b");
+            h.ctx
+                .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+            double_click_shape(&mut h);
+            if selected {
+                set_label_selection(&mut h, 2, 1);
+            } else {
+                set_label_cursor(&mut h, 2);
+            }
+            h.event(event.clone());
+            h.run_steps(1);
+            assert_eq!(
+                h.state().view.board_label_draft().unwrap().2,
+                "a👩\u{200d}💻b"
+            );
+            let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap()
+                .as_sorted_char_range();
+            assert_eq!(
+                (range.start.0, range.end.0),
+                if selected { (1, 2) } else { (2, 2) },
+                "{event:?}"
+            );
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn rich_label_accessibility_replacement_preserves_graphemes_and_formatting() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("a👩\u{200d}💻b", 4..5, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 2, 1);
+    h.event(accessible_replace("x"));
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axb");
+    let changed = changed.unwrap();
+    assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+    assert_eq!(changed.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "a👩\u{200d}💻b");
+    assert_eq!(restored, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_empty_replacement_deletes_only_selection() {
+    for selected in [true, false] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("a👩\u{200d}💻b", 4..5, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        if selected {
+            set_label_selection(&mut h, 2, 1);
+        } else {
+            set_label_cursor(&mut h, 2);
+        }
+        h.event(accessible_replace(""));
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if selected { "ab" } else { "a👩\u{200d}💻b" }
+        );
+        if selected {
+            let (_, _, changed) = h
+                .state()
+                .view
+                .validated_board_rich_label_draft(&h.state().doc)
+                .unwrap()
+                .unwrap();
+            let changed = changed.unwrap();
+            assert_eq!((changed.runs[0].start, changed.runs[0].end), (1, 2));
+            assert_eq!(changed.runs[0].style.bold, Some(true));
+            h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+            h.run_steps(2);
+            assert_eq!(
+                h.state().view.board_label_draft().unwrap().2,
+                "a👩\u{200d}💻b"
+            );
+        } else {
+            let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap();
+            assert_eq!((range.primary.index.0, range.secondary.index.0), (2, 2));
+        }
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_accessibility_and_keyboard_input_follow_event_order() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.input_mut()
+        .events
+        .extend([accessible_replace("a"), egui::Event::Text("x".into())]);
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaxaa");
+    let changed = changed.unwrap();
+    assert_eq!((changed.runs[0].start, changed.runs[0].end), (3, 4));
+    assert_eq!(changed.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_replacement_snaps_pending_caret_style() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(accessible_replace("x"));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "a👩\u{200d}💻xb");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (4, 5));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_accessibility_replacement_preserves_graphemes_and_undo() {
+    let mut h = harness("Shape");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let id = add_positioned_connector(&mut h);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set connector label", id, |object| {
+            object.set_label("a🇩🇪b").unwrap();
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    set_label_selection(&mut h, 2, 1);
+    h.event(accessible_replace("x"));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "axb");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_set_value_matches_select_all_replacement() {
+    let run = |accessible, replacement| {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        if accessible {
+            h.event(accessible_set_value(replacement));
+        } else {
+            set_label_selection(&mut h, 0, 3);
+            h.event(egui::Event::Text(replacement.into()));
+        }
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, replacement);
+        let changed = changed.clone();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "aaa");
+        assert_eq!(restored, Some(rich));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        changed
+    };
+    for replacement in ["aaaa", "aaa"] {
+        assert_eq!(run(true, replacement), run(false, replacement));
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_value_works_with_toolbar_focus() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.event(accessible_set_value("aaaa"));
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaaa");
+    assert_eq!(changed, None);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_set_value_follows_keyboard_event_order() {
+    for set_first in [true, false] {
+        let mut h = harness("aaa");
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 1);
+        let value = accessible_set_value("b");
+        let text = egui::Event::Text("x".into());
+        h.input_mut().events.extend(if set_first {
+            vec![value, text]
+        } else {
+            vec![text, value]
+        });
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if set_first { "bx" } else { "b" }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_value_follows_toolbar_focus_change() {
+    for text_before_focus in [false, true] {
+        let mut h = harness("aaa");
+        double_click_shape(&mut h);
+        h.key_press(Key::F6);
+        h.run_steps(2);
+        assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+        h.input_mut().events.push(accessible_set_value("b"));
+        if text_before_focus {
+            h.input_mut()
+                .events
+                .push(egui::Event::Text("ignored".into()));
+        }
+        h.input_mut().events.extend([
+            egui::Event::Key {
+                key: Key::F6,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("x".into()),
+        ]);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "bx",
+            "text_before_focus={text_before_focus}"
+        );
+        assert!(h.get_by_label("Board object label").is_focused());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_value_precedes_toolbar_formatting() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.input_mut().events.extend([
+        accessible_set_value("b"),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "bx");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_set_empty_value_can_be_undone() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    h.event(accessible_set_value(""));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_line_break_replaces_whole_selected_grapheme() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a\nb");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_new_ime_composition_respects_graphemes() {
+    for (selected, preedit) in [(false, true), (true, true), (false, false), (true, false)] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        if selected {
+            set_label_selection(&mut h, 2, 1);
+        } else {
+            set_label_cursor(&mut h, 2);
+        }
+        if preedit {
+            h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "x".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if selected {
+                "axb"
+            } else {
+                "a👩\u{200d}💻xb"
+            }
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_empty_initial_ime_preserves_partial_selection() {
+    for preedit in [true, false] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        let id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(2),
+            )));
+        state.store(&h.ctx, id);
+        let before = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!((before.primary.index.0, before.secondary.index.0), (2, 1));
+        h.event(egui::Event::Ime(if preedit {
+            egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }
+        } else {
+            egui::ImeEvent::Commit(String::new())
+        }));
+        h.run_steps(1);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!(
+            (range.primary.index.0, range.secondary.index.0),
+            (before.primary.index.0, before.secondary.index.0)
+        );
+        let range = range.as_sorted_char_range();
+        assert_eq!((range.start.0, range.end.0), (1, 2));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_active_ime_update_preserves_composition_range() {
+    let mut h = harness("ab");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    for (preedit, expected) in [("\u{301}", "a\u{301}b"), ("x", "axb")] {
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: preedit.into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        assert_eq!(h.state().view.board_label_draft().unwrap().2, expected);
+    }
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("y".into())));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ayb");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_line_break_and_ime_keep_snapped_caret_style() {
+    for mode in 0..3 {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        match mode {
+            0 => h.key_press_modifiers(Modifiers::SHIFT, Key::Enter),
+            1 => h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into()))),
+            _ => {
+                h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "x".into(),
+                    active_range_chars: None,
+                }));
+                h.run_steps(1);
+                h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+            }
+        }
+        h.run_steps(2);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            text,
+            if mode == 0 {
+                "a👩\u{200d}💻\nb"
+            } else {
+                "a👩\u{200d}💻xb"
+            }
+        );
+        let rich = rich.unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (4, 5));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn plain_label_processes_text_and_undo_in_event_order() {
+    let mut h = harness("a");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.event(egui::Event::Text("b".into()));
+    h.event(egui::Event::Key {
+        key: Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn long_plain_label_keeps_egui_undo_when_it_becomes_short() {
+    let original = "a".repeat(thinoda_core::MAX_INLINE_TEXT_CHARS);
+    let mut h = harness(&original);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, original.len());
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(70);
+    set_label_selection(&mut h, 0, original.len() + 1);
+    h.event(egui::Event::Text("b".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "b");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "b");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    set_label_selection(&mut h, 0, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .view
+            .board_label_draft()
+            .unwrap()
+            .2
+            .chars()
+            .count(),
+        original.len() + 1
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    set_label_selection(&mut h, 0, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    assert!(h.state().view.board_rich_label_draft().unwrap().3.is_none());
+    assert!(
+        h.state().errors.iter().any(|error| error
+            .to_string()
+            .contains("plain-text undo history is active")),
+        "{:?}",
+        h.state().errors
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .view
+            .board_label_draft()
+            .unwrap()
+            .2
+            .chars()
+            .count(),
+        original.len() + 1
+    );
+}
+
+#[test]
+fn local_undo_recovers_a_rejected_rich_label_insertion() {
+    let original = "a".repeat(thinoda_core::MAX_INLINE_TEXT_CHARS);
+    let mut h = harness(&original);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, original.len());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .is_err()
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, original);
+    assert!(rich.is_none());
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.event(egui::Event::Text("b".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert!(text.ends_with('b'));
+    assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
 }
 
 #[test]
@@ -666,6 +1872,319 @@ fn editor_click_precedes_batched_format_shortcut_and_text() {
 }
 
 #[test]
+fn editor_click_orders_ime_input_before_and_after_the_click() {
+    for ime_before_click in [false, true] {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 1);
+        let editor = h.get_by_label("Board object label").rect();
+        let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+        let ime = [
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "a".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        ];
+        let click = [
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ];
+        if ime_before_click {
+            h.input_mut().events.extend(ime);
+            h.input_mut().events.extend(click);
+            h.input_mut().events.push(egui::Event::Text("x".into()));
+        } else {
+            h.input_mut().events.extend(click);
+            h.input_mut().events.extend(ime);
+        }
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, if ime_before_click { "xaaaa" } else { "aaaa" });
+        let changed = changed.unwrap();
+        assert_eq!(
+            (changed.runs[0].start, changed.runs[0].end),
+            if ime_before_click { (3, 4) } else { (2, 3) }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn formatting_focus_follows_ime_event_order() {
+    for during_composition in [false, true] {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 1);
+        let preedit = egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "a".into(),
+            active_range_chars: None,
+        });
+        let commit = egui::Event::Ime(egui::ImeEvent::Commit("a".into()));
+        let f6 = egui::Event::Key {
+            key: Key::F6,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        h.input_mut().events.extend(if during_composition {
+            vec![preedit, f6, commit]
+        } else {
+            vec![preedit, commit, f6, egui::Event::Text("x".into())]
+        });
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "aaaa");
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+        if during_composition {
+            assert!(h.get_by_label("Board object label").is_focused());
+        } else {
+            assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+        }
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn formatting_focus_before_ime_keeps_input_out_of_the_label() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::F6,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "x".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "aaa");
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn formatting_focus_follows_prior_text_in_same_frame() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.input_mut().events.extend([
+        egui::Event::Text("x".into()),
+        egui::Event::Key {
+            key: Key::F6,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "axaa");
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn formatting_focus_precedes_later_text_in_same_frame() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::F6,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "aaa");
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn formatting_focus_routes_same_frame_toolbar_activation_before_text() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut()
+        .events
+        .extend([key(Key::F6), key(Key::Enter), egui::Event::Text("x".into())]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn outside_click_commits_preceding_rich_ime_input_in_order() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "a".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(shape).unwrap();
+    assert_eq!(object.label(), "aaaa");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn outside_click_orders_accessibility_set_value_against_label_commit() {
+    for before_click in [true, false] {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        let click = [
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ];
+        if before_click {
+            h.input_mut().events.push(accessible_set_value("aaaa"));
+            h.input_mut().events.extend(click);
+        } else {
+            h.input_mut().events.extend(click);
+            h.input_mut().events.push(accessible_set_value("aaaa"));
+        }
+        h.run_steps(3);
+        let object = h.state().doc.sheet().canvas.object(shape).unwrap();
+        assert_eq!(object.label(), if before_click { "aaaa" } else { "aaa" });
+        assert_eq!(
+            object.label_rich_text.as_deref(),
+            if before_click { None } else { Some(&rich) }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn caret_formatting_survives_ime_composition() {
     let mut h = harness("");
     h.ctx
@@ -689,6 +2208,38 @@ fn caret_formatting_survives_ime_composition() {
     assert_eq!(text, "日本");
     let rich = rich.unwrap();
     assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_survives_ime_surrounding_deletion() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "n".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+        before_chars: 0,
+        after_chars: 1,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+    h.run_steps(1);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
     assert_eq!(rich.runs[0].style.bold, Some(true));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }

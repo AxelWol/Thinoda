@@ -15,6 +15,7 @@ fn document() -> Document {
         sheets: vec![sheet],
         active_sheet: 0,
         metadata: Default::default(),
+        drawio: None,
     })
 }
 

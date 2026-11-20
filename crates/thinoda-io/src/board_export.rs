@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 51;
+pub const NATIVE_FORMAT_VERSION: u64 = 56;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -37,10 +37,23 @@ pub const NATIVE_FORMAT_VERSION: u64 = 51;
 /// named board layers, and 46 native tables, and 47 shape style effects
 /// (dash, gradient, fill pattern, shadow, glass and flips), and 48 shape
 /// label text styles, 49 inline shape-label formatting, and 50 inline
-/// primary connector-label formatting, and 51 additional connector-label formatting.
+/// primary connector-label formatting, 51 additional connector-label formatting,
+/// and 52 card text baseline overrides, 53 draw.io document passthrough, and
+/// 54 draw.io zone source IDs, 55 draw.io topic source IDs, and
+/// 56 draw.io group source IDs.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_rich_extra_connector_labels() {
+    if book.has_drawio_group_source_ids() {
+        56
+    } else if book.has_drawio_topic_source_ids() {
+        55
+    } else if book.has_drawio_zone_source_ids() {
+        54
+    } else if book.drawio.is_some() {
+        53
+    } else if book.has_card_baseline_overrides() {
+        52
+    } else if book.has_rich_extra_connector_labels() {
         51
     } else if book.has_rich_connector_labels() {
         50
@@ -293,7 +306,7 @@ pub enum ExportLoss {
     ConnectorLabelCompositingApproximated(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
-    /// Inline card titles with formatting or list semantics are not written.
+    /// Formatted card titles are not supported by this export target.
     InlineTextDropped(usize),
     /// Mind-map topics, branches and annotations are written as unlinked drawn
     /// shapes and lines: they no longer reflow or form a hierarchy.
@@ -516,7 +529,9 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         {
             push(ExportLoss::ZoneClipDropped, c.zone_clip);
         }
-        push(ExportLoss::InlineTextDropped, c.inline_text);
+        if format == Format::PowerPoint {
+            push(ExportLoss::InlineTextDropped, c.inline_text);
+        }
     } else {
         push(ExportLoss::ShapesDropped, c.shapes);
         push(ExportLoss::InkDropped, c.ink);
@@ -629,7 +644,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
-    let mut inline_text = 0;
     let mut connector_attachments = 0;
     let mut fixed_connector_attachments = 0;
     let mut fixed_connector_positions = 0;
@@ -658,7 +672,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                     || !topic.markers.is_empty()
                     || topic.todo.is_some(),
             );
-            inline_text += usize::from(!topic.inline_text.is_empty());
             card_appearance += usize::from(topic.card.is_some_and(|card| match card.kind {
                 CardKind::Sticky => true,
                 CardKind::Image => crate::drawio::card_image(sheet, topic).is_none(),
@@ -874,7 +887,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
             card_appearance,
         ),
         (ExportLoss::TopicDetailsDropped, details),
-        (ExportLoss::InlineTextDropped, inline_text),
         (ExportLoss::SlidesDropped, slides),
     ] {
         if count > 0 {

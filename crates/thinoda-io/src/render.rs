@@ -533,7 +533,11 @@ fn svg_layout_with_fonts(
             bounds.min.x, bounds.min.y
         )
     };
-    let measure_visible_bounds = has_clipped_frames && frame.is_none();
+    let has_rich_card = layout.order.iter().any(|id| {
+        s.topic(*id)
+            .is_some_and(|topic| !topic.inline_text.is_empty())
+    });
+    let measure_visible_bounds = frame.is_none() && (has_clipped_frames || has_rich_card);
     let background = |bounds: Rect| {
         let max = bounds.max();
         let width = max.x - bounds.min.x;
@@ -891,8 +895,6 @@ fn svg_layout_with_fonts(
                 esc(id), min.x, min.y
             ));
         }
-        let block = text.topic(*id);
-        let mut y = tl.title_rect.min.y;
         let weight = if style.bold { "bold" } else { "normal" };
         let font = style
             .font_family
@@ -909,24 +911,38 @@ fn svg_layout_with_fonts(
             (false, true) => " text-decoration=\"line-through\"",
             (false, false) => "",
         };
-        for (index, line) in block.lines.iter().enumerate() {
-            let x = match style.align {
-                TextAlign::Left => tl.title_rect.min.x - line.bounds.min.x,
-                TextAlign::Center => tl.title_rect.center().x - line.bounds.center().x,
-                TextAlign::Right => tl.title_rect.max().x - line.bounds.max().x,
-            };
-            let baseline = y + (block.line_height - line.bounds.size.y) / 2.0 - line.bounds.min.y;
-            // Standalone SVG viewers may substitute fonts; retain the measured width.
-            let length = if line.text.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\"",
-                    line.bounds.size.x
-                )
-            };
-            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\"{italic}{decoration} fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(text_color),esc(&line.text)));
-            y += block.line_height;
+        if let Some(topic) = s.topic(*id).filter(|topic| !topic.inline_text.is_empty()) {
+            let label_style = thinoda_core::label_style::card_title_style(style);
+            let rich = thinoda_core::label_style::layout_rich_in_frame(
+                &label_style,
+                tl.title_rect,
+                &topic.title,
+                &topic.inline_text,
+            );
+            out.push_str(&styled_label_svg(&rich, &label_style, text_color, 1.0));
+        } else {
+            let block = text.topic(*id);
+            let mut y = tl.title_rect.min.y;
+            for (index, line) in block.lines.iter().enumerate() {
+                let x = match style.align {
+                    TextAlign::Left => tl.title_rect.min.x - line.bounds.min.x,
+                    TextAlign::Center => tl.title_rect.center().x - line.bounds.center().x,
+                    TextAlign::Right => tl.title_rect.max().x - line.bounds.max().x,
+                };
+                let baseline =
+                    y + (block.line_height - line.bounds.size.y) / 2.0 - line.bounds.min.y;
+                // Standalone SVG viewers may substitute fonts; retain the measured width.
+                let length = if line.text.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\"",
+                        line.bounds.size.x
+                    )
+                };
+                out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\"{italic}{decoration} fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(text_color),esc(&line.text)));
+                y += block.line_height;
+            }
         }
         if let Some((label, nr)) = &tl.number {
             out.push_str(&format!("<text class=\"topic-number\" x=\"{:.2}\" y=\"{:.2}\" dominant-baseline=\"central\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\">{}</text>",nr.min.x,nr.center().y,esc(font),style.font_size,col(style.text_color),esc(label)));
@@ -968,18 +984,24 @@ fn svg_layout_with_fonts(
             out.push_str("</g>");
         }
     }
-    if measure_visible_bounds && out.contains("<clipPath id=\"scene-clip-") {
+    if measure_visible_bounds && (has_rich_card || out.contains("<clipPath id=\"scene-clip-")) {
         // The layout's raw topic/decorations bounds can be arbitrarily far outside
         // their owning clips. Besides whitespace, that can make raster exports
         // truncate genuinely visible content at their size limit. Measure the
         // actual un-clipped SVG nodes (including text and rotated shapes); each
-        // skipped clip group is bounded by the corresponding zone frame.
+        // skipped clip group is bounded by the corresponding zone frame. Rich
+        // card text can also extend outside its fixed frame or estimated width.
         let source = format!("{out}</svg>");
         let visible = zones.iter().fold(
             visible_svg_bounds(&source, b.min, fontdb)?,
             |bounds, zone| Some(bounds.map_or(zone.frame, |bounds| bounds.union(&zone.frame))),
         );
         if let Some(visible) = visible {
+            let visible = if has_clipped_frames {
+                visible
+            } else {
+                content.union(&visible)
+            };
             let base_frame = visible.expand(pad);
             let corrected = appendix.as_ref().map_or(base_frame, |appendix| {
                 let width = base_frame.size.x.max(appendix.width);

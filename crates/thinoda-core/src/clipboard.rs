@@ -57,12 +57,34 @@ const LABEL_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-37\n";
 const RICH_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-38\n";
 const RICH_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-39\n";
 const RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-40\n";
+const CARD_BASELINE_SHEET_PREFIX: &str = "THINODA-SHEET-41\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
-/// A versioned OS text payload retaining every persisted sheet field.
+/// A versioned OS text payload retaining content but not source ownership.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_rich_extra_connector_labels() {
+    let mut copied;
+    let sheet = if sheet.has_drawio_zone_source_ids()
+        || sheet.has_drawio_topic_source_ids()
+        || sheet.has_drawio_group_source_ids()
+    {
+        copied = sheet.clone();
+        for zone in &mut copied.zones {
+            zone.drawio_source_id = None;
+        }
+        for topic in copied.topics.values_mut() {
+            topic.drawio_source_id = None;
+        }
+        for group in &mut copied.canvas.groups {
+            group.drawio_source_id = None;
+        }
+        &copied
+    } else {
+        sheet
+    };
+    let prefix = if sheet.has_card_baseline_overrides() {
+        CARD_BASELINE_SHEET_PREFIX
+    } else if sheet.has_rich_extra_connector_labels() {
         RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX
     } else if sheet.has_rich_connector_labels() {
         RICH_CONNECTOR_LABELS_SHEET_PREFIX
@@ -161,9 +183,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-40\r\n"))
-        .map(|json| (40, json))
+        .strip_prefix(CARD_BASELINE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-41\r\n"))
+        .map(|json| (41, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-40\r\n"))
+                .map(|json| (40, json))
+        })
         .or_else(|| {
             text.strip_prefix(RICH_CONNECTOR_LABELS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-39\r\n"))
@@ -361,6 +388,18 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if sheet.has_drawio_zone_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io zone source IDs".into());
+    }
+    if sheet.has_drawio_topic_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io topic source IDs".into());
+    }
+    if sheet.has_drawio_group_source_ids() {
+        return Err("sheet clipboard cannot carry draw.io group source IDs".into());
+    }
+    if version < 41 && sheet.has_card_baseline_overrides() {
+        return Err("card baseline overrides require sheet clipboard version 41".into());
+    }
     if version < 40 && sheet.has_rich_extra_connector_labels() {
         return Err("rich extra connector labels require sheet clipboard version 40".into());
     }
@@ -533,10 +572,13 @@ fn topic_copy_roots(sheet: &Sheet, ids: &[TopicId]) -> Vec<TopicId> {
 }
 
 fn copy_topic_roots(sheet: &Sheet, roots: &[TopicId]) -> ClipboardPayload {
-    let subtrees: Vec<Subtree> = roots
+    let mut subtrees: Vec<Subtree> = roots
         .iter()
         .filter_map(|r| sheet.copy_subtree(*r))
         .collect();
+    for topic in subtrees.iter_mut().flat_map(|subtree| &mut subtree.topics) {
+        topic.drawio_source_id = None;
+    }
     let outlines: Vec<OutlineNode> = roots.iter().map(|r| to_outline(sheet, *r)).collect();
     ClipboardPayload {
         subtrees,
@@ -1702,6 +1744,169 @@ mod tests {
             decode_sheet(&forged)
                 .unwrap_err()
                 .contains("rich extra connector labels require sheet clipboard version 40")
+        );
+    }
+
+    #[test]
+    fn sheet_clipboard_clears_zone_source_ownership_and_rejects_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        sheet
+            .create_board_frame(
+                "Lane",
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(300.0, 200.0)),
+            )
+            .unwrap();
+        sheet.zones[0].drawio_source_id = Some("source-zone".into());
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(
+            decode_sheet(&encoded).unwrap().zones[0]
+                .drawio_source_id
+                .is_none()
+        );
+        assert_eq!(
+            sheet.zones[0].drawio_source_id.as_deref(),
+            Some("source-zone")
+        );
+        let forged = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged).is_err());
+    }
+
+    #[test]
+    fn clipboards_clear_topic_source_ownership_and_reject_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "Card",
+                crate::Vec2::new(100.0, 100.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet.topic_mut(id).unwrap().drawio_source_id = Some("private-source".into());
+        let sheet_payload = encode_sheet(&sheet).unwrap();
+        assert!(!sheet_payload.contains("private-source"));
+        assert!(
+            decode_sheet(&sheet_payload)
+                .unwrap()
+                .topic(id)
+                .unwrap()
+                .drawio_source_id
+                .is_none()
+        );
+        let forged_sheet = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged_sheet).is_err());
+
+        let topics = copy_topics(&sheet, &[id]).unwrap().unwrap();
+        let topic_payload = encode_topic_payload(&topics).unwrap();
+        assert!(!topic_payload.contains("private-source"));
+        let forged_topic = topic_payload.replacen(
+            r#""title":"Card""#,
+            r#""drawio_source_id":"forged","title":"Card""#,
+            1,
+        );
+        assert!(decode_topic_payload(&forged_topic).is_err());
+
+        let layout = crate::layout_sheet(&sheet, &crate::ApproxMeasure, false);
+        let board = copy_board_selection(&sheet, &layout, &[id], &[])
+            .unwrap()
+            .unwrap();
+        let board_payload = encode_board_payload(&board).unwrap();
+        assert!(!board_payload.contains("private-source"));
+        let forged_board = board_payload.replacen(
+            r#""title":"Card""#,
+            r#""drawio_source_id":"forged","title":"Card""#,
+            1,
+        );
+        assert!(decode_board_payload(&forged_board).is_err());
+        assert_eq!(
+            sheet.topic(id).unwrap().drawio_source_id.as_deref(),
+            Some("private-source")
+        );
+    }
+
+    #[test]
+    fn clipboards_clear_group_source_ownership_and_reject_forged_ids() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let first = sheet
+            .add_card(
+                "A",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                crate::Vec2::new(150.0, 0.0),
+                crate::Card::new(crate::CardKind::Text, crate::Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[
+                crate::board::BoardMember::Card(first),
+                crate::board::BoardMember::Card(second),
+            ])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("private-group".into());
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(!encoded.contains("private-group"));
+        assert!(
+            decode_sheet(&encoded).unwrap().canvas.groups[0]
+                .drawio_source_id
+                .is_none()
+        );
+        let forged = format!("{SHEET_PREFIX}{}", serde_json::to_string(&sheet).unwrap());
+        assert!(decode_sheet(&forged).is_err());
+        let layout = crate::layout_sheet(&sheet, &crate::ApproxMeasure, false);
+        let board = copy_board_selection(&sheet, &layout, &[first, second], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&board).unwrap();
+        assert!(!encoded.contains("private-group"));
+        let (prefix, json) = encoded.split_once('\n').unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+        value["fragment"]["canvas"]["groups"][0]["drawio_source_id"] = "forged".into();
+        let forged = format!("{prefix}\n{value}");
+        assert!(decode_board_payload(&forged).is_err());
+        assert_eq!(
+            sheet.canvas.groups[0].drawio_source_id.as_deref(),
+            Some("private-group")
+        );
+    }
+
+    #[test]
+    fn card_baseline_sheet_clipboard_requires_version_forty_one() {
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "A🙂B",
+                crate::Vec2::ZERO,
+                crate::Card::new(crate::CardKind::Sticky, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("A🙂B", 1..2, |style| {
+                style.baseline = Some(crate::InlineBaseline::Superscript);
+            })
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(CARD_BASELINE_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(
+            CARD_BASELINE_SHEET_PREFIX,
+            RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX,
+            1,
+        );
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("card baseline overrides require sheet clipboard version 41")
         );
     }
 

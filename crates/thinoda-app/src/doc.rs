@@ -215,7 +215,7 @@ pub struct OpenDoc {
     last_seen_inspector_edit: Option<InspectorEdit>,
     /// After a failed autosave, the next automatic attempt waits until then.
     pub(crate) autosave_retry_at: Option<Instant>,
-    snapshot_title: Option<(TopicId, String, String)>,
+    snapshot_title: Option<(TopicId, String, String, Option<InlineText>)>,
     snapshot_board_label: Option<BoardLabelSnapshot>,
     last_seen_board_label: Option<BoardLabelSnapshot>,
     snapshot_saw_ink: bool,
@@ -784,7 +784,26 @@ impl OpenDoc {
         if let Some(edit) = &self.fim_edit {
             edit.apply(&mut document)?;
         }
-        if let Some((id, original, text)) = self.view.title_draft()
+        let rich_title_draft = if self.view.has_title_changes() {
+            self.view
+                .validated_card_title_rich_draft(&self.doc)
+                .map_err(|error| error.to_string())?
+        } else {
+            None
+        };
+        if let Some((id, original, text, rich)) = rich_title_draft {
+            if original != text
+                || self
+                    .doc
+                    .sheet()
+                    .topic(id)
+                    .is_some_and(|topic| topic.inline_text != rich)
+            {
+                document
+                    .set_card_title_with_rich_text(id, &text, rich)
+                    .map_err(|error| error.to_string())?;
+            }
+        } else if let Some((id, original, text)) = self.view.title_draft()
             && original != text
         {
             document
@@ -903,10 +922,14 @@ impl OpenDoc {
         }
         self.snapshot_saw_ink |= ink_version.is_some();
         let s = self.doc.state_id();
-        let title_draft = self
-            .view
-            .title_draft()
-            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        let title_draft = self.view.title_draft().map(|(id, original, text)| {
+            (
+                id,
+                original.to_owned(),
+                text.to_owned(),
+                self.view.title_rich_formatting_draft(),
+            )
+        });
         let board_label = self
             .view
             .board_rich_label_draft()
@@ -1518,6 +1541,75 @@ mod tests {
         }
     }
 
+    #[test]
+    fn formatted_card_title_recovery_preserves_draft_and_rejects_foreign_document() {
+        use thinoda_core::{CardKind, InlineParagraph, ListKind, Sheet, Vec2, board::Card};
+        use thinoda_platform::Paths;
+
+        let mut sheet = Sheet::new("Board", "Root");
+        let id = sheet
+            .add_card(
+                "ab",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(220.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        topic.inline_text.paragraphs.push(InlineParagraph {
+            index: 0,
+            list: ListKind::Bulleted,
+        });
+        let mut doc = OpenDoc::new(Workbook::new(sheet));
+        doc.doc.mark_saved();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                |ui, doc: &mut OpenDoc| {
+                    thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+                },
+                doc,
+            );
+        harness.run_steps(2);
+        harness.get_by_label("Topic title").type_text("X");
+        harness.run_steps(1);
+        let doc = harness.state_mut();
+        let draft = doc.document_with_drafts_for_recovery().unwrap();
+        let topic = draft.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "abX");
+        assert_eq!(topic.inline_text.runs[0].end, 3);
+        assert_eq!(topic.inline_text.paragraphs[0].list, ListKind::Bulleted);
+        assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "ab");
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        doc.snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let recovered = orphans[0].docs[0].load().unwrap();
+        assert_eq!(recovered.active().topic(id).unwrap(), topic);
+        drop(orphans);
+        recovery.resume().unwrap();
+
+        let mut changed_formatting = doc.doc.sheet().topic(id).unwrap().inline_text.clone();
+        changed_formatting
+            .update_range("ab", 0..2, |style| style.italic = Some(true))
+            .unwrap();
+        doc.doc
+            .set_card_title_with_rich_text(id, "ab", changed_formatting)
+            .unwrap();
+        assert!(doc.document_with_drafts_for_recovery().is_err());
+        assert!(doc.doc.undo());
+        doc.doc = doc.doc.clone();
+        assert!(doc.document_with_drafts_for_recovery().is_err());
+        assert_eq!(doc.view.editing_text(), Some("abX"));
+    }
+
     fn pending_board_label() -> (Harness<'static, OpenDoc>, CanvasObjectId) {
         use thinoda_core::{
             CanvasObject, CanvasObjectKind, Rect, ShapeKind, Sheet, SheetRootMode, Vec2,
@@ -1993,6 +2085,111 @@ mod tests {
             let native = directory.path().join(format!("{name}.thinoda"));
             document.save_to(&native, false).unwrap();
             assert!(native.exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        }
+    }
+
+    #[test]
+    fn drawio_unmapped_document_xml_requires_consent_and_preserves_source() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, xml) in [
+            (
+                "document",
+                r#"<mxfile><future/><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "geometry",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" vertex="1" parent="1"><mxGeometry width="60" height="40" future="data" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "parentless",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" vertex="1"><mxGeometry width="60" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "layer",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="layer" value="Layer" style="custom=1;" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "container-link",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" link="https://example.com"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
+                "container-tooltip",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" tooltip="Details"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+        ] {
+            let path = directory.path().join(format!("{name}.drawio"));
+            std::fs::write(&path, xml).unwrap();
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert_eq!(warnings, [thinoda_io::ImportWarning::Other]);
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        }
+    }
+
+    #[test]
+    fn drawio_group_and_zone_loss_require_consent_and_preserve_source() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, attributes, style, warning) in [
+            (
+                "label",
+                r#"value="Important""#,
+                "group;",
+                thinoda_io::ImportWarning::Other,
+            ),
+            (
+                "collapsed",
+                r#"collapsed="1""#,
+                "group;",
+                thinoda_io::ImportWarning::Other,
+            ),
+            (
+                "style",
+                "",
+                "group;fillColor=#ff0000;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+            (
+                "zone-style",
+                r#"value="Lane""#,
+                "swimlane;startSize=40;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+            (
+                "zone-default-header",
+                r#"value="Lane""#,
+                "swimlane;collapsible=0;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+            (
+                "zone-default-foldable",
+                r#"value="Lane""#,
+                "swimlane;startSize=24;",
+                thinoda_io::ImportWarning::Formatting,
+            ),
+        ] {
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="g" {attributes} style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell><mxCell id="a" vertex="1" parent="g"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="b" vertex="1" parent="g"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            let path = directory.path().join(format!("{name}.drawio"));
+            std::fs::write(&path, &xml).unwrap();
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert!(warnings.contains(&warning), "{name}: {warnings:?}");
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
         }
     }

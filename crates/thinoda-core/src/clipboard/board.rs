@@ -63,6 +63,7 @@ const LABEL_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-41\n";
 const RICH_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-42\n";
 const RICH_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-43\n";
 const RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-44\n";
+const CARD_BASELINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-45\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -81,7 +82,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_rich_extra_connector_labels() {
+        if self.fragment.has_card_baseline_overrides() {
+            CARD_BASELINE_BOARD_PREFIX
+        } else if self.fragment.has_rich_extra_connector_labels() {
             RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX
         } else if self.fragment.has_rich_connector_labels() {
             RICH_CONNECTOR_LABELS_BOARD_PREFIX
@@ -222,6 +225,12 @@ impl BoardClipboardPayload {
             return Err("board clipboard payload exceeds 16 MiB".into());
         }
         let sheet = &self.fragment;
+        if sheet.has_drawio_topic_source_ids() {
+            return Err("board clipboard cannot carry draw.io topic source IDs".into());
+        }
+        if sheet.has_drawio_group_source_ids() {
+            return Err("board clipboard cannot carry draw.io group source IDs".into());
+        }
         if sheet.topics.len() > MAX_BOARD_CLIPBOARD_TOPICS + 1 {
             return Err(format!(
                 "board clipboard exceeds {MAX_BOARD_CLIPBOARD_TOPICS} topics"
@@ -371,9 +380,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-44\r\n"))
-        .map(|json| (44, json))
+        .strip_prefix(CARD_BASELINE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-45\r\n"))
+        .map(|json| (45, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-44\r\n"))
+                .map(|json| (44, json))
+        })
         .or_else(|| {
             text.strip_prefix(RICH_CONNECTOR_LABELS_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-43\r\n"))
@@ -593,6 +607,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 45 && payload.fragment.has_card_baseline_overrides() {
+        return Err("card baseline overrides require board clipboard version 45".into());
+    }
     if version < 44 && payload.fragment.has_rich_extra_connector_labels() {
         return Err("rich extra connector labels require board clipboard version 44".into());
     }
@@ -1015,9 +1032,9 @@ fn copy_prepared_board_selection(
         }
     }
     for &id in &owned {
-        fragment
-            .topics
-            .insert(id, sheet.topic(id).expect("owned topic exists").clone());
+        let mut topic = sheet.topic(id).expect("owned topic exists").clone();
+        topic.drawio_source_id = None;
+        fragment.topics.insert(id, topic);
     }
     for &id in &roots {
         let original = sheet.topic(id).expect("selected topic exists");
@@ -1233,7 +1250,11 @@ fn copy_prepared_board_selection(
         .groups
         .iter()
         .filter(|group| groups.contains(&group.id))
-        .copied()
+        .map(|group| {
+            let mut group = group.clone();
+            group.drawio_source_id = None;
+            group
+        })
         .collect();
     let layers: HashSet<_> = fragment
         .canvas
@@ -1407,6 +1428,7 @@ pub fn paste_floating_subtrees(
         previous_height = height;
         for original in &subtree.topics {
             let mut topic = original.clone();
+            topic.drawio_source_id = None;
             topic.id = map(original.id)?;
             if original.id == subtree.root {
                 topic.parent = None;
@@ -1632,6 +1654,7 @@ pub fn paste_board_selection(
             continue;
         }
         let mut topic = original.clone();
+        topic.drawio_source_id = None;
         topic.id = map_topic(id)?;
         topic.parent = topic.parent.map(map_topic).transpose()?;
         topic.children = topic
@@ -1685,7 +1708,8 @@ pub fn paste_board_selection(
     debug_assert_eq!(next, end);
 
     for group in &source.canvas.groups {
-        let mut group = *group;
+        let mut group = group.clone();
+        group.drawio_source_id = None;
         group.id = map_group(group.id)?;
         candidate.canvas.groups.push(group);
     }

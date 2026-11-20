@@ -309,6 +309,131 @@ mod tests {
     }
 
     #[test]
+    fn rich_card_layout_paints_inline_style_and_list_markers() {
+        let text = "First\nSecond";
+        let mut rich = InlineText {
+            paragraphs: vec![
+                thinoda_core::InlineParagraph {
+                    index: 0,
+                    list: thinoda_core::ListKind::Bulleted,
+                },
+                thinoda_core::InlineParagraph {
+                    index: 1,
+                    list: thinoda_core::ListKind::Numbered,
+                },
+            ],
+            ..Default::default()
+        };
+        rich.update_range(text, 6..12, |style| {
+            style.italic = Some(true);
+            style.font_size = Some(24.0);
+            style.color = Some(thinoda_core::Color::rgb(20, 80, 160));
+        })
+        .unwrap();
+        let style = LabelStyle {
+            font_size: Some(14.0),
+            align: TextAlign::Left,
+            spacing: 0.0,
+            ..Default::default()
+        };
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(220.0, 100.0));
+        let layout = thinoda_core::label_style::layout_rich_in_frame(&style, frame, text, &rich);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &layout,
+                    &style,
+                    Color32::BLACK,
+                    1.0,
+                    Xf {
+                        origin: Pos2::ZERO,
+                        zoom: 1.0,
+                    },
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.iter().any(|text| text.contains('•')), "{texts:?}");
+        assert!(texts.iter().any(|text| text.contains("1.")), "{texts:?}");
+        assert!(texts.iter().any(|text| text.contains("First")), "{texts:?}");
+        let second = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "Second" => Some(text),
+            _ => None,
+        });
+        let second = second.expect("formatted second paragraph");
+        assert!(second.galley.job.sections[0].format.italics);
+        assert_eq!(
+            second.galley.job.sections[0].format.color,
+            color32(thinoda_core::Color::rgb(20, 80, 160))
+        );
+        assert!(second.galley.job.sections[0].format.font_id.size > 20.0);
+    }
+
+    #[test]
+    fn rich_card_baseline_runs_paint_above_and_below_normal_text() {
+        let text = "up normal down";
+        let mut rich = InlineText::default();
+        rich.update_range(text, 0..2, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+        })
+        .unwrap();
+        rich.update_range(text, 10..14, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+        })
+        .unwrap();
+        let style = LabelStyle {
+            font_size: Some(20.0),
+            align: TextAlign::Left,
+            spacing: 0.0,
+            ..Default::default()
+        };
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(220.0, 100.0));
+        let layout = thinoda_core::label_style::layout_rich_in_frame(&style, frame, text, &rich);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            paint(
+                &ctx.layer_painter(egui::LayerId::background()),
+                &layout,
+                &style,
+                Color32::BLACK,
+                1.0,
+                Xf {
+                    origin: Pos2::ZERO,
+                    zoom: 1.0,
+                },
+            );
+        });
+        output.textures_delta.clear();
+        let center = |value: &str| {
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == value => Some(text),
+                    _ => None,
+                })
+                .unwrap();
+            text.pos.y + text.galley.size().y / 2.0
+        };
+        assert!(center("up") < center(" normal "));
+        assert!(center("down") > center(" normal "));
+    }
+
+    #[test]
     fn connector_list_items_share_the_same_canvas_left_edge() {
         let text = "Short\nMuch longer";
         let rich = InlineText {

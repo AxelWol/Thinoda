@@ -20,7 +20,8 @@ use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use thinoda_core::drawio_passthrough::{
-    DrawioCellPassthrough as Passthrough, DrawioPagePassthrough,
+    DrawioCellPassthrough as Passthrough, DrawioDocumentPassthrough, DrawioPagePassthrough,
+    RESERVED_DOCUMENT_ATTRIBUTES, RESERVED_MODEL_ATTRIBUTES,
 };
 use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
@@ -193,7 +194,7 @@ impl Element {
     pub(crate) fn attr(&self, key: &str) -> Option<&str> {
         self.attrs
             .iter()
-            .find(|(k, _)| k == key)
+            .find(|(k, _)| k == key || k.rsplit(':').next() == Some(key))
             .map(|(_, v)| v.as_str())
     }
 
@@ -212,10 +213,9 @@ fn element_from(start: &BytesStart) -> Result<Element, IoError> {
         let value = attr
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(xml_error)?;
-        element.attrs.push((
-            attr.key.local_name().as_ref().to_owned(),
-            value.into_owned(),
-        ));
+        element
+            .attrs
+            .push((attr.key.as_ref().to_owned(), value.into_owned()));
     }
     Ok(element)
 }
@@ -639,10 +639,19 @@ pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
 struct Page {
     name: String,
     id: Option<String>,
+    dropped_id: bool,
+    dropped_content: bool,
     model: Element,
 }
 
-fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
+struct DrawioDocument {
+    pages: Vec<Page>,
+    passthrough: Option<Arc<DrawioDocumentPassthrough>>,
+    dropped_attributes: bool,
+    dropped_content: bool,
+}
+
+fn read_pages(bytes: &[u8]) -> Result<DrawioDocument, IoError> {
     if bytes.len() > MAX_BYTES {
         return Err(invalid("draw.io document exceeds size limit"));
     }
@@ -661,12 +670,45 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
     };
     let root = parse_dom(&text)?;
     match root.name.as_str() {
-        "mxGraphModel" => Ok(vec![Page {
-            name: String::new(),
-            id: None,
-            model: root,
-        }]),
+        "mxGraphModel" => Ok(DrawioDocument {
+            pages: vec![Page {
+                name: String::new(),
+                id: None,
+                dropped_id: false,
+                dropped_content: false,
+                model: root,
+            }],
+            passthrough: None,
+            dropped_attributes: false,
+            dropped_content: false,
+        }),
         "mxfile" => {
+            let dropped_content = !root.text.trim().is_empty()
+                || root.children.iter().any(|child| child.name != "diagram");
+            let mut dropped_attributes = false;
+            let mut passthrough = DrawioDocumentPassthrough::default();
+            let mut seen = HashSet::new();
+            let mut bytes = 0usize;
+            for (name, value) in &root.attrs {
+                if RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str()) {
+                    continue;
+                }
+                let valid = thinoda_core::drawio_passthrough::valid_attribute_name(name)
+                    && !value
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+                    && seen.insert(name.as_str());
+                let next = bytes.saturating_add(name.len()).saturating_add(value.len());
+                if !valid || next > thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES
+                {
+                    dropped_attributes = true;
+                    continue;
+                }
+                bytes = next;
+                passthrough.attributes.push((name.clone(), value.clone()));
+            }
+            debug_assert!(passthrough.validate().is_ok());
+            let passthrough = (!passthrough.is_empty()).then(|| Arc::new(passthrough));
             let mut pages = Vec::new();
             for mut diagram in root.children.into_iter().filter(|c| c.name == "diagram") {
                 if pages.len() >= MAX_PAGES {
@@ -681,17 +723,30 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                             && !id.chars().any(char::is_control)
                     })
                     .map(str::to_owned);
+                let dropped_id = diagram.attr("id").is_some() && id.is_none();
+                let mut dropped_content = diagram
+                    .attrs
+                    .iter()
+                    .any(|(name, _)| !matches!(name.as_str(), "id" | "name"));
                 let model = match diagram
                     .children
                     .iter()
                     .position(|c| c.name == "mxGraphModel")
                 {
-                    Some(index) => diagram.children.swap_remove(index),
-                    None if diagram.text.trim().is_empty() => Element {
-                        name: "mxGraphModel".into(),
-                        ..Element::default()
-                    },
+                    Some(index) => {
+                        dropped_content |=
+                            diagram.children.len() != 1 || !diagram.text.trim().is_empty();
+                        diagram.children.swap_remove(index)
+                    }
+                    None if diagram.text.trim().is_empty() => {
+                        dropped_content |= !diagram.children.is_empty();
+                        Element {
+                            name: "mxGraphModel".into(),
+                            ..Element::default()
+                        }
+                    }
                     None => {
+                        dropped_content |= !diagram.children.is_empty();
                         let model = parse_dom(&decode_compressed(diagram.text.trim())?)?;
                         if model.name != "mxGraphModel" {
                             return Err(invalid("draw.io page has no graph model"));
@@ -699,12 +754,23 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                         model
                     }
                 };
-                pages.push(Page { name, id, model });
+                pages.push(Page {
+                    name,
+                    id,
+                    dropped_id,
+                    dropped_content,
+                    model,
+                });
             }
             if pages.is_empty() {
                 return Err(invalid("draw.io document contains no pages"));
             }
-            Ok(pages)
+            Ok(DrawioDocument {
+                pages,
+                passthrough,
+                dropped_attributes,
+                dropped_content,
+            })
         }
         _ => Err(invalid("not a draw.io document")),
     }
@@ -1545,6 +1611,7 @@ struct Cell {
     source: Option<String>,
     target: Option<String>,
     visible: bool,
+    has_geometry: bool,
     geometry: Geometry,
     link: Option<String>,
     tooltip: Option<String>,
@@ -1596,10 +1663,30 @@ fn point(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Ve
     }
 }
 
+fn has_extra_xml(element: &Element, allowed_attributes: &[&str], allow_children: bool) -> bool {
+    element
+        .attrs
+        .iter()
+        .any(|(name, _)| !allowed_attributes.contains(&name.as_str()))
+        || !element.text.trim().is_empty()
+        || (!allow_children && !element.children.is_empty())
+}
+
 fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarning>) -> Geometry {
     let Some(element) = element else {
         return Geometry::default();
     };
+    if has_extra_xml(
+        element,
+        &["x", "y", "width", "height", "relative", "as"],
+        true,
+    ) || element.attr("as").is_some_and(|value| value != "geometry")
+        || element
+            .attr("relative")
+            .is_some_and(|value| !matches!(value, "0" | "1"))
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     let (x, y, width, height, invalid_frame) = match (
         number(element, "x"),
         number(element, "y"),
@@ -1623,12 +1710,33 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
         relative: element.attr("relative") == Some("1"),
         ..Geometry::default()
     };
+    let mut seen = HashSet::new();
     for child in &element.children {
+        if let Some(role) = child.attr("as")
+            && matches!(
+                role,
+                "sourcePoint" | "targetPoint" | "offset" | "alternateBounds" | "points"
+            )
+            && !seen.insert(role)
+        {
+            warnings.insert(ImportWarning::Other);
+        }
         match (child.name.as_str(), child.attr("as")) {
-            ("mxPoint", Some("sourcePoint")) => geometry.source = point(child, warnings),
-            ("mxPoint", Some("targetPoint")) => geometry.target = point(child, warnings),
-            ("mxPoint", Some("offset")) => geometry.offset = point(child, warnings),
+            ("mxPoint", Some(role @ ("sourcePoint" | "targetPoint" | "offset"))) => {
+                if has_extra_xml(child, &["as", "x", "y"], false) {
+                    warnings.insert(ImportWarning::Other);
+                }
+                let point = point(child, warnings);
+                match role {
+                    "sourcePoint" => geometry.source = point,
+                    "targetPoint" => geometry.target = point,
+                    _ => geometry.offset = point,
+                }
+            }
             ("mxRectangle", Some("alternateBounds")) => {
+                if has_extra_xml(child, &["as", "x", "y", "width", "height"], false) {
+                    warnings.insert(ImportWarning::Other);
+                }
                 match (
                     number(child, "x"),
                     number(child, "y"),
@@ -1649,6 +1757,13 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
                 }
             }
             ("Array", Some("points")) => {
+                if has_extra_xml(child, &["as"], true)
+                    || child.children.iter().any(|point| {
+                        point.name != "mxPoint" || has_extra_xml(point, &["x", "y"], false)
+                    })
+                {
+                    warnings.insert(ImportWarning::Other);
+                }
                 geometry.points = child
                     .children
                     .iter()
@@ -1656,7 +1771,9 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
                     .filter_map(|p| point(p, warnings))
                     .collect();
             }
-            _ => {}
+            _ => {
+                warnings.insert(ImportWarning::Other);
+            }
         }
     }
     geometry
@@ -1669,6 +1786,50 @@ fn read_cell(
     warnings: &mut BTreeSet<ImportWarning>,
 ) -> Cell {
     let owned = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
+    let style = Style::parse(inner.attr("style").unwrap_or_default());
+    if has_extra_xml(
+        inner,
+        &[
+            "id",
+            "parent",
+            "value",
+            "style",
+            "vertex",
+            "edge",
+            "collapsed",
+            "source",
+            "target",
+            "visible",
+            "connectable",
+        ],
+        true,
+    ) || inner
+        .children
+        .iter()
+        .filter(|child| child.name == "mxGeometry")
+        .count()
+        > 1
+        || inner
+            .children
+            .iter()
+            .any(|child| child.name != "mxGeometry")
+        || ["vertex", "edge", "visible"].iter().any(|key| {
+            inner
+                .attr(key)
+                .is_some_and(|value| !matches!(value, "0" | "1"))
+        })
+        || inner.attr("connectable").is_some_and(|value| {
+            value != "1" && !(value == "0" && style.tokens.iter().any(|token| token == "edgeLabel"))
+        })
+        || user.is_some_and(|user| {
+            user.children.len() != 1
+                || !user.text.trim().is_empty()
+                || inner.attr("id").is_some()
+                || inner.attr("value").is_some()
+        })
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     let collapsed = match inner.attr("collapsed") {
         None | Some("0") => false,
         Some("1") => true,
@@ -1686,18 +1847,36 @@ fn read_cell(
         }
         .unwrap_or_default()
         .to_owned(),
-        style: Style::parse(inner.attr("style").unwrap_or_default()),
+        style,
         vertex: inner.attr("vertex") == Some("1"),
         edge: inner.attr("edge") == Some("1"),
         collapsed,
         source: owned(inner.attr("source")),
         target: owned(inner.attr("target")),
         visible: inner.attr("visible") != Some("0"),
+        has_geometry: inner.child("mxGeometry").is_some(),
         geometry: read_geometry(inner.child("mxGeometry"), warnings),
         link: owned(user.and_then(|u| u.attr("link"))),
         tooltip: owned(user.and_then(|u| u.attr("tooltip"))),
         attributes: Vec::new(),
     }
+}
+
+fn structural_cell_has_unrepresented_data(cell: &Cell, layer: bool) -> bool {
+    cell.has_geometry
+        || cell.collapsed
+        || cell.source.is_some()
+        || cell.target.is_some()
+        || cell.link.is_some()
+        || cell.tooltip.is_some()
+        || !cell.attributes.is_empty()
+        || !cell.style.tokens.is_empty()
+        || cell.style.suppress_defaults
+        || cell
+            .style
+            .map
+            .iter()
+            .any(|(key, value)| !layer || key != "locked" || !matches!(value.as_str(), "0" | "1"))
 }
 
 /// Moves link, tags, placeholders and custom properties of a `UserObject` into
@@ -1812,6 +1991,7 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
             }
         };
         if cell.id.is_empty() {
+            warnings.insert(ImportWarning::Other);
             cell.id = format!("\u{0}{}", cells.len());
         }
         if !ids.insert(cell.id.clone()) {
@@ -2665,7 +2845,7 @@ struct PageImport<'a> {
     visited: Vec<bool>,
     paint_order: Vec<usize>,
     zones: Vec<(ZoneId, Vec<TopicId>, Vec<CanvasObjectId>)>,
-    buckets: Vec<(Vec<BoardMember>, bool)>,
+    buckets: Vec<(Vec<BoardMember>, bool, Option<usize>)>,
     locked: Vec<BoardMember>,
     deferred: Vec<(usize, Context)>,
     adaptive_fixed_colors: bool,
@@ -2698,6 +2878,24 @@ type BundledStencils = HashMap<
 impl<'a> PageImport<'a> {
     fn warn(&mut self, warning: ImportWarning) {
         self.warnings.insert(warning);
+    }
+
+    fn owner_source_id(&mut self, index: usize) -> Option<String> {
+        let id = &self.cells[index].id;
+        if !id.is_empty()
+            && !id.starts_with('\u{0}')
+            && !matches!(id.as_str(), "0" | "1")
+            && id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !id.chars().any(char::is_control)
+            && self.passthrough_bytes.saturating_add(id.len())
+                <= thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.passthrough_bytes += id.len();
+            Some(id.clone())
+        } else {
+            self.warn(ImportWarning::Other);
+            None
+        }
     }
 
     /// Unknown style keys, attributes and the id of `cell` (architecture §3.1.1).
@@ -3105,6 +3303,18 @@ impl<'a> PageImport<'a> {
             .filter(|&i| self.cells[i].parent.is_none())
             .collect();
         for root in roots {
+            if self.cells[root].vertex || self.cells[root].edge {
+                self.warn(ImportWarning::Other);
+                self.visit(root, Context::default(), 0);
+                continue;
+            }
+            if self.cells[root].id != "0"
+                || !self.cells[root].value.is_empty()
+                || !self.cells[root].visible
+                || structural_cell_has_unrepresented_data(&self.cells[root], false)
+            {
+                self.warn(ImportWarning::Other);
+            }
             self.visited[root] = true;
             for (position, layer) in self.children[root].clone().into_iter().enumerate() {
                 self.visited[layer] = true;
@@ -3149,6 +3359,9 @@ impl<'a> PageImport<'a> {
     /// The board layer for a draw.io layer cell. An unnamed (or "Background"),
     /// visible and unlocked first layer is the base layer.
     fn board_layer(&mut self, index: usize, position: usize) -> Option<thinoda_core::BoardLayerId> {
+        if structural_cell_has_unrepresented_data(&self.cells[index], true) {
+            self.warn(ImportWarning::Other);
+        }
         let cell = &self.cells[index];
         let locked = cell.style.flag("locked");
         let value: String = cell
@@ -3159,8 +3372,15 @@ impl<'a> PageImport<'a> {
             .take(thinoda_core::board_layers::MAX_BOARD_LAYER_NAME_CHARS)
             .collect();
         if position == 0 && cell.visible && !locked && (value.is_empty() || value == "Background") {
+            if cell.id != "1" || !cell.value.is_empty() {
+                self.warn(ImportWarning::Other);
+            }
             return None;
         }
+        if cell.value != value || value.trim() != value {
+            self.warn(ImportWarning::Other);
+        }
+        let cell = &self.cells[index];
         if self.sheet.canvas.layers.len() >= thinoda_core::board_layers::MAX_BOARD_LAYERS {
             self.warn(ImportWarning::DrawioLayerContentFlattened);
             return None;
@@ -3184,6 +3404,9 @@ impl<'a> PageImport<'a> {
                 .any(|layer| layer.source_id.as_deref() == Some(cell.id.as_str())))
         .then(|| cell.id.clone());
         let visible = cell.visible;
+        if source_id.is_none() {
+            self.warn(ImportWarning::Other);
+        }
         let layer = self
             .sheet
             .canvas
@@ -3279,13 +3502,29 @@ impl<'a> PageImport<'a> {
         }
         match kind {
             Kind::Group => {
+                if !cell.value.is_empty() || cell.collapsed {
+                    self.warn(ImportWarning::Other);
+                }
+                if cell.style.suppress_defaults
+                    || cell.style.tokens.iter().any(|token| token != "group")
+                    || cell
+                        .style
+                        .map
+                        .iter()
+                        .any(|(key, value)| key != "locked" || !matches!(value.as_str(), "0" | "1"))
+                {
+                    self.warn(ImportWarning::Formatting);
+                }
                 if context.scene_parent.is_some() {
                     self.warn(ImportWarning::Other);
                 }
-                let bucket = context.bucket.unwrap_or_else(|| {
-                    self.buckets.push((Vec::new(), false));
+                let bucket = if let Some(bucket) = context.bucket {
+                    self.warn(ImportWarning::Other);
+                    bucket
+                } else {
+                    self.buckets.push((Vec::new(), false, Some(index)));
                     self.buckets.len() - 1
-                });
+                };
                 if cell.style.flag("locked") {
                     self.buckets[bucket].1 = true;
                 }
@@ -3314,7 +3553,7 @@ impl<'a> PageImport<'a> {
                             Some(bucket) => bucket,
                             None => {
                                 let members = drawn.into_iter().collect();
-                                self.buckets.push((members, false));
+                                self.buckets.push((members, false, None));
                                 self.buckets.len() - 1
                             }
                         };
@@ -3343,7 +3582,7 @@ impl<'a> PageImport<'a> {
                         Some(bucket) => bucket,
                         None => {
                             let members = drawn.into_iter().collect();
-                            self.buckets.push((members, false));
+                            self.buckets.push((members, false, None));
                             self.buckets.len() - 1
                         }
                     };
@@ -3891,8 +4130,44 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         let id = self.sheet.create_board_frame(&name, rect).ok()?;
+        let source_id = if !cell.id.is_empty()
+            && !cell.id.starts_with('\u{0}')
+            && !matches!(cell.id.as_str(), "0" | "1")
+            && cell.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !cell.id.chars().any(char::is_control)
+            && self.passthrough_bytes.saturating_add(cell.id.len())
+                <= thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.passthrough_bytes += cell.id.len();
+            Some(cell.id.clone())
+        } else {
+            self.warn(ImportWarning::Other);
+            None
+        };
         let swimlane = cell.style.shape() == "swimlane";
         if !swimlane {
+            self.warn(ImportWarning::Formatting);
+        }
+        // draw.io defaults to a 40-unit header and foldable containers;
+        // Thinoda exports a 24-unit header without folding.
+        if (swimlane && cell.style.get("startSize").is_none())
+            || (swimlane && cell.style.get("collapsible").is_none())
+            || cell.style.suppress_defaults
+            || cell.style.tokens.iter().any(|token| token != "swimlane")
+            || cell
+                .style
+                .map
+                .iter()
+                .any(|(key, value)| !match key.as_str() {
+                    "strokeColor" | "strokeOpacity" | "swimlaneFillColor" | "fillOpacity" => true,
+                    "html" | "horizontal" => value == "1",
+                    "whiteSpace" => value == "wrap",
+                    "startSize" => value.parse::<f32>().is_ok_and(|size| size == 24.0),
+                    "collapsible" => value == "0",
+                    "thinodaClip" => matches!(value.as_str(), "0" | "1"),
+                    _ => false,
+                })
+        {
             self.warn(ImportWarning::Formatting);
         }
         let stroke = cell.style.color("strokeColor", "strokeOpacity");
@@ -3909,6 +4184,7 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         if let Some(zone) = self.sheet.zones.iter_mut().find(|z| z.id == id) {
+            zone.drawio_source_id = source_id;
             zone.color = stroke.filter(|c| c.a > 0);
             zone.background_color = background;
             zone.clip = cell.style.flag("thinodaClip");
@@ -3928,11 +4204,12 @@ impl<'a> PageImport<'a> {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
-        let (label, rich_label) = if !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
-            self.rich_label(cell)
-        } else {
-            (self.label(cell), None)
-        };
+        let (label, rich_label) =
+            if !matches!(kind, Kind::Line | Kind::Card(CardKind::Image) | Kind::Image) {
+                self.rich_label(cell)
+            } else {
+                (self.label(cell), None)
+            };
         if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
             || !label.is_empty()
                 && (style.label_opacity_loss()
@@ -4177,6 +4454,7 @@ impl<'a> PageImport<'a> {
                         label,
                         context,
                         Some(image),
+                        None,
                     );
                 }
                 // Remote and library images are never fetched; keep their source as alt text.
@@ -4246,7 +4524,7 @@ impl<'a> PageImport<'a> {
                             plain: false,
                         }
                     });
-                return self.card(index, card_kind, rect, label, context, image);
+                return self.card(index, card_kind, rect, label, context, image, rich_label);
             }
         };
         if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
@@ -4271,6 +4549,7 @@ impl<'a> PageImport<'a> {
             .map(BoardMember::Object)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn card(
         &mut self,
         index: usize,
@@ -4279,6 +4558,7 @@ impl<'a> PageImport<'a> {
         label: String,
         context: Context,
         image: Option<CardImage>,
+        rich: Option<thinoda_core::InlineText>,
     ) -> Option<BoardMember> {
         let cell = &self.cells[index];
         let style = &cell.style;
@@ -4305,9 +4585,12 @@ impl<'a> PageImport<'a> {
         }
         match self.sheet.add_card(&label, rect.center(), card) {
             Ok(id) => {
+                let source_id = self.owner_source_id(index);
                 if let Some(topic) = self.sheet.topic_mut(id) {
+                    topic.drawio_source_id = source_id;
                     topic.style.fill = card.color;
                     topic.style.text_color = style.text_color();
+                    topic.inline_text = rich.unwrap_or_default();
                     if matches!(kind, CardKind::Sticky | CardKind::Text) {
                         topic.style.align = style.text_align();
                     }
@@ -4810,17 +5093,20 @@ impl<'a> PageImport<'a> {
                 self.warn(ImportWarning::Other);
             }
         }
-        for (members, locked) in std::mem::take(&mut self.buckets) {
+        for (members, locked, source) in std::mem::take(&mut self.buckets) {
             if members.len() < 2 {
+                if source.is_some() {
+                    self.warn(ImportWarning::Other);
+                }
                 continue;
             }
             match self.sheet.group_board_members(&members) {
                 Ok(group) => {
-                    if locked
-                        && let Some(group) =
-                            self.sheet.canvas.groups.iter_mut().find(|g| g.id == group)
+                    let source_id = source.and_then(|index| self.owner_source_id(index));
+                    if let Some(group) = self.sheet.canvas.groups.iter_mut().find(|g| g.id == group)
                     {
-                        group.locked = true;
+                        group.locked = locked;
+                        group.drawio_source_id = source_id;
                     }
                 }
                 Err(error) => {
@@ -5208,6 +5494,21 @@ fn import_page(
     let mut sheet = Sheet::new(title, "");
     sheet.root_mode = SheetRootMode::Hidden;
     let model = &page.model;
+    let roots: Vec<_> = model
+        .children
+        .iter()
+        .filter(|child| child.name == "root")
+        .collect();
+    if page.dropped_content
+        || !model.text.trim().is_empty()
+        || roots.len() > 1
+        || model.children.len() != roots.len()
+        || roots
+            .iter()
+            .any(|root| !root.attrs.is_empty() || !root.text.trim().is_empty())
+    {
+        warnings.insert(ImportWarning::Other);
+    }
     import_grid(model, &mut sheet, warnings);
     import_background(model, &mut sheet, warnings);
     let cells = read_cells(model, warnings);
@@ -5269,14 +5570,17 @@ fn import_page(
     import.run();
     if import.cells.iter().enumerate().any(|(i, cell)| {
         !import.passthrough_cells.contains(&i)
-            && cell
-                .attributes
-                .iter()
-                .any(|(name, _)| !matches!(name.as_str(), "link" | "placeholders"))
+            && (cell.tooltip.is_some()
+                || cell
+                    .attributes
+                    .iter()
+                    .any(|(name, value)| match name.as_str() {
+                        "link" => !matches!(import.items.get(&i), Some(Item::Card(_))),
+                        "placeholders" => value != "0",
+                        _ => true,
+                    }))
     }) {
-        // Only canvas objects keep unknown attributes; topics and cards drop
-        // them. Their `link` becomes the hyperlink, and placeholders are
-        // reported below.
+        // Cards keep links, but other non-object cells lose them and tooltips.
         import.warn(ImportWarning::Other);
     }
     if import.cells.iter().enumerate().any(|(i, cell)| {
@@ -5303,92 +5607,112 @@ fn import_page(
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
     }
-    let object_cells: HashSet<usize> = import
+    let mut represented_cells: HashSet<usize> = import
         .items
         .iter()
-        .filter(|(_, item)| matches!(item, Item::Object(_)))
+        .filter(|(_, item)| matches!(item, Item::Object(_) | Item::Container(_)))
         .map(|(index, _)| *index)
         .collect();
-    let drawio = page_passthrough(page, &cells, &object_cells);
+    represented_cells.extend(import.items.iter().filter_map(|(index, item)| match item {
+        Item::Card(id) if import.sheet.topic(*id)?.drawio_source_id.is_some() => Some(*index),
+        _ => None,
+    }));
+    represented_cells.extend(
+        import
+            .sheet
+            .zones
+            .iter()
+            .filter_map(|zone| import.index.get(zone.drawio_source_id.as_deref()?).copied()),
+    );
+    let layer_cells: HashSet<usize> = import
+        .sheet
+        .canvas
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            layer
+                .source_id
+                .as_deref()
+                .and_then(|id| import.index.get(id).copied())
+        })
+        .collect();
     let mut sheet = import.finish();
+    let group_sources: HashSet<_> = sheet
+        .canvas
+        .groups
+        .iter()
+        .filter_map(|group| group.drawio_source_id.as_deref())
+        .collect();
+    represented_cells.extend(
+        cells
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| group_sources.contains(cell.id.as_str()).then_some(index)),
+    );
+    let (drawio, dropped) = page_passthrough(page, &cells, &represented_cells, &layer_cells);
+    if dropped {
+        warnings.insert(ImportWarning::Other);
+    }
     sheet.drawio = drawio;
     Ok(sheet)
 }
 
-/// Unknown `mxGraphModel` attributes the exporter writes from first-class fields
-/// or as fixed values.
-const OWNED_MODEL_ATTRIBUTES: &[&str] = &[
-    "dx",
-    "dy",
-    "grid",
-    "gridSize",
-    "thinodaGrid",
-    "thinodaSnap",
-    "thinodaSankey",
-    "background",
-    "backgroundImage",
-    "guides",
-    "tooltips",
-    "connect",
-    "arrows",
-    "fold",
-    "page",
-    "pageScale",
-    "pageWidth",
-    "pageHeight",
-    "math",
-    "shadow",
-    "adaptiveColors",
-];
-
-/// Page-level passthrough. `cell_ids` records the cells that became canvas
-/// objects, so the exporter never hands a deleted object's id to another cell.
+/// Record source IDs for represented owners so generated IDs cannot reuse
+/// them after their original owner is deleted.
 fn page_passthrough(
     page: &Page,
     cells: &[Cell],
-    object_cells: &HashSet<usize>,
-) -> Option<Arc<DrawioPagePassthrough>> {
+    represented_cells: &HashSet<usize>,
+    layer_cells: &HashSet<usize>,
+) -> (Option<Arc<DrawioPagePassthrough>>, bool) {
     let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
     let mut drawio = DrawioPagePassthrough {
         diagram_id: page.id.clone(),
-        model_attributes: page
-            .model
-            .attrs
-            .iter()
-            .filter(|(name, value)| {
-                !OWNED_MODEL_ATTRIBUTES.contains(&name.as_str())
-                    && thinoda_core::drawio_passthrough::valid_attribute_name(name)
-                    && !value
-                        .chars()
-                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
-            })
-            .cloned()
-            .collect(),
+        model_attributes: Vec::new(),
         cell_ids: Vec::new(),
     };
     let mut seen = HashSet::new();
-    drawio
-        .model_attributes
-        .retain(|(name, _)| seen.insert(name.clone()));
+    let mut dropped = page.dropped_id;
     let mut bytes = drawio.byte_len();
+    for (name, value) in &page.model.attrs {
+        if RESERVED_MODEL_ATTRIBUTES.contains(&name.as_str()) {
+            continue;
+        }
+        let valid = thinoda_core::drawio_passthrough::valid_attribute_name(name)
+            && !value
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+            && seen.insert(name.as_str());
+        let next = bytes.saturating_add(name.len()).saturating_add(value.len());
+        if !valid || next > budget {
+            dropped = true;
+            continue;
+        }
+        bytes = next;
+        drawio.model_attributes.push((name.clone(), value.clone()));
+    }
     for (index, cell) in cells.iter().enumerate() {
         let id = &cell.id;
-        if !object_cells.contains(&index)
+        if !(represented_cells.contains(&index) || layer_cells.contains(&index))
             || id.starts_with('\u{0}')
-            || matches!(id.as_str(), "0" | "1")
-            || id.len() > thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
-            || id.chars().any(char::is_control)
-            || drawio.cell_ids.len() >= thinoda_core::drawio_passthrough::MAX_PAGE_CELL_IDS
         {
             continue;
         }
-        bytes += id.len();
-        if bytes > budget {
-            break;
+        if matches!(id.as_str(), "0" | "1")
+            || id.len() > thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            || id.chars().any(char::is_control)
+            || drawio.cell_ids.len() >= thinoda_core::drawio_passthrough::MAX_PAGE_CELL_IDS
+            || bytes.saturating_add(id.len()) > budget
+        {
+            dropped = true;
+            continue;
         }
+        bytes += id.len();
         drawio.cell_ids.push(id.clone());
     }
-    (!drawio.is_empty() && drawio.validate().is_ok()).then(|| Arc::new(drawio))
+    drawio.cell_ids.sort_unstable();
+    debug_assert!(drawio.validate().is_ok());
+    ((!drawio.is_empty()).then(|| Arc::new(drawio)), dropped)
 }
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
@@ -5400,18 +5724,25 @@ pub(crate) fn import(bytes: &[u8]) -> Result<ImportReport, IoError> {
 pub(crate) fn import_with_first_page_warnings(
     bytes: &[u8],
 ) -> Result<(ImportReport, Vec<ImportWarning>), IoError> {
-    let pages = read_pages(bytes)?;
+    let document = read_pages(bytes)?;
+    let dropped_document_attributes = document.dropped_attributes;
+    let dropped_document_content = document.dropped_content;
+    let pages = document.pages;
     let mut warnings = BTreeSet::new();
     let (first, rest) = pages
         .split_first()
         .ok_or_else(|| invalid("draw.io document contains no pages"))?;
     let mut workbook = Workbook::new(import_page(first, 1, &mut warnings)?);
+    if dropped_document_attributes || dropped_document_content {
+        warnings.insert(ImportWarning::Other);
+    }
     let first_page_warnings = warnings.iter().copied().collect();
     for (i, page) in rest.iter().enumerate() {
         workbook
             .sheets
             .push(import_page(page, i + 2, &mut warnings)?);
     }
+    workbook.drawio = document.passthrough;
     Ok((
         ImportReport {
             format: Format::DrawIo,
@@ -5451,22 +5782,26 @@ struct SankeyLinkExtension {
 }
 
 impl SankeyExtension {
-    fn from_sheet(sheet: &Sheet) -> Result<Self, IoError> {
+    fn from_sheet(
+        sheet: &Sheet,
+        node_ids: &HashMap<TopicId, TopicId>,
+        edge_ids: &HashMap<CanvasObjectId, CanvasObjectId>,
+    ) -> Result<Self, IoError> {
         let values = thinoda_core::sankey::evaluate(sheet).map_err(IoError::Invalid)?;
         let layout = layout_sheet(sheet, &ApproxMeasure, false);
         let exported = exported_topics(sheet, &layout);
-        if values.nodes.iter().any(|id| !exported.contains(id)) {
+        if node_ids.keys().any(|id| !exported.contains(id)) {
             return Err(invalid(
-                "Expand all Sankey endpoint topics before exporting to draw.io.",
+                "Expand all Sankey endpoint and settings topics before exporting to draw.io.",
             ));
         }
-        Ok(Self {
+        let mut extension = Self {
             version: 2,
             settings: sheet.sankey.clone().unwrap_or_default(),
             nodes: sheet
                 .topics
                 .iter()
-                .filter(|(id, _)| values.nodes.contains(id))
+                .filter(|(id, _)| node_ids.contains_key(id))
                 .map(|(id, topic)| (*id, topic.notes.clone()))
                 .collect(),
             links: sheet
@@ -5500,7 +5835,44 @@ impl SankeyExtension {
                     _ => None,
                 })
                 .collect(),
-        })
+        };
+        let node = |id: TopicId| {
+            node_ids
+                .get(&id)
+                .copied()
+                .ok_or_else(|| invalid("Missing exported Sankey node ID"))
+        };
+        extension.nodes = extension
+            .nodes
+            .into_iter()
+            .map(|(id, notes)| Ok((node(id)?, notes)))
+            .collect::<Result<_, IoError>>()?;
+        extension.settings.sources = extension
+            .settings
+            .sources
+            .into_iter()
+            .map(|(id, value)| Ok((node(id)?, value)))
+            .collect::<Result<_, IoError>>()?;
+        extension.settings.stages = extension
+            .settings
+            .stages
+            .into_iter()
+            .map(|(id, value)| Ok((node(id)?, value)))
+            .collect::<Result<_, IoError>>()?;
+        extension.links = extension
+            .links
+            .into_iter()
+            .map(|(id, mut link)| {
+                link.from = node(link.from)?;
+                link.to = node(link.to)?;
+                let id = edge_ids
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| invalid("Missing exported Sankey edge ID"))?;
+                Ok((id, link))
+            })
+            .collect::<Result<_, IoError>>()?;
+        Ok(extension)
     }
 }
 
@@ -5511,15 +5883,22 @@ impl PageImport<'_> {
         }
         let sheet = self.sheet.clone();
         let items = self.items.clone();
-        if self.apply_sankey_candidate(json).is_err() {
-            self.sheet = sheet;
-            self.items = items;
-            self.warn(ImportWarning::DrawioSankeyStale);
+        match self.apply_sankey_candidate(json) {
+            Ok(true) => {
+                // Shape-to-card conversion cannot retain the shape.
+                self.warn(ImportWarning::Formatting);
+            }
+            Ok(false) => {}
+            Err(_) => {
+                self.sheet = sheet;
+                self.items = items;
+                self.warn(ImportWarning::DrawioSankeyStale);
+            }
         }
         Ok(())
     }
 
-    fn apply_sankey_candidate(&mut self, json: &str) -> Result<(), IoError> {
+    fn apply_sankey_candidate(&mut self, json: &str) -> Result<bool, IoError> {
         let extension: SankeyExtension = serde_json::from_str(json)?;
         if extension.version != 2 {
             return Err(IoError::NewerVersion(format!(
@@ -5529,6 +5908,22 @@ impl PageImport<'_> {
         }
         let mut topics = HashMap::new();
         let mut objects = HashMap::new();
+        let structured_objects: HashSet<_> = self
+            .zones
+            .iter()
+            .flat_map(|(_, _, objects)| objects.iter().copied())
+            .chain(
+                self.buckets
+                    .iter()
+                    .flat_map(|(members, _, _)| members.iter())
+                    .chain(self.locked.iter())
+                    .filter_map(|member| match member {
+                        BoardMember::Object(id) => Some(*id),
+                        BoardMember::Card(_) => None,
+                    }),
+            )
+            .collect();
+        let mut converted = false;
         for (old, notes) in extension.nodes {
             let key = format!("t{}", old.0);
             let index = *self.index.get(key.as_str()).ok_or_else(|| {
@@ -5552,17 +5947,43 @@ impl PageImport<'_> {
                     let CanvasObjectKind::Shape { label, .. } = &o.kind else {
                         return Err(invalid("Sankey node must be a topic-compatible vertex"));
                     };
+                    if !o.alt_text.is_empty()
+                        || o.data.as_ref().is_some_and(|data| {
+                            !data.tags.is_empty()
+                                || !data.properties.is_empty()
+                                || data.placeholders
+                        })
+                        || o.layer.is_some()
+                        || o.locked
+                        || self.sheet.canvas.scene.parents.contains_key(&id)
+                        || structured_objects.contains(&id)
+                        || o.drawio.as_ref().is_some_and(|data| {
+                            !data.style.is_empty() || !data.attributes.is_empty()
+                        })
+                    {
+                        return Err(invalid(
+                            "Sankey node has object data or structure that a card cannot retain",
+                        ));
+                    }
+                    let mut card = Card::new(CardKind::Text, o.rect.size);
+                    card.color = o.style.fill;
                     let topic = self
                         .sheet
-                        .add_card(
-                            label,
-                            o.rect.center(),
-                            Card::new(CardKind::Text, o.rect.size),
-                        )
+                        .add_card(label, o.rect.center(), card)
                         .map_err(IoError::Invalid)?;
+                    if let Some(t) = self.sheet.topic_mut(topic) {
+                        t.style.fill = card.color;
+                        t.style.text_color = o.style.text_color;
+                        t.style.align = self.cells[index].style.text_align();
+                        t.hyperlink = o.data.as_ref().and_then(|data| data.link.clone());
+                        t.drawio_source_id =
+                            o.drawio.as_ref().and_then(|data| data.source_id.clone());
+                        t.inline_text = o.label_rich_text.as_deref().cloned().unwrap_or_default();
+                    }
                     self.sheet.canvas.objects.retain(|o| o.id != id);
                     self.items.insert(index, Item::Card(topic));
                     objects.insert(id, topic);
+                    converted = true;
                     topic
                 }
                 _ => return Err(invalid("Sankey node is not an editable vertex")),
@@ -5633,7 +6054,7 @@ impl PageImport<'_> {
         settings.stages = remap(settings.stages)?;
         self.sheet.sankey = Some(settings);
         self.sheet.validate().map_err(IoError::Invalid)?;
-        Ok(())
+        Ok(converted)
     }
 }
 
@@ -6139,6 +6560,14 @@ struct PageWriter<'a> {
     used_ids: HashSet<String>,
     /// draw.io layer cell id of each named board layer.
     layer_cells: HashMap<thinoda_core::BoardLayerId, String>,
+    /// Generated draw.io cell IDs for zones and groups.
+    zone_cells: HashMap<ZoneId, String>,
+    group_cells: HashMap<CanvasGroupId, String>,
+    topic_cells: HashMap<TopicId, String>,
+    sankey_topic_ids: HashMap<TopicId, TopicId>,
+    sankey_edge_ids: HashMap<CanvasObjectId, CanvasObjectId>,
+    /// Generated IDs for mind-map boundaries, links, relationships and summaries.
+    map_cells: HashMap<String, String>,
     /// Row cell ids and absolute row origins of each written table.
     table_rows: HashMap<CanvasObjectId, Vec<(String, Vec2)>>,
 }
@@ -6182,22 +6611,23 @@ fn layer_cell_ids(
 
 /// Cell ids of canvas objects: the imported draw.io id when it is still unique
 /// and not one of the ids generated for other cells (`reserved`), otherwise
-/// `o{id}`. Ids of deleted source cells are never reused, so external
-/// references to them cannot silently retarget. Sankey edges keep `o{id}`,
-/// which their native extension reattaches by.
-fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasObjectId, String> {
+/// `o{id}`. Sankey edge IDs are allocated with their semantic extension.
+fn object_cell_ids(
+    sheet: &Sheet,
+    reserved: &HashSet<String>,
+    sankey_ids: &HashMap<CanvasObjectId, CanvasObjectId>,
+) -> HashMap<CanvasObjectId, String> {
     let tombstones: HashSet<&str> = sheet
         .drawio
         .iter()
         .flat_map(|page| page.cell_ids.iter().map(String::as_str))
         .collect();
-    let sankey = |object: &CanvasObject| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some());
     let mut ids = HashMap::new();
     let mut used = reserved.clone();
-    for object in sheet.canvas.objects.iter().filter(|object| sankey(object)) {
-        let id = format!("o{}", object.id.0);
+    for (object, exported) in sankey_ids {
+        let id = format!("o{}", exported.0);
         used.insert(id.clone());
-        ids.insert(object.id, id);
+        ids.insert(*object, id);
     }
     for object in &sheet.canvas.objects {
         let Some(source) = object
@@ -6226,6 +6656,25 @@ fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasO
         ids.insert(object.id, id);
     }
     ids
+}
+
+fn next_numeric_cell_id(
+    prefix: &str,
+    cursor: &mut u64,
+    reserved: &mut HashSet<String>,
+    unavailable: &HashSet<String>,
+) -> Result<u64, IoError> {
+    loop {
+        let candidate = *cursor;
+        let id = format!("{prefix}{candidate}");
+        if !unavailable.contains(&id) && reserved.insert(id) {
+            *cursor = candidate.saturating_add(1);
+            return Ok(candidate);
+        }
+        *cursor = candidate
+            .checked_add(1)
+            .ok_or_else(|| invalid("draw.io cell ID space exhausted"))?;
+    }
 }
 
 impl<'a> PageWriter<'a> {
@@ -6316,38 +6765,351 @@ impl<'a> PageWriter<'a> {
             label_placement: None,
             used_ids: HashSet::new(),
             layer_cells: HashMap::new(),
+            zone_cells: HashMap::new(),
+            group_cells: HashMap::new(),
+            topic_cells: HashMap::new(),
+            sankey_topic_ids: HashMap::new(),
+            sankey_edge_ids: HashMap::new(),
+            map_cells: HashMap::new(),
             table_rows: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
-        reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
-        reserved.extend(sheet.zones.iter().map(|zone| format!("z{}", zone.id.0)));
-        reserved.extend(sheet.canvas.groups.iter().map(|g| format!("g{}", g.id.0)));
-        reserved.extend(
-            writer
-                .layout
-                .boundaries
+        let mut unavailable: HashSet<String> = sheet
+            .drawio
+            .iter()
+            .flat_map(|page| page.cell_ids.iter().cloned())
+            .collect();
+        unavailable.extend(
+            sheet
+                .canvas
+                .objects
                 .iter()
-                .map(|b| format!("b{}", b.id.0)),
+                .filter_map(|object| object.drawio.as_ref()?.source_id.clone()),
         );
-        reserved.extend((0..writer.layout.connectors.len()).map(|n| format!("e{n}")));
-        reserved.extend(
-            writer
-                .layout
-                .relationships
+        unavailable.extend(
+            sheet
+                .canvas
+                .layers
                 .iter()
-                .map(|r| format!("r{}", r.id.0)),
+                .filter_map(|layer| layer.source_id.clone()),
         );
-        reserved.extend(
-            writer
-                .layout
-                .summaries
+        unavailable.extend(
+            sheet
+                .zones
                 .iter()
-                .map(|s| format!("s{}", s.id.0)),
+                .filter_map(|zone| zone.drawio_source_id.clone()),
         );
+        unavailable.extend(
+            sheet
+                .topics
+                .values()
+                .filter_map(|topic| topic.drawio_source_id.clone()),
+        );
+        unavailable.extend(
+            sheet
+                .canvas
+                .groups
+                .iter()
+                .filter_map(|group| group.drawio_source_id.clone()),
+        );
+        let mut zone_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .zones
+            .iter()
+            .filter_map(|zone| zone.drawio_source_id.as_deref())
+        {
+            *zone_sources.entry(source).or_default() += 1;
+        }
+        let other_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .topics
+                    .values()
+                    .filter_map(|topic| topic.drawio_source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .canvas
+                    .groups
+                    .iter()
+                    .filter_map(|group| group.drawio_source_id.as_deref()),
+            )
+            .collect();
+        for zone in &sheet.zones {
+            if let Some(source) = zone.drawio_source_id.as_deref()
+                && zone_sources.get(source) == Some(&1)
+                && !other_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer.zone_cells.insert(zone.id, source.to_owned());
+            }
+        }
+        let mut sankey_nodes = writer.flows.nodes.clone();
+        if let Some(settings) = &sheet.sankey {
+            sankey_nodes.extend(settings.sources.keys().copied());
+            sankey_nodes.extend(settings.stages.keys().copied());
+        }
+        let mut topic_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .topics
+            .values()
+            .filter_map(|topic| topic.drawio_source_id.as_deref())
+        {
+            *topic_sources.entry(source).or_default() += 1;
+        }
+        let other_topic_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .zones
+                    .iter()
+                    .filter_map(|zone| zone.drawio_source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .canvas
+                    .groups
+                    .iter()
+                    .filter_map(|group| group.drawio_source_id.as_deref()),
+            )
+            .collect();
+        for topic in sheet.topics.values() {
+            let Some(source) = topic.drawio_source_id.as_deref() else {
+                continue;
+            };
+            if topic_sources.get(source) != Some(&1) || other_topic_sources.contains(source) {
+                continue;
+            }
+            if sankey_nodes.contains(&topic.id) {
+                let Some(number) = source
+                    .strip_prefix('t')
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .filter(|number| format!("t{number}") == source)
+                else {
+                    continue;
+                };
+                if reserved.insert(source.to_owned()) {
+                    writer.sankey_topic_ids.insert(topic.id, TopicId(number));
+                    writer.topic_cells.insert(topic.id, source.to_owned());
+                }
+            } else if reserved.insert(source.to_owned()) {
+                writer.topic_cells.insert(topic.id, source.to_owned());
+            }
+        }
+        let mut group_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .canvas
+            .groups
+            .iter()
+            .filter_map(|group| group.drawio_source_id.as_deref())
+        {
+            *group_sources.entry(source).or_default() += 1;
+        }
+        let other_group_sources: HashSet<&str> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+            .chain(
+                sheet
+                    .canvas
+                    .layers
+                    .iter()
+                    .filter_map(|layer| layer.source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .zones
+                    .iter()
+                    .filter_map(|zone| zone.drawio_source_id.as_deref()),
+            )
+            .chain(
+                sheet
+                    .topics
+                    .values()
+                    .filter_map(|topic| topic.drawio_source_id.as_deref()),
+            )
+            .collect();
+        for group in &sheet.canvas.groups {
+            if let Some(source) = group.drawio_source_id.as_deref()
+                && group_sources.get(source) == Some(&1)
+                && !other_group_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer.group_cells.insert(group.id, source.to_owned());
+            }
+        }
+        for id in &sankey_nodes {
+            let cell = format!("t{}", id.0);
+            if !writer.sankey_topic_ids.contains_key(id)
+                && !unavailable.contains(&cell)
+                && reserved.insert(cell)
+            {
+                writer.sankey_topic_ids.insert(*id, *id);
+            }
+        }
+        let mut topic_unavailable = unavailable.clone();
+        topic_unavailable.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
+        let mut topic_cursor = 1;
+        for id in &sankey_nodes {
+            if !writer.sankey_topic_ids.contains_key(id) {
+                let new = next_numeric_cell_id(
+                    "t",
+                    &mut topic_cursor,
+                    &mut reserved,
+                    &topic_unavailable,
+                )?;
+                writer.sankey_topic_ids.insert(*id, TopicId(new));
+            }
+        }
+        let mut object_sources: HashMap<&str, usize> = HashMap::new();
+        for source in sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| object.drawio.as_ref()?.source_id.as_deref())
+        {
+            *object_sources.entry(source).or_default() += 1;
+        }
+        let layer_sources: HashSet<&str> = sheet
+            .canvas
+            .layers
+            .iter()
+            .filter_map(|layer| layer.source_id.as_deref())
+            .collect();
+        let sankey_objects: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| {
+                matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some())
+            })
+            .collect();
+        for object in &sankey_objects {
+            let source = object
+                .drawio
+                .as_ref()
+                .and_then(|passthrough| passthrough.source_id.as_deref());
+            if let Some(source) = source
+                && let Some(number) = source
+                    .strip_prefix('o')
+                    .and_then(|id| id.parse::<u64>().ok())
+                && format!("o{number}") == source
+                && object_sources.get(source) == Some(&1)
+                && !layer_sources.contains(source)
+                && reserved.insert(source.to_owned())
+            {
+                writer
+                    .sankey_edge_ids
+                    .insert(object.id, CanvasObjectId(number));
+            }
+        }
+        for object in &sankey_objects {
+            let cell = format!("o{}", object.id.0);
+            if !writer.sankey_edge_ids.contains_key(&object.id)
+                && !unavailable.contains(&cell)
+                && reserved.insert(cell)
+            {
+                writer.sankey_edge_ids.insert(object.id, object.id);
+            }
+        }
+        let mut edge_cursor = 1;
+        for object in &sankey_objects {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                writer.sankey_edge_ids.entry(object.id)
+            {
+                let new = next_numeric_cell_id("o", &mut edge_cursor, &mut reserved, &unavailable)?;
+                entry.insert(CanvasObjectId(new));
+            }
+        }
+        let mut generated_id = |base: String| {
+            let mut id = base.clone();
+            let mut suffix = 1;
+            while reserved.contains(&id) || unavailable.contains(&id) {
+                id = format!("{base}-{suffix}");
+                suffix += 1;
+            }
+            reserved.insert(id.clone());
+            id
+        };
+        for id in sheet.topics.keys() {
+            if writer.topic_cells.contains_key(id) {
+                continue;
+            }
+            let base = format!("t{}", id.0);
+            let cell = if let Some(mapped) = writer.sankey_topic_ids.get(id) {
+                format!("t{}", mapped.0)
+            } else {
+                generated_id(base)
+            };
+            writer.topic_cells.insert(*id, cell);
+        }
+        let map_ids = writer
+            .layout
+            .boundaries
+            .iter()
+            .map(|boundary| format!("b{}", boundary.id.0))
+            .chain((0..writer.layout.connectors.len()).map(|n| format!("e{n}")))
+            .chain(
+                writer
+                    .layout
+                    .relationships
+                    .iter()
+                    .map(|relationship| format!("r{}", relationship.id.0)),
+            )
+            .chain(
+                writer
+                    .layout
+                    .summaries
+                    .iter()
+                    .map(|summary| format!("s{}", summary.id.0)),
+            );
+        for id in map_ids {
+            writer.map_cells.insert(id.clone(), generated_id(id));
+        }
+        for zone in &sheet.zones {
+            writer
+                .zone_cells
+                .entry(zone.id)
+                .or_insert_with(|| generated_id(format!("z{}", zone.id.0)));
+        }
+        for group in &sheet.canvas.groups {
+            writer
+                .group_cells
+                .entry(group.id)
+                .or_insert_with(|| generated_id(format!("g{}", group.id.0)));
+        }
         writer.layer_cells = layer_cell_ids(sheet, &reserved);
         reserved.extend(writer.layer_cells.values().cloned());
-        writer.cell_ids = object_cell_ids(sheet, &reserved);
+        writer.cell_ids = object_cell_ids(sheet, &reserved, &writer.sankey_edge_ids);
         reserved.extend(writer.cell_ids.values().cloned());
+        reserved.extend(
+            sheet
+                .drawio
+                .iter()
+                .flat_map(|page| page.cell_ids.iter().cloned()),
+        );
         writer.used_ids = reserved;
         for zone in &sheet.zones {
             for object in &zone.objects {
@@ -6370,7 +7132,7 @@ impl<'a> PageWriter<'a> {
                 &zones.into_iter().collect::<Vec<_>>()[..],
             ) {
                 (Some(layer), _) => layer,
-                (None, [Some(zone)]) => format!("z{}", zone.0),
+                (None, [Some(zone)]) => writer.zone_cells[zone].clone(),
                 _ => "1".into(),
             };
             writer.groups.insert(group.id, (parent, bounds));
@@ -6454,14 +7216,14 @@ impl<'a> PageWriter<'a> {
             return (self.cell_id(*parent), origin);
         }
         if let Some(group) = self.member_group(member) {
-            return (format!("g{}", group.0), self.groups[&group].1.min);
+            return (self.group_cells[&group].clone(), self.groups[&group].1.min);
         }
         // draw.io layers hold top-level cells, so a layered object leaves its frame.
         if let Some(layer) = self.member_layer_cell(member) {
             return (layer, Vec2::ZERO);
         }
         match self.member_zone(member) {
-            Some(zone) => (format!("z{}", zone.0), self.zone_origin(zone)),
+            Some(zone) => (self.zone_cells[&zone].clone(), self.zone_origin(zone)),
             None => ("1".into(), Vec2::ZERO),
         }
     }
@@ -6692,7 +7454,7 @@ impl<'a> PageWriter<'a> {
                 None => Terminal::Point(Vec2::ZERO),
             },
             Endpoint::Topic(id) if self.topics.contains(&id) => {
-                Terminal::Cell(format!("t{}", id.0))
+                Terminal::Cell(self.topic_cells[&id].clone())
             }
             Endpoint::Topic(id) => Terminal::Point(
                 self.layout
@@ -6718,14 +7480,8 @@ impl<'a> PageWriter<'a> {
             if zone.clip {
                 style.push_str("thinodaClip=1;");
             }
-            self.vertex(
-                &format!("z{}", zone.id.0),
-                &zone.name,
-                &style,
-                "1",
-                zone.frame,
-                None,
-            );
+            let id = self.zone_cells[&zone.id].clone();
+            self.vertex(&id, &zone.name, &style, "1", zone.frame, None);
         }
     }
 
@@ -6743,12 +7499,13 @@ impl<'a> PageWriter<'a> {
                 .sheet
                 .zones
                 .iter()
-                .find(|zone| format!("z{}", zone.id.0) == parent)
+                .find(|zone| self.zone_cells[&zone.id] == parent)
                 .map_or(Vec2::ZERO, |zone| zone.frame.min);
             let locked = self.sheet.canvas.group(group).is_some_and(|g| g.locked);
             let style = if locked { "group;locked=1;" } else { "group;" };
+            let id = self.group_cells[&group].clone();
             self.vertex(
-                &format!("g{}", group.0),
+                &id,
                 "",
                 style,
                 &parent,
@@ -7401,13 +8158,17 @@ impl<'a> PageWriter<'a> {
             Band::Above,
         );
         let link = topic.hyperlink.as_deref().unwrap_or_default();
-        self.vertex(
-            &format!("t{}", id.0),
+        let cell = self.topic_cells[&id].clone();
+        self.vertex_with_alternate_bounds(
+            &cell,
             &topic.title,
             &style,
             &parent,
             rect.translate(Vec2::ZERO - origin),
+            None,
+            false,
             (!link.is_empty()).then_some(("", link)),
+            (!topic.inline_text.is_empty()).then_some((&topic.inline_text, None)),
         );
     }
 
@@ -7426,14 +8187,8 @@ impl<'a> PageWriter<'a> {
                 model.and_then(|b| b.color),
             );
             let title = model.and_then(|b| b.title.as_deref()).unwrap_or_default();
-            self.vertex(
-                &format!("b{}", boundary.id.0),
-                title,
-                &style,
-                "1",
-                boundary.rect,
-                None,
-            );
+            let id = self.map_cells[&format!("b{}", boundary.id.0)].clone();
+            self.vertex(&id, title, &style, "1", boundary.rect, None);
         }
         for (n, connector) in self.layout.connectors.clone().iter().enumerate() {
             let mut style = String::from("endArrow=none;html=1;");
@@ -7448,17 +8203,8 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(connector.parent, connector.start),
                 self.topic_terminal(connector.child, connector.end),
             ];
-            self.edge(
-                &format!("e{n}"),
-                "",
-                &style,
-                "1",
-                Vec2::ZERO,
-                ends,
-                &[],
-                "",
-                None,
-            );
+            let id = self.map_cells[&format!("e{n}")].clone();
+            self.edge(&id, "", &style, "1", Vec2::ZERO, ends, &[], "", None);
         }
         for id in self.layout.order.clone() {
             let Some(topic) = sheet.topic(id) else {
@@ -7499,8 +8245,9 @@ impl<'a> PageWriter<'a> {
                     .clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH))
             ));
             let link = topic.hyperlink.clone().unwrap_or_default();
+            let cell = self.topic_cells[&id].clone();
             self.vertex(
-                &format!("t{}", id.0),
+                &cell,
                 &topic.title,
                 &style,
                 "1",
@@ -7521,8 +8268,9 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(model.from, relationship.start),
                 self.topic_terminal(model.to, relationship.end),
             ];
+            let id = self.map_cells[&format!("r{}", relationship.id.0)].clone();
             self.edge(
-                &format!("r{}", relationship.id.0),
+                &id,
                 &model.title,
                 &style,
                 "1",
@@ -7534,8 +8282,9 @@ impl<'a> PageWriter<'a> {
             );
         }
         for summary in self.layout.summaries.clone() {
+            let id = self.map_cells[&format!("s{}", summary.id.0)].clone();
             self.edge(
-                &format!("s{}", summary.id.0),
+                &id,
                 "",
                 "endArrow=none;html=1;",
                 "1",
@@ -7550,7 +8299,7 @@ impl<'a> PageWriter<'a> {
 
     fn topic_terminal(&self, id: TopicId, fallback: Vec2) -> Terminal {
         if self.topics.contains(&id) {
-            Terminal::Cell(format!("t{}", id.0))
+            Terminal::Cell(self.topic_cells[&id].clone())
         } else {
             Terminal::Point(fallback)
         }
@@ -7587,12 +8336,21 @@ impl<'a> PageWriter<'a> {
 
 /// Writes all sheets as uncompressed draw.io pages.
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
-    Ok(export_sheets(&book.sheets)?.into_bytes())
+    Ok(export_sheets(&book.sheets, book.drawio.as_deref())?.into_bytes())
 }
 
-fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
+fn export_sheets<'a>(
+    sheets: impl IntoIterator<Item = &'a Sheet>,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<String, IoError> {
+    if let Some(document) = document {
+        document.validate().map_err(|error| invalid(&error))?;
+    }
     let sheets: Vec<_> = sheets.into_iter().collect();
     for sheet in &sheets {
+        if let Some(page) = &sheet.drawio {
+            page.validate().map_err(|error| invalid(&error))?;
+        }
         validate_scene_export(sheet)?;
     }
     if sheets.len() > 1
@@ -7605,7 +8363,12 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
                 .into(),
         ));
     }
-    let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
+    let document_attributes: String = document
+        .into_iter()
+        .flat_map(|document| &document.attributes)
+        .map(|(name, value)| format!(" {name}=\"{}\"", esc(value)))
+        .collect();
+    let mut out = format!("<mxfile host=\"Thinoda\" type=\"device\"{document_attributes}>\n");
     let mut diagram_ids = HashSet::new();
     let kept_ids: Vec<Option<String>> = sheets
         .iter()
@@ -7640,8 +8403,13 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
             GridKind::Lines => (1, "lines"),
         };
         let thinoda_snap = u8::from(sheet.board.snap);
+        let writer = PageWriter::new(sheet)?;
         let sankey = if sheet.has_sankey() {
-            let extension = SankeyExtension::from_sheet(sheet)?;
+            let extension = SankeyExtension::from_sheet(
+                sheet,
+                &writer.sankey_topic_ids,
+                &writer.sankey_edge_ids,
+            )?;
             format!(
                 " thinodaSankey=\"{}\"",
                 esc(&serde_json::to_string(&extension)?)
@@ -7663,7 +8431,6 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));
-        let writer = PageWriter::new(sheet)?;
         for layer in &sheet.canvas.layers {
             let id = writer
                 .layer_cells
@@ -7886,14 +8653,18 @@ fn embedded_image_fits(image: usize, payload: usize, overhead: usize) -> bool {
         .is_some_and(|length| length <= MAX_BYTES)
 }
 
-pub(crate) fn embed_svg(mut svg: String, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+pub(crate) fn embed_svg(
+    mut svg: String,
+    sheet: &Sheet,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<Vec<u8>, IoError> {
     if svg.len() > MAX_BYTES {
         return Err(invalid("editable draw.io image exceeds size limit"));
     }
     if !valid_rendered_svg(&svg) {
         return Err(invalid("rendered SVG is not a valid SVG document"));
     }
-    let xml = export_sheets(std::iter::once(sheet))?;
+    let xml = export_sheets(std::iter::once(sheet), document)?;
     let escaped_len = xml.chars().try_fold(0usize, |length, character| {
         let size = match character {
             '&' => 5,
@@ -7955,13 +8726,17 @@ fn rendered_png_insertion(png: &[u8]) -> Option<usize> {
     }
 }
 
-pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+pub(crate) fn embed_png(
+    mut png: Vec<u8>,
+    sheet: &Sheet,
+    document: Option<&DrawioDocumentPassthrough>,
+) -> Result<Vec<u8>, IoError> {
     if png.len() > MAX_BYTES {
         return Err(invalid("editable draw.io image exceeds size limit"));
     }
     let insertion = rendered_png_insertion(&png)
         .ok_or_else(|| invalid("rendered PNG has no valid image and end chunk"))?;
-    let xml = export_sheets(std::iter::once(sheet))?;
+    let xml = export_sheets(std::iter::once(sheet), document)?;
     let text_len = crate::drawio_clipboard::encoded_uri_component_len(&xml)
         .and_then(|length| length.checked_add(b"mxfile\0".len()))
         .ok_or_else(|| invalid("editable draw.io image exceeds size limit"))?;

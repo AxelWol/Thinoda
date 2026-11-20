@@ -92,7 +92,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shape, primary and extra connector labels, with selection and caret typography controls and inert draw.io HTML import/export; cards, zones and container-specific labels remain plain or use their existing text model; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards support run-level styling and render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists. Card colors lack arbitrary entry. One rotated fixture opens, edits and saves in Windows PowerPoint; visual parity and other Office hosts remain unverified. Zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -241,19 +241,86 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
-  - [x] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export
-  - [x] Primary connector labels: the same editing and rendering model, including Sankey labels and draw.io HTML subset
-  - [x] Extra connector labels: the same model, including positioned Sankey labels, with safe inspector/draft reconciliation
+  - [ ] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export implemented; ordered editing remains unsafe for ambiguous input
+  - [ ] Primary connector labels: the same model, including Sankey labels and draw.io HTML subset; ordered editing remains unsafe for ambiguous input
+  - [ ] Extra connector labels: the same model, including positioned Sankey labels and inspector/draft reconciliation; ordered editing remains unsafe for ambiguous input
   - [x] Typing styles at the caret for shape and connector labels
   - [x] Font size and palette colour controls for selected text and caret typing styles
   - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
   - [x] Direct numeric font size and arbitrary RGBA hex colour entry for selected text and caret typing styles
   - [x] Preserve existing formatted-card runs and lists during search/replace
-  - [ ] Complete rich-card editing, rendering and draw.io interchange, cover other label kinds and preserve unsupported source HTML
-- [ ] Copy/paste style, set default style, style rules
+  - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
+  - [x] Import/export supported draw.io card HTML, including baseline overrides
+  - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
+  - [x] Export styled card runs to editable PowerPoint line shapes
+  - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
+  - [x] Preserve subsequent initial PowerPoint numbering after empty numbered paragraphs
+  - [x] Position editable PowerPoint list paragraphs as aligned blocks using shared rich-layout geometry
+  - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
+  - [x] Add explicit-style label range replacement with list remapping for future ordered edits
+  - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
+  - [x] Use the actual buffer range for a single eligible shape/connector text or paste insertion, including repeated text and selected replacement
+  - [x] Use the actual buffer range for a single eligible shape/connector Backspace or Delete, including repeated text and selected deletion
+  - [x] Preserve remaining rich-label formatting when an eligible cut deletes selected text
+  - [x] Preserve rich runs and list paragraphs for an eligible Shift+Enter line break at the actual selection
+  - [x] Process pointer-free, non-IME rich-label keyboard batches in event order
+  - [x] Add bounded draft-local keyboard undo/redo for shape and connector text, formatting and synthetic IME composition
+  - [x] Use actual buffer deletion ranges for an isolated IME surrounding-delete event
+  - [x] Use actual buffer ranges for isolated IME preedit/commit replacements
+  - [x] Process pointer-free, IME-only batches in event order
+  - [x] Process pointer-free mixed IME/keyboard batches in event order, protecting candidate keys and routing F6 focus
+  - [x] Cover synthetic editor and outside clicks batched with rich IME input
+  - [x] Delete whole grapheme clusters with unmodified Backspace/Delete in label editors
+  - [x] Preserve graphemes for eligible text/paste replacement and cut; snap an interior insertion caret to the cluster end
+  - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
+  - [x] Expand partial grapheme selections for eligible Ctrl, Alt and Command Backspace/Delete
+  - [x] Snap interior carets for eligible Ctrl, Alt and Command Backspace/Delete
+  - [x] Leave grapheme selections unchanged for ignored empty text/paste and newline text events
+  - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
+  - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
+  - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
+  - [x] Cover an AccessKit whole-value request before and after an outside click
+  - [x] Apply eligible formatted card-title input before an outside canvas click, retaining subsequent input and rejected stale drafts
+  - [x] Order eligible text, IME and title-targeted accessibility replacement around a single editor press; preserve ordered Tab transitions to new topics
+  - [x] Retain a dirty formatted card-title draft when its source disappears; allow cancellation or restoration and reject recovery against the missing source
+  - [x] Toggle bold, italic and underline on a selected range in an existing formatted card title or a freshly opened plain card title, with local undo/redo
+  - [x] Add selection toolbar controls for strikethrough, subscript, superscript, bullets and numbering on card titles, with grapheme-safe ranges and local undo
+  - [x] Apply card-title inline formatting at the caret for subsequent typing, including toolbar and keyboard shortcuts, ordered IME input, cursor changes and accessibility whole-value replacement
+  - [x] Add card-title inline font family, numeric size and palette color controls for selections and caret typing styles; show mixed and inherited values
+  - [x] Add searchable card-title font selection
+  - [ ] Add arbitrary RGBA color entry for card titles
+  - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
+  - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
+  - [x] Copy/paste object and card styles; save and apply reusable quick styles
+- [ ] Default style and declarative style rules
 
 ### D10 — Save back to `.drawio`
 
+- [x] Preserve bounded, safe unknown `<mxfile>` attributes through native workbook storage and draw.io export (native v53); namespace-qualified attributes that cannot be preserved are disclosed
+- [x] Include validated workbook-level `<mxfile>` attributes in editable SVG/PNG exports while embedding only the selected sheet
+- [x] Disclose document attributes omitted for safety or budget limits while retaining other valid attributes
+- [x] Protect document passthrough in versioned XMind snapshots and recovery, including pending ink; reject reserved generated attributes
+- [x] Bound retained page passthrough before cloning, disclose dropped unknown model attributes and invalid page IDs, and reject reserved or oversized model attributes on export
+- [x] Report ignored document, diagram and graph-level XML before opening a conversion-only copy; keep the original file protected
+- [x] Report ignored cell and geometry attributes, children, duplicate geometry parts and unsupported flags rather than silently discarding them
+- [x] Import parentless vertices and edges instead of silently treating them as structural roots; warn about missing cell IDs and nonstandard roots
+- [x] Warn when structural root or layer data, IDs, styles or normalized names cannot be retained
+- [x] Warn when container links, tooltips or enabled placeholder metadata cannot be retained, while preserving supported card and object links
+- [x] Disclose group labels, collapsed state and unsupported group styles that cannot be represented
+- [x] Disclose explicit zone styles that are not represented by Thinoda frames
+- [x] Disclose the default draw.io swimlane header size when conversion changes it
+- [x] Disclose default draw.io swimlane foldability when conversion removes it
+- [x] Preserve supported links, rich text and colors in Sankey shape-to-card conversions; reject unsupported object metadata and unknown styles, and disclose remaining shape loss
+- [x] Retain locked, layered, grouped and contained Sankey shape nodes as ordinary objects rather than lose their deferred board structure
+- [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
+- [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
+- [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
+- [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
+- [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
+- [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
+- [x] Generate zone and group IDs without colliding with retained tombstones or live source IDs, including nested parent references
+- [x] Generate mind-map boundary, branch-edge, relationship and summary IDs without colliding with retained tombstones or live source IDs
+- [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
 ### D11 — Automatic layouts
@@ -289,7 +356,62 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
-| 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas rich editing/rendering and draw.io interchange are not yet supported for these cards. |
+| 2026-11-19 | D9 card font search (partial) | Inline font choices can be filtered without losing the title selection; candidate choices are disabled during search-field IME composition. Arbitrary card color entry remains open. |
+| 2026-11-19 | D9 card inline typography (partial) | Selection and caret controls set font family, numeric size and palette color; mixed values, inherited resets and same-frame size input with color clicks or save are covered. |
+| 2026-11-19 | D9 card typing styles | Card-title inline toolbar and shortcuts now set caret typing styles; cursor changes and whole-value accessibility replacement clear them. |
+| 2026-11-19 | D10 default zone folding | draw.io swimlanes are foldable by default; their conversion to nonfoldable frames now warns. |
+| 2026-11-19 | D10 default zone header | The draw.io default header size of 40 is disclosed when conversion uses Thinoda's 24-unit frame header. |
+| 2026-11-19 | D10 zone style diagnostics | Explicit unsupported zone styling requires import consent instead of being silently dropped. |
+| 2026-11-19 | D10 group loss diagnostics | Group labels, collapsed state and unsupported group styles require import consent rather than disappearing silently. |
+| 2026-11-19 | D10 group source identity | Representable flat groups own bounded source IDs through native v56, XMind and recovery; copies clear ownership, and flattened or undersized groups warn. |
+| 2026-11-19 | D10 topic source identity | Imported cards and converted Sankey nodes own bounded source IDs through native v55, XMind and recovery; moves retain identity, copies clear it, and exports avoid collisions. |
+| 2026-11-19 | D10 Sankey structure safety | Sankey shape nodes with locks, named layers, groups, zones or scene parents remain ordinary objects when conversion would lose their structure. |
+| 2026-11-19 | D10 Sankey conversion safety | Shape-to-card conversion retains links, rich text, colors and alignment, and discloses remaining formatting loss. Nodes carrying unsupported metadata or unknown styles remain ordinary objects with a stale-extension warning. |
+| 2026-11-19 | D10 container metadata diagnostics | Links, tooltips and enabled placeholder metadata on non-object containers are disclosed before conversion; supported card and object links remain intact. |
+| 2026-11-19 | D10 zone source identity | Imported zones retain source IDs through native, draw.io, XMind and recovery; copies clear ownership and deleted IDs remain reserved within the page budget. |
+| 2026-11-19 | D10 scene-container tombstones | Imported scene containers and represented table cells retain bounded source-ID tombstones, preventing generated IDs from reusing them after deletion. |
+| 2026-11-19 | D10 Sankey ID remapping | Sankey nodes and edges avoid source collisions while version 2 extensions retain flows, settings and inactive stage metadata, including in editable images. |
+| 2026-11-19 | D10 generated topic IDs | Non-Sankey topics avoid retained and live source IDs while maintaining connector references; conflicting fixed Sankey IDs refuse export. |
+| 2026-11-19 | D10 generated map-decoration IDs | Boundary, branch-edge, relationship and summary cells avoid retained tombstones and live source IDs. |
+| 2026-11-19 | D10 generated zone/group IDs | Zone and group IDs avoid retained tombstones and live source IDs, with remapped parent links preserving nested geometry. |
+| 2026-11-19 | D10 layer tombstones | Imported named-layer source IDs survive as bounded page tombstones, including native save/reopen; dropped IDs warn. |
+| 2026-11-19 | D10 structural-cell diagnostics | Unrepresented root/layer geometry, data and styles, regenerated structural IDs and normalized layer names now produce import warnings; supported layer visibility and locking remain warning-free. |
+| 2026-11-19 | D10 generated-cell ID reservation | Deleted imported object IDs are reserved against newly generated connector-label and table-cell IDs. |
+| 2026-11-19 | D10 nonstandard cell roots | Parentless vertices and edges are imported with a warning instead of being silently discarded; missing cell IDs also warn before a temporary ID is assigned. |
+| 2026-11-19 | D10 editable-image document metadata | Editable draw.io SVG and PNG retain validated workbook attributes as well as the selected page; masked copies omit those attributes. |
+| 2026-11-19 | D10 cell/geometry import diagnostics (partial) | Unknown cell and geometry XML, malformed flags, repeated geometry roles and non-connectable shapes/groups now warn; recognized non-connectable edge labels remain warning-free. |
+| 2026-11-19 | D10 document passthrough budget | Oversized, unsafe or excess unknown `<mxfile>` attributes produce import warnings; individually valid attributes that fit are still retained and round-trip. |
+| 2026-11-19 | D10 structural import diagnostics (partial) | Ignored document children, diagram attributes or children, and graph/root-level content produce import warnings; later-page warnings do not contaminate the first-page clipboard report, and the original source remains protected. |
+| 2026-11-19 | D10 page passthrough safety (partial) | Unknown page attributes and object-ID tombstones are bounded during import; omissions warn. Reserved generated model attributes and oversized page passthrough are rejected even on empty sheets or direct export. |
+| 2026-11-19 | D10 document passthrough (partial) | Safe unknown `<mxfile>` attributes survive draw.io, native v53, private XMind snapshots and recovery with or without pending ink; older or mismatched envelopes reject the metadata rather than dropping it. |
+| 2026-11-19 | D9 card-title selection formatting (partial) | The active card-title toolbar applies strikethrough, subscript/superscript and bulleted/numbered paragraphs to selected text. Selection state is grapheme-aware, whole-card styling remains distinct, and each action participates in bounded local undo. Inline font family/size/color, caret formatting, Office visual parity and real input acceptance remain open. |
+| 2026-11-18 | D9 accessible outside-click ordering (partial) | A synthetic SetValue before an outside click commits with the label; a request after the click does not modify the old label. Other pointer and assistive-technology paths remain open. |
+| 2026-11-18 | D9 ignored text input (partial) | Empty text/paste and standalone newline text events no longer expand a partial grapheme selection or move an interior caret when egui ignores the input. |
+| 2026-11-18 | D9 accessible toolbar ordering (partial) | Eligible SetValue batches beginning with toolbar focus preserve the new caret and process subsequent focus and formatting actions in order. Other unfocused controls, pointer/IME batches and physical accessibility clients remain open. |
+| 2026-11-18 | D9 accessible whole-value replacement (partial) | Eligible AccessKit SetValue replaces all label text as a tracked rich edit, including empty and unchanged values; focused keyboard ordering and toolbar-focus updates have synthetic coverage. Physical assistive technology and broader event ordering remain open. |
+| 2026-11-18 | D9 accessible label replacement (partial) | Eligible AccessKit text replacement uses grapheme-safe selections and tracked rich edits, including empty replacement, pending caret style, ordered keyboard batches and undo. Physical assistive technology and other accessibility actions remain open. |
+| 2026-11-18 | D9 modified deletion caret (partial) | Eligible modified Backspace/Delete snap an interior grapheme caret toward the deletion boundary before egui computes its word deletion; local undo and pending typing styles are preserved. Other deletion endpoints and physical input remain open. |
+| 2026-11-18 | D9 modified selection deletion (partial) | Eligible modified Backspace/Delete expand partial grapheme selections; shape and connector regressions cover deletion and undo. Collapsed modified deletion and platform input remain open. |
+| 2026-11-18 | D9 grapheme-safe line breaks and IME (partial) | Eligible Shift+Enter and initial IME input expand partial selections or snap insertion carets; synthetic tests cover typing styles, empty events and active preedit updates. Physical IME and mixed pointer input remain open. |
+| 2026-11-18 | D9 rich-label line breaks (partial) | Eligible Shift+Enter edits use the actual buffer range, preserving rich runs and list paragraph inheritance even for repeated newlines and selected replacements. |
+| 2026-11-18 | D9 rich-label cut (partial) | An eligible cut uses the actual selected buffer range to retain formatting on remaining shape and connector label text; egui still emits plain-text clipboard content. Real-host clipboard behavior and rich external clipboard interoperability remain open. |
+| 2026-11-18 | D9 rich-label keyboard batching (partial) | Pointer-free, non-IME keyboard events in a rich shape or connector label are processed in order, so eligible insertions and deletions retain their actual ranges even when they share a frame with a finish key. Pointer/IME batches and rich undo still require a complete ordered transaction model. |
+| 2026-11-18 | D9 single rich-label deletion (partial) | Shape and connector label editors use the actual buffer range for a single eligible Backspace or Delete, including selected text and repeated characters; pending typing styles are retained at the resulting caret. The following batching slice extends this to eligible same-frame keyboard input. |
+| 2026-11-18 | D9 single rich-label insertion (partial) | Shape and connector label editors use the actual egui buffer range for one eligible text or paste event, including repeated text and selected replacements. Other input still falls back to final-string reconciliation; the following deletion slice covers one more case, but ordered transactions remain incomplete. |
+| 2026-11-18 | D9 editor input audit | Synthetic egui tests show that the layouter does not observe every operation in a frame, and final-string reconciliation can put formatting on the wrong occurrence of repeated text. The following single-insertion slice addresses one case; ordered rich edits are still required before treating that behavior as complete. |
+| 2026-11-18 | D9 PowerPoint list alignment (partial) | Editable list paragraphs use the shared layout's list-block left edge, rather than centering or right-aligning each item independently. Three-slide fixtures opened and exported from Windows PowerPoint for left, center and right alignment; the wrapped fixture broke lines differently from Thinoda. Empty markers remain hidden, host spacing differs, and post-edit alignment is not guaranteed. |
+| 2026-11-18 | D9 PowerPoint empty-list numbering (partial) | Windows PowerPoint suppressed markers on empty list paragraphs and counted following items differently from Thinoda. Following numbered paragraphs now carry explicit start values; a rotated fixture displays the subsequent 2 and 3 correctly. Empty markers are still hidden in PowerPoint, wrapping/alignment differs, and explicit starts can require manual renumbering after editing. |
+| 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
+| 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
+| 2026-11-18 | D9 rich draft transactions (partial) | A bounded core draft accepts ordered operations atomically, retains directional selection and typing style in local history, and groups explicitly opened composition updates into a single undo entry. It is not connected to the canvas or recovery; the event adapter, grapheme handling and IME lifecycle remain open. |
+| 2026-11-18 | D9 ordered rich-text foundation (partial) | Range replacement accepts an explicit typing style while preserving list paragraphs; shape and connector caret typing reuse it, including joined-grapheme styling. |
+| 2026-11-18 | D9 formatted-card PowerPoint paragraphs (partial) | Editable branch/zone slides now emit a single text box per formatted card, with styled runs, blank paragraphs, native bullet/number properties and card rotation. A rotated fixture opened without repair in Windows PowerPoint, exposed a numbered list, and retained its six paragraphs and list properties after editing and saving. Visual parity and LibreOffice remain unverified; wrapping can differ and viewport slides remain rasterized, so the loss warning remains. |
+| 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides exported styled runs and visible list markers in line shapes, including card rotation. This earlier representation was superseded by native paragraph/list output above. |
+| 2026-11-18 | D9 formatted-card visual export (partial) | SVG, PNG, JPEG and PDF use the same rich-card layout as the canvas, including inline styles and list markers, and no longer report inline-text loss. Rewrapping caused by coordinate rounding is bounded. PowerPoint line-run output is a separate partial slice. Corrected draw.io import to warn and remove unsupported card baseline overrides rather than producing an invalid native document. |
+| 2026-11-18 | D9 style reuse (partial) | Copy/paste style for objects and cards, including undo-safe dimension handling, and reusable quick styles are implemented and covered by focused app regressions. Default styles and declarative style rules remain open. |
+| 2026-11-18 | D9 formatted-card draw.io interchange (partial) | Sticky/text-card titles import and export supported inert draw.io HTML inline styles and list paragraphs; initially baseline overrides warned and were dropped, until the later baseline slice. Native values are round-trip tested and `InlineTextDropped` is no longer reported for draw.io. Run-level card editing and unsupported source HTML preservation remain open. |
+| 2026-11-18 | D9 formatted-card canvas rendering (partial) | Sticky/text card titles render inline runs, font overrides, colours and bullet/number markers through the shared rich-label painter. Core card layout reserves height for rich run sizes and accounts for list markers; the original plain-title painter is unchanged for unformatted cards. The core measurement and line wrapping use bounded glyph-width estimates; run-level editing remains unsupported. |
+| 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas editing and draw.io interchange are not yet supported for these cards; canvas rendering is a separate partial slice. |
 | 2026-11-18 | D9 rich extra connector labels (partial) | Positioned extra labels, including Sankey labels, support bounded rich runs and lists, canvas and inspector editing, undo and recovery, placeholder/search remapping, the inert draw.io HTML subset, and canvas and SVG/PNG/PDF/editable PowerPoint rendering. Inspector property changes preserve an active draft, merge unaffected label edits and reject conflicting text changes. Compatibility gates: native v51, sheet clipboard v40, board clipboard v44, XMind `THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1`. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 direct typography (partial) | Shape and primary connector label editors accept bounded fractional font sizes and arbitrary RGB/RGBA hex colours for a selection or subsequent typing; invalid values are reported without changing the draft. Apply and Enter keep edits atomic, keyboard/IME access and compact layout remain usable, and draw.io rich HTML round-trips fractional sizes and alpha. |
 | 2026-11-18 | D9 inline font families (partial) | Shape and primary connector label editors choose installed, monospace or inherited families for a selection or subsequent typing; a searchable, keyboard-accessible picker fits compact canvases. Draft and pending families are registered for preview before commit, and rapid outside clicks retain the expected atomic-commit behavior. |
@@ -425,14 +547,15 @@ writes for any object kind is owned and never passed through, so a few keys
 that would be safe to keep are dropped. Keys that depend on an owned key
 (`dashPattern` on `dashed`, `gradientDirection` on `gradientColor`, ...) are
 dropped when the owner is missing or off, so a cleared gradient never comes
-back. Only canvas objects carry passthrough; cards, topics and zones are
-regenerated, so their ids and unknown keys are lost, as before. Tombstones
-cover only cells that became objects, because topic and zone ids change on
-every import. Export gives a source id priority over a generated `o{id}`
-(except for Sankey connectors, whose extension addresses `o{id}`), so a
-renumbered re-import is idempotent. Unmappable cells are still dropped with a
-warning; storing them as opaque objects belongs to D10, as do workbook-level
-`mxfile` metadata and cut-once provenance. Named style tokens are not kept.
+back. At D6 only canvas objects carried passthrough; card, topic and zone IDs
+and unknown keys were lost. D10 later added zone source-ID ownership, while
+unknown zone keys and card and topic IDs remain unpreserved. At D6,
+tombstones covered only cells that became objects; D10 later added named-layer
+and zone IDs. Export gives a
+source id priority over a generated `o{id}`. D10 subsequently added numeric
+Sankey ID remapping while retaining the version 2 extension. Unmappable cells are still dropped with a
+warning; storing them as opaque objects and cut-once provenance belong to D10.
+D10 later added bounded workbook-level `mxfile` attributes. Named style tokens are not kept.
 Because almost every imported cell has an id, a file saved after a draw.io
 import needs native v37, so older Thinoda versions cannot open it. A shape
 `link` is preserved but still warns until D7 makes links editable.
@@ -744,6 +867,78 @@ native extension stale instead of losing that edit. Known limitations:
 - Recovery now detects formatting-only changes even after earlier draft edits,
   at the cost of retaining the last observed rich draft while editing.
 
+**D9 formatted card-title editing (partial).** Sticky-note and text-card titles
+that already contain inline runs or list paragraphs can now be edited without
+flattening their formatting. Ordered text-buffer edits reconcile runs and list
+metadata, the editor renders those runs and list markers, and bounded local
+undo/redo groups IME composition. Commits use the atomic rich card-title edit;
+recovery snapshots validate document ownership and the original title and
+formatting before preserving the draft. Existing unformatted title editing is
+unchanged. Focused native tests cover repeated text, style/list preservation,
+commit and undo. Selected title text also has toolbar controls for
+strikethrough, subscript/superscript and bullet/number lists, alongside
+bold/italic/underline shortcuts. These use grapheme-expanded ranges and
+bounded local undo, and expose selected formatting state. Plain titles with
+active text-edit history must be committed and reopened before inline
+formatting. Inline font family/size/color, caret styles, other label kinds,
+unsupported HTML preservation, Office parity and real IME/accessibility
+acceptance remain open; D9 is not complete.
+
+**D9 card selection formatting (partial).** Command/Ctrl+B, I and U toggle
+bold, italic and underline for selected text in a formatted card title or a
+freshly opened plain title. The active card-text toolbar now exposes
+strikethrough, sub/superscript and bullet/number list controls, with selected
+format state. Grapheme boundaries and inherited card styling are respected;
+each operation uses local undo and commits atomically with the title. Duck
+check: inline font family/size/color, caret typing styles and IME/platform
+acceptance remain open. A plain title with active text-edit history must be
+committed and reopened before formatting, so its existing undo history is not
+silently discarded. Formatting is refused during IME composition.
+
+**D9 formatted-card safety follow-up.** Deleting all or part of a formatted
+title no longer indexes stale run boundaries during intermediate layouts;
+selected-text replacement inherits the selected run rather than the preceding
+text. Save-and-resume rebases formatting and refuses a different document.
+Recovery has a focused snapshot round-trip and stale-format/foreign-owner
+test. IME composition also closes when a commit changes no text.
+
+**D9 card input ordering (partial).** Pointer-free keyboard, IME and
+title-targeted accessible text-value actions in a focused formatted title are
+processed event by event before the visible editor pass. IME candidate keys
+are protected, undo/redo during composition is refused, and a completed
+composition is one local undo step. Synthetic tests cover mixed input,
+undo-before-typing and accessible replacement around a partial grapheme
+selection. Eligible input before a canvas press is applied before pointer
+handling; for a single editor press, text, IME and title-targeted accessibility
+input after the press uses the clicked caret. Tab transitions to new topics
+keep subsequent input in order, including before an outside canvas press.
+Separate ordinary text events create separate local undo steps.
+
+**D9 card graphemes (partial).** Single-event text/paste, line-break,
+deletion, cut, accessible selected-text replacement and initial IME input
+use the board-label editor's grapheme boundaries. Focused synthetic tests
+cover replacement and deletion of a partial combining-character selection,
+an empty accessible replacement, caret snapping and initial IME insertion.
+
+Duck check: this outside-click protection runs at the canvas boundary. The
+app's existing native/web raw-input splitter separately orders title input
+before host controls; synthetic formatted-title text and IME tests now cover
+the close-tab path, not every host action. Multi-press batches, other
+accessibility targets, and input after a rejected commit still need broader
+coverage. Title transitions are capped at 32 per input batch with an error.
+Full grapheme parity and real-platform IME, screen-reader and visual acceptance
+remain open.
+
+**D9 unavailable card source (partial).** A dirty formatted title draft is no
+longer discarded when its card is deleted or becomes unavailable to layout.
+The user is warned once and can cancel the edit; restoring the source allows
+the draft to resume. A missing source is rejected for recovery rather than
+applied to another card. Duck check: this retains the draft in the current
+view, not an independently durable orphan-recovery record; document reset and
+other programmatic host paths still require separate review. An IME candidate
+Escape is not treated as cancellation, but composition updates while the source
+is unavailable are not incorporated into the retained draft.
+
 **D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
 the style inherited at the caret. Typed or pasted graphemes receive that style;
 moving the caret clears the pending override. Batched keyboard and in-editor
@@ -796,10 +991,353 @@ ribbon centreline, including resolved placeholders. Known limitations:
 **D9 formatted-card search (partial).** Replacement uses the same range and list
 remapping as shape and connector labels, inheriting the formatting at each
 changed replacement's start; identical replacements retain mixed formatting.
-Locked cards and values exceeding the rich-text bounds
-reject the whole operation. Direct title editing still rejects formatted cards;
-their formatting is not yet rendered or exposed in the editor, and draw.io
-interchange still drops it. This slice does not claim rich-card support.
+Locked cards and values exceeding the rich-text bounds reject the whole
+operation. Direct plain title editing still rejects formatted cards; run-level
+editing is not exposed, viewport PowerPoint slides remain flattened, and the
+supported draw.io HTML subset is handled by a separate interchange slice. This
+does not claim complete rich-card support.
+
+**D9 formatted-card canvas rendering (partial).** Sticky and text cards use the
+shared rich-label layout and painter, including list markers, inline family,
+size, colour and decoration overrides. Layout reserves the maximum
+run line-height so larger formatting is not clipped by the previous plain-text
+measurement. Duck check: this improves vertical sizing but the shared bounded
+glyph-width estimate is not font shaping; run-level card editing remains open.
+
+**D9 formatted-card draw.io interchange (partial).** Sticky/text-card import
+and export reuse the existing bounded HTML parser/writer, preserving the
+supported run and list model and not carrying executable markup. Duck check:
+the source passthrough must not overwrite edits made to the native formatted
+text, and unsupported HTML remains warned/lost rather than being represented
+as if it round-tripped. Card baseline overrides now use the same inert model
+and versioned persistence as other supported run styles.
+
+**D9 card baselines (partial).** Supported subscript, superscript and explicit
+normal baselines are retained by draw.io interchange and the shared renderers.
+Duck check: a new field value changes validation compatibility even though the
+JSON schema already contained it, so native files, clipboard payloads, XMind
+snapshots and recovery use newer gates; downgraded payloads are rejected.
+Canvas run editing and external PowerPoint paragraph/list validation remain open.
+
+**D9 card editing foundation (partial).** The sheet and document expose one
+validated mutation for title text and inline data, with locks and one undo
+step. Duck check: this is not an editor; selection, IME, draft recovery,
+concurrent edits and ordered operations must be handled before wiring it to
+the canvas. Plain title editing continues to reject destructive changes to
+formatted cards.
+
+**D9 explicit typing-style replacement (partial).** The bounded range operation
+now combines explicit run styling with list remapping, and existing shape and
+connector typing uses it. Duck check: this is one validated operation, not a
+transactional input stream; callers still own grapheme handling, selection,
+IME and undo. The existing final-string reconciliation remains insufficient
+for rich-card editing.
+
+**D9 rich draft transactions (partial).** Core draft transactions preserve
+ordered replacements, directional selection, formatting and bounded undo/redo;
+composition can be committed as one entry or cancelled without destroying
+redo. A simulated multi-update IME sequence, surrounding deletions and
+commit undo as one transaction, including a rejected oversized range.
+Duck check: this model alone does not establish correct egui input,
+grapheme boundaries, per-event batching, normalization of egui's oversized
+surrounding-deletion ranges, composition detection, conflict checking or
+recovery. It is deliberately not yet wired to the title editor.
+
+**D9 local label history (partial).** Shape, primary and extra connector label
+editors now keep bounded text-and-format snapshots, directional selections and
+caret styles for keyboard undo/redo. Typing is grouped, synthetic IME updates
+are grouped through commit, and undo is blocked during an active composition.
+Invalid rich input can be undone to the last valid snapshot. A plain draft
+exceeding the rich-text limit retains egui's plain history even after becoming
+short; formatting is explicitly unavailable until that draft is finished and
+reopened, rather than silently discarding that history.
+Duck check: this is not full ordered editing or physical IME acceptance.
+Mixed pointer/IME batches and other unsupported reconciliation paths remain open;
+the bounded history evicts old states and is not connected to card editing.
+
+**D9 IME surrounding deletion (partial).** An isolated, pointer-free IME
+surrounding-delete event now remaps formatting using the buffer's ordered
+deletion ranges, including clamped oversized ranges, rather than a final-text
+diff. Synthetic repeated text, pending caret style, composition undo/redo and
+empty preedit/commit cancellation are covered. Isolated preedit and commit
+replacements also use actual buffer ranges; pointer-free batches containing
+IME and keyboard events are processed in order, and candidate keys remain
+protected for the whole IME frame. Synthetic F6 events respect composition
+and transfer subsequent input to the focused control. Synthetic editor
+clicks before or after IME input and an outside-click commit retain the
+expected formatting. Duck check: modified F6 and other pointer batches need
+further work, and the tests do not establish
+real IME or browser acceptance.
+
+**D9 grapheme deletion (partial).** Unmodified Backspace/Delete expand a
+collapsed or partially selected label range to whole Unicode graphemes before
+egui edits it; local undo restores the original directional selection.
+Synthetic shape and connector tests cover combining marks, flags and ZWJ
+emoji. Isolated text/paste replacements and cuts expand partial selections;
+an insertion caret inside a cluster snaps to its end, retaining its typing
+style. Shift+Enter and the start of an isolated IME composition use the same
+boundary policy, including pending caret style. Synthetic tests cover empty
+initial IME events and active preedit updates that join adjacent graphemes.
+Duck check: modified deletion, active IME surrounding ranges, mixed
+pointer/input batches and physical input remain separate policy and acceptance
+work.
+
+**D9 ignored input (partial).** Empty text/paste and standalone newline text
+events do not trigger grapheme selection changes because egui ignores them.
+Duck check: this is limited to these synthetic input cases and does not
+establish complete pointer, clipboard or IME behavior.
+
+**D9 modified selection deletion (partial).** Eligible isolated Ctrl, Alt and
+Command Backspace/Delete expand a partial selected grapheme before egui deletes
+it; local undo restores the original text and formatting. Duck check: other
+modifier combinations, pointer batches and platform input remain unverified.
+
+**D9 modified deletion caret (partial).** For eligible isolated Ctrl, Alt or
+Command Backspace/Delete, an interior caret snaps to the end of its grapheme
+for backward deletion or the start for forward deletion, then egui computes
+the normal deletion from that boundary. Duck check: egui's computed *other*
+endpoint is not expanded, so this is not a general grapheme-safety guarantee
+for modified deletion. Pointer batches and real platform shortcuts remain open.
+
+**D9 accessible label replacement (partial).** An AccessKit
+`ReplaceSelectedText` request for the active label uses the same grapheme
+boundaries and tracked rich edit path as text insertion, including an empty
+value deleting a selection. Requests for other nodes are not captured.
+Synthetic shape and connector tests cover ordering, formatting and undo.
+Duck check: this does not establish screen-reader or physical-device behavior,
+other accessibility actions, or complete mixed pointer/IME ordering.
+
+**D9 accessible whole-value replacement (partial).** Eligible AccessKit
+`SetValue` requests use the tracked whole-selection edit, including empty or
+unchanged values, rather than a final-string diff. Focused keyboard batches
+retain event order; a synthetic toolbar-focus test covers a single request.
+Duck check: multi-event ordering without editor focus is only partially covered
+below; physical accessibility clients and other actions remain open.
+
+**D9 accessible toolbar ordering (partial).** A pointer-free, non-IME batch
+starting with a toolbar button focused processes an eligible `SetValue` and
+subsequent focus or formatting events in order. The new caret replaces the
+stale pre-update toolbar selection. Duck check: other unfocused controls,
+modified focus shortcuts, pointer/IME batches and physical accessibility
+clients remain open.
+
+**D9 accessible outside-click ordering (partial).** A synthetic `SetValue`
+before an outside click is committed with the label, while one after the click
+does not modify the old label. Duck check: this single click pattern does not
+establish general pointer batching or physical accessibility behavior.
+
+**D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
+derivatives use the shared canvas rich-label geometry and style inheritance,
+including rotated cards. Natural-size exports measure visible SVG bounds so
+oversized titles are not cropped to fixed card dimensions; explicit viewports
+and zone clips retain their clipping semantics. Duck check: line widths are
+estimates rather than shaped advances, so wrapping can differ for unusual
+fonts; the shared rich-label renderer has the same limitation.
+
+**D9 formatted-card PowerPoint (partial).** Branch/zone slides write one
+editable DrawingML text box per formatted card, with original paragraphs,
+styled runs and native list properties. A rotated Windows PowerPoint fixture
+opened without repair and its numbered list remained editable after saving.
+A second rotated fixture showed that PowerPoint hides markers on empty
+paragraphs and otherwise restarts the following numbering. Explicit starts on
+all following numbered items preserve their initial values (2 and 3 in the
+checked fixture), without adding hidden characters to the text. Rich layout
+lines now expose their source paragraph index, and PowerPoint uses the shared
+estimated left edge to position each editable list block. Windows PowerPoint
+fixtures confirmed left, centered and right-aligned blocks open and export;
+a wrapped item broke at different words from Thinoda.
+Duck check: the margin is fixed at export and is not recalculated when a user
+edits list content; host font metrics, tabs and wrapping can still differ.
+DrawingML margin limits can clip extreme offsets, and adding the public
+`LabelLine::paragraph_index` field affects external struct literals. Explicit
+number starts can require manual adjustment after edits, empty markers remain
+hidden, and other hosts remain unverified. Viewport slides are rasterized;
+retain the loss warning.
+
+**D9 style reuse (partial).** Object/card copy-paste and named quick styles are
+already implemented and regression-tested. Duck check: do not treat named
+quick styles as default-style behavior or declarative style rules; those need
+separate precedence, persistence and undo contracts.
+
+**D10 document metadata slice (partial).** Safe unknown `<mxfile>` attributes
+are bounded, validated and retained across native workbook save/reopen and
+draw.io export; namespace-qualified attributes are dropped with an import
+warning because their namespace declaration is not represented. Attributes that
+exceed the document budget are disclosed rather than failing the entire import.
+Private XMind
+and recovery envelopes are versioned, and generated attributes cannot appear in
+passthrough. Duck check:
+this is not sufficient for in-place saves. Opaque unsupported cells, other
+workbook/page-level XML, container compression policy and save conflict/recovery
+semantics still need explicit ownership and loss handling before an imported
+source may be overwritten.
+
+**D10 editable-image metadata (partial).** Single-sheet editable SVG and PNG
+exports now carry the workbook's validated document attributes in their embedded
+diagram. Duck check: document attributes may include sensitive source metadata
+even when only one sheet is exported; masking removes them. The preview pixels
+do not expose the attributes, but the editable payload does. This does not
+preserve unrepresented XML or enable source overwrite.
+
+**D10 page passthrough safety (partial).** Imported unknown model attributes
+and tombstones are capped before storage, with omissions and invalid diagram
+IDs reported. Page validation rejects generated model attributes and oversized
+data even when a sheet has no objects. Duck check: warnings retain the source
+for conversion-only imports, but existing topic/zone ID regeneration and
+unsupported cells remain incompatible with safe source overwrite.
+
+**D10 structural diagnostics (partial).** Unknown top-level children, diagram
+attributes and children, graph children, root attributes and unrepresented cell
+and geometry XML are disclosed instead of silently discarded. Duck check: this
+identifies loss; it does not preserve the omitted XML or establish complete
+semantic parity for all accepted cell and geometry values.
+
+**D10 nonstandard roots (partial).** Parentless vertex and edge cells now
+enter the ordinary object importer and produce a loss warning; missing cell
+IDs also warn. Duck check: this repairs a silent omission, not the source
+hierarchy; malformed or unsupported structural cells and their metadata still
+need complete representation and diagnostics before in-place save.
+
+**D10 structural-cell diagnostics (partial).** Root and layer properties that
+the current model discards, including geometry, custom styles and regenerated
+IDs, now produce import warnings; normalized names are disclosed as well.
+Duck check: these warnings do not preserve structural data and are not an
+exhaustive semantic audit. Complete layer and source fidelity remain open.
+
+**D10 generated-cell ID reservation (partial).** Generated connector-label
+and table IDs now avoid retained object and layer tombstones, so these new cells cannot
+silently inherit a deleted imported object's ID. Duck check: topic and zone
+source IDs are not retained;
+topic and zone tombstones are not yet retained. This is not sufficient
+to enable in-place save.
+
+**D10 layer tombstones (partial).** Named layers with retained source IDs now
+participate in the bounded page tombstone set, which survives native save and
+undo snapshots. A budget omission warns instead of claiming retention. Duck
+check: tombstones do not survive a draw.io export as deleted cells; neither
+source overwrite nor complete ID
+fidelity is enabled.
+
+**D10 zone/group ID allocation (partial).** Generated zone and group IDs avoid
+retained tombstones and live source IDs, including when a page budget dropped
+the corresponding tombstone. Parent references use the allocated IDs and nested
+geometry remains relative to the correct parent. Duck check: zones and flat
+groups have since gained source ownership; nested groups remain flattened.
+
+**D10 map-decoration IDs (partial).** Generated boundaries, branch edges,
+relationships and summaries now avoid retained tombstones and live source IDs.
+Duck check: their own source IDs are not retained.
+
+**D10 topic and Sankey ID allocation (partial).** Generated topic and Sankey
+IDs avoid retained and live source IDs, with connector terminals and the version
+2 Sankey extension remapped together. Settings-only stage nodes are included
+in the extension. Duck check: imported cards and zones have since gained source
+ownership, but in-place save remains disabled; collapsed settings or endpoint
+topics must be expanded for export.
+
+**D10 scene-container tombstones (partial).** Imported scene containers and
+represented table cells now enter the bounded tombstone set, which survives
+native save/reopen and deletion. Their live source IDs continue to belong to
+the canvas objects. Duck check: the budget can omit a tombstone with a warning;
+the deleted ID is then not protected. At that point cards, zones, groups and
+unrepresented table rows lacked owner-bound source IDs. Adding their IDs as anonymous
+tombstones before adding ownership causes ID churn on every round trip, so that
+approach was rejected; zones, imported cards and flat groups have since gained
+ownership. In-place save remains disabled.
+
+**D10 zone source identity (partial).** Zones own their source cell IDs, and
+their IDs are reserved as bounded page tombstones for deletion. Native v54,
+versioned XMind snapshots and recovery retain them; sheet clipboard and sheet
+duplication clear zone ownership. Export reuses a unique source ID and updates
+member parent references, falling back to a fresh ID for conflicts. Duck check:
+page-budget omissions warn and may leave deleted IDs unprotected;
+table-row and unrepresented-cell ownership still need work. Unknown zone XML is
+not yet preserved. In-place save remains disabled.
+
+**D10 container metadata diagnostics (partial).** The importer now warns when
+non-object cells discard links, tooltips or enabled placeholder metadata.
+Card links and object data remain supported. Duck check: this detects the loss
+rather than preserving the metadata; unknown container XML and complete loss
+preflight still block in-place save.
+
+**D10 Sankey conversion safety (partial).** Shape-to-card conversion keeps
+supported links, rich text, colors and alignment. A node with unsupported
+object data, tooltip or unknown cell styles/attributes invalidates the Sankey
+extension instead of losing that content. Candidate conversion rolls back
+before reporting the stale extension; successful conversion reports the lost
+shape appearance. Both paths retain their supported data and source identities
+through native save/reopen and draw.io re-export. Duck check: fallback
+intentionally uses ordinary diagram objects rather than Sankey semantics; full
+lossless conversion remains open.
+
+**D10 topic source identity (partial).** Imported cards and convertible Sankey
+shape nodes retain a validated source ID on their topic. Moves retain ownership;
+clipboard, duplication and masked-copy paths clear it. Native v55, versioned
+XMind snapshots and recovery retain ownership, and deleted owners leave bounded
+tombstones. Export reuses unique IDs, remapping Sankey nodes and semantic
+references together. Duck check: Sankey requires canonical numeric `t` IDs;
+unrepresentable or conflicting IDs are remapped. Nested groups, opaque cells
+and full source-preserving save remain open.
+
+**D10 group source identity (partial).** Representable flat groups own bounded
+source IDs, including through native v56, private XMind snapshots and recovery.
+Group copies and masked copies clear ownership; deletion retains bounded page
+tombstones. Export avoids collisions with all live owners and remaps Sankey IDs
+when necessary. Duck check: nested groups flatten and empty or one-member
+groups are omitted, so those identities warn rather than round-trip; omitted
+tombstones can permit reuse after deletion.
+
+**D10 group loss diagnostics (partial).** Import now discloses discarded group
+labels, collapsed state and group styles other than the supported lock flag.
+Duck check: this warns rather than preserving the original content or styles;
+group geometry and other container fidelity remain subject to further review,
+and in-place save stays disabled.
+
+**D10 zone style diagnostics (partial).** Explicit zone styles outside the
+represented frame subset now report formatting loss, including header size,
+orientation, collapsibility, stroke width and unknown styles. Duck check:
+styles are disclosed rather than preserved; implicit defaults, complete zone
+fidelity and source-preserving save still need further work.
+
+**D10 default zone header (partial).** A missing `startSize` uses draw.io's
+40-unit default, unlike Thinoda's 24-unit export; that difference now requires
+import consent. Duck check: this does not preserve the original header size or
+resolve other implicit defaults; source-preserving save remains disabled.
+
+**D10 default zone folding (partial).** draw.io normally treats a swimlane as
+a foldable container unless `collapsible=0`; Thinoda zones are not foldable.
+That lost interaction now triggers consent even when the source omits the
+style. Duck check: this diagnoses rather than implements folding, and does not
+cover every implicit style or interaction.
+
+**D9 card typing styles (partial).** Inline card-title controls and keyboard
+shortcuts can set a typing style at the caret; input, IME composition, grapheme
+joins and draft/document undo retain the appropriate runs. Moving the caret or
+an accessibility whole-value replacement clears the pending style. Duck check:
+the existing plain-editor history guard still requires reopening after untracked
+plain edits, and font family, size and color run controls for cards remain open.
+
+**D9 card inline typography (partial).** The card-title toolbar now applies
+family, numeric size and palette color to selected text or subsequent typing,
+with inherited resets and mixed-value detection. The saved companion cursor
+protects the selection across the font popup. Existing custom colors are shown;
+native and draw.io round trips retain the resulting runs. Duck check: the font
+menu is not searchable and arbitrary color entry is not yet available for
+cards. Synthetic focus and touch tests do not replace real-platform IME,
+accessibility and visual acceptance; the plain-editor history guard remains.
+
+**D9 card font search (partial).** The inline font menu filters installed
+families and inherited/monospace choices, retains the title selection and
+guards synthetic IME composition in its search field. Duck check: filtering
+does not install missing fonts, and platform IME and accessibility testing
+remain open. Card colors still lack arbitrary entry.
+
+**D10 Sankey structure safety (partial).** Candidate conversion now checks
+deferred locks, groups and zone memberships as well as layers and scene
+parents before removing a shape. Deferred membership is indexed once so the
+check scales with the imported board size. Duck check: ordinary-object fallback
+retains the structure but disables the Sankey extension until a lossless mapping
+exists.
 
 ## 5. Rubber-duck findings
 

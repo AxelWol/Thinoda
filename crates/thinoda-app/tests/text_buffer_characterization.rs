@@ -241,6 +241,92 @@ fn egui_undo_and_redo_replace_the_whole_plain_text_buffer() {
     assert_eq!(h.state().operations, [Operation::Replace("ab".into())]);
 }
 
+struct LayoutTrace {
+    buffer: RecordingBuffer,
+    layouts: Vec<String>,
+}
+
+#[test]
+fn layouter_does_not_observe_each_same_frame_edit() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(400.0, 100.0))
+        .build_ui_state(
+            |ui, state: &mut LayoutTrace| {
+                let mut layouter = |ui: &egui::Ui, text: &dyn TextBuffer, width: f32| {
+                    state.layouts.push(text.as_str().to_owned());
+                    ui.fonts_mut(|fonts| {
+                        fonts.layout(
+                            text.as_str().to_owned(),
+                            egui::FontId::default(),
+                            egui::Color32::WHITE,
+                            width,
+                        )
+                    })
+                };
+                let label = ui.label("Tracing input");
+                ui.add(
+                    TextEdit::singleline(&mut state.buffer)
+                        .id(egui::Id::unique("tracing-input"))
+                        .layouter(&mut layouter),
+                )
+                .labelled_by(label.id);
+            },
+            LayoutTrace {
+                buffer: RecordingBuffer {
+                    text: "aaa".into(),
+                    operations: Vec::new(),
+                },
+                layouts: Vec::new(),
+            },
+        );
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "Tracing input")
+        .focus();
+    h.run_steps(3);
+    let id = h.ctx.memory(|memory| memory.focused()).unwrap();
+    let mut text_state = TextEdit::load_state(&h.ctx, id).unwrap();
+    text_state
+        .cursor
+        .set_char_range(Some(CCursorRange::two(CCursor::new(1), CCursor::new(2))));
+    text_state.store(&h.ctx, id);
+    h.state_mut().layouts.clear();
+    h.state_mut().buffer.operations.clear();
+    h.input_mut()
+        .events
+        .extend([Event::Text("a".into()), Event::Text("b".into())]);
+    h.run_steps(1);
+    assert_eq!(h.state().buffer.text, "aaba");
+    assert_eq!(
+        h.state().buffer.operations,
+        [
+            Operation::Delete(1..2),
+            Operation::Insert {
+                index: 1,
+                text: "a".into(),
+            },
+            Operation::Delete(2..2),
+            Operation::Insert {
+                index: 2,
+                text: "b".into(),
+            },
+        ]
+    );
+    assert!(!h.state().layouts.iter().any(|text| text == "aa"));
+    assert_eq!(h.state().layouts.last().unwrap(), "aaba");
+}
+
+#[test]
+fn repeated_text_cannot_identify_the_insertion_position_from_the_final_string() {
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    let (text, exact) = rich.replace_label_range("aaa", 1..1, "a").unwrap();
+    assert_eq!(text, "aaaa");
+    let guessed = rich.reconcile_label("aaa", &text).unwrap();
+    assert_eq!((exact.runs[0].start, exact.runs[0].end), (2, 3));
+    assert_eq!((guessed.runs[0].start, guessed.runs[0].end), (1, 2));
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct StyledDraft {
     text: String,

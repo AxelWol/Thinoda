@@ -27,6 +27,446 @@ fn slide_xml(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn formatted_card_titles_render_in_visual_exports() {
+    use thinoda_core::{InlineParagraph, ListKind};
+    use thinoda_io::{ExportLoss, export_losses};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    for (index, kind) in [CardKind::Sticky, CardKind::Text].into_iter().enumerate() {
+        let mut card = Card::new(kind, Vec2::new(220.0, 130.0));
+        if kind == CardKind::Sticky {
+            card.rotation = 15.0;
+        }
+        let id = sheet
+            .add_card("Bold🙂\nSmall", Vec2::new(index as f32 * 260.0, 0.0), card)
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.style.bold = Some(true);
+        topic.inline_text.paragraphs = vec![
+            InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 1,
+                list: ListKind::Numbered,
+            },
+        ];
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..5, |style| {
+                style.bold = Some(false);
+                style.italic = Some(true);
+                style.font_size = Some(24.0);
+                style.color = Some(Color::rgb(200, 30, 40));
+            })
+            .unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 6..11, |style| style.underline = Some(true))
+            .unwrap();
+    }
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let options = ExportOptions::default();
+    let svg =
+        String::from_utf8(export_bytes_with_consent(&book, Format::Svg, &options, true).unwrap())
+            .unwrap();
+    assert_eq!(svg.matches(">Bold🙂</tspan>").count(), 2, "{svg}");
+    assert_eq!(svg.matches(">• </tspan>").count(), 2);
+    assert_eq!(svg.matches(">1. </tspan>").count(), 2);
+    let end = svg.find(">Bold🙂</tspan>").unwrap();
+    let start = svg[..end].rfind("<tspan ").unwrap();
+    let run = &svg[start..end];
+    assert!(run.contains(r#"font-weight="normal""#), "{run}");
+    assert!(run.contains(r#"font-style="italic""#), "{run}");
+    assert!(run.contains(r#"font-size="24.00""#), "{run}");
+    assert!(run.contains(r##"fill="#C81E28""##), "{run}");
+    assert!(svg.contains("rotate(15.00"));
+    let end = svg.find(">Small</tspan>").unwrap();
+    let start = svg[..end].rfind("<tspan ").unwrap();
+    assert!(svg[start..end].contains(r#"text-decoration="underline""#));
+
+    let mut plain = book.clone();
+    for topic in plain.sheets[0].topics.values_mut() {
+        topic.inline_text = Default::default();
+    }
+    let mut without_color = book.clone();
+    for topic in without_color.sheets[0].topics.values_mut() {
+        for run in &mut topic.inline_text.runs {
+            run.style.color = None;
+        }
+    }
+    let formatted_png = export_bytes_with_consent(&book, Format::Png, &options, true).unwrap();
+    let plain_png = export_bytes_with_consent(&plain, Format::Png, &options, true).unwrap();
+    let without_color_png =
+        export_bytes_with_consent(&without_color, Format::Png, &options, true).unwrap();
+    assert_ne!(formatted_png, plain_png);
+    let red_pixels = |bytes: &[u8]| {
+        image::load_from_memory(bytes)
+            .unwrap()
+            .to_rgba8()
+            .pixels()
+            .filter(|pixel| pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] > 0)
+            .count()
+    };
+    let formatted_red = red_pixels(&formatted_png);
+    let inherited_red = red_pixels(&without_color_png);
+    assert!(
+        formatted_red > inherited_red + 10,
+        "formatted: {formatted_red}, inherited: {inherited_red}"
+    );
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert!(
+            !export_losses(&book, format, &options)
+                .iter()
+                .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_))),
+            "{format:?}"
+        );
+        assert!(
+            !export_bytes_with_consent(&book, format, &options, true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    assert!(
+        export_losses(&book, Format::PowerPoint, &options)
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_)))
+    );
+}
+
+#[test]
+fn card_baseline_overrides_render_in_svg_and_powerpoint() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "up down",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..2, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+        })
+        .unwrap();
+    topic
+        .inline_text
+        .update_range(&topic.title, 3..7, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+        })
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    for (text, expected_negative) in [("up", true), ("down", false)] {
+        let end = svg.find(&format!(">{text}</tspan>")).unwrap();
+        let start = svg[..end].rfind("<tspan ").unwrap();
+        let shift: f32 = svg[start..end]
+            .split("dy=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(if expected_negative {
+            shift < 0.0
+        } else {
+            shift > 0.0
+        });
+    }
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    assert!(slide.contains(r#"baseline="30000""#));
+    assert!(slide.contains(r#"baseline="-25000""#));
+}
+
+#[test]
+fn formatted_card_overflow_is_inside_the_svg_export_frame() {
+    for rotation in [0.0, 90.0] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut card = Card::new(CardKind::Text, Vec2::new(120.0, 80.0));
+        card.rotation = rotation;
+        let id = sheet.add_card("A\nB\nC\nD", Vec2::ZERO, card).unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..7, |style| style.font_size = Some(256.0))
+            .unwrap();
+        let book = Workbook::new(sheet);
+        book.validate().unwrap();
+        let svg = String::from_utf8(
+            export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+        )
+        .unwrap();
+        let view_box = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .map(|part| part.parse::<f32>().unwrap())
+            .collect::<Vec<_>>();
+        let extent = if rotation == 0.0 {
+            view_box[3]
+        } else {
+            view_box[2]
+        };
+        assert!(extent > 1000.0, "{rotation}: {view_box:?}");
+    }
+}
+
+#[test]
+fn formatted_card_powerpoint_contains_editable_runs_and_rotated_text() {
+    use thinoda_core::{InlineParagraph, ListKind};
+    use thinoda_io::{ExportLoss, export_losses};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0));
+    card.rotation = 15.0;
+    let id = sheet
+        .add_card("Bold plain\nNext", Vec2::ZERO, card)
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = vec![InlineParagraph {
+        index: 0,
+        list: ListKind::Bulleted,
+    }];
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..4, |style| {
+            style.bold = Some(true);
+            style.italic = Some(true);
+            style.font_size = Some(24.0);
+            style.font_family = Some("Arial".into());
+            style.color = Some(Color::rgb(200, 30, 40));
+        })
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let end = slide.find("<a:t>Bold</a:t>").unwrap();
+    let start = slide[..end].rfind("<a:r>").unwrap();
+    let run = &slide[start..end];
+    assert!(run.contains(r#"b="1""#), "{run}");
+    assert!(run.contains(r#"i="1""#), "{run}");
+    assert!(run.contains(r#"typeface="Arial""#), "{run}");
+    assert!(run.contains("C81E28"), "{run}");
+    assert!(slide.contains(r#"<a:buChar char="•"/>"#));
+    assert!(slide.contains(r#"<a:t xml:space="preserve"> plain</a:t>"#));
+    assert!(slide.contains("<a:t>Next</a:t>"));
+    let shape_start = slide[..end].rfind("<p:sp>").unwrap();
+    assert!(slide[shape_start..end].contains(r#"rot="900000""#));
+    assert!(
+        export_losses(&book, Format::PowerPoint, &ExportOptions::default())
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_)))
+    );
+}
+
+#[test]
+fn formatted_card_powerpoint_preserves_editable_paragraphs_and_list_numbering() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "A🙂 & B\n\nSecond\nplain\nRestart\n",
+            Vec2::ZERO,
+            Card::new(CardKind::Text, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = [
+        (0, ListKind::Bulleted),
+        (1, ListKind::Numbered),
+        (2, ListKind::Numbered),
+        (4, ListKind::Numbered),
+    ]
+    .into_iter()
+    .map(|(index, list)| InlineParagraph { index, list })
+    .collect();
+    topic
+        .inline_text
+        .update_range(&topic.title, 1..13, |style| style.bold = Some(true))
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let name = slide.find(r#"name="Card title""#).unwrap();
+    let start = slide[..name].rfind("<p:sp>").unwrap();
+    let end = slide[name..].find("</p:sp>").unwrap() + name + "</p:sp>".len();
+    let shape = &slide[start..end];
+    assert_eq!(shape.matches("<a:p>").count(), 6);
+    assert_eq!(shape.matches(r#"<a:buChar char="•"/>"#).count(), 1);
+    assert_eq!(
+        shape.matches(r#"type="arabicPeriod" startAt="1""#).count(),
+        2
+    );
+    assert_eq!(
+        shape.matches(r#"type="arabicPeriod" startAt="2""#).count(),
+        1
+    );
+    assert_eq!(
+        shape
+            .matches(r#"<a:buAutoNum type="arabicPeriod"/>"#)
+            .count(),
+        0
+    );
+    assert_eq!(shape.matches("<a:defRPr ").count(), 6);
+    assert_eq!(shape.matches("<a:buNone/>").count(), 2);
+    assert!(shape.contains("<a:t>A</a:t>"));
+    assert!(shape.contains("<a:t>🙂 &amp; B</a:t>"));
+    assert!(shape.contains("<a:t>Secon</a:t>"));
+    assert!(shape.contains("<a:t>d</a:t>"));
+    assert!(shape.contains("<a:t>plain</a:t>"));
+    assert!(shape.contains("<a:t>Restart</a:t>"));
+    assert!(!shape.contains("<a:t>• "));
+    assert!(!shape.contains("<a:t>1. "));
+    let mut reader = quick_xml::Reader::from_str(&slide);
+    loop {
+        if matches!(reader.read_event().unwrap(), quick_xml::events::Event::Eof) {
+            break;
+        }
+    }
+}
+
+#[test]
+fn formatted_card_numbering_resumes_after_empty_numbered_paragraphs() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "First\n\n\nFourth\nFifth\nplain\nRestart",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = [0, 1, 2, 3, 4, 6]
+        .into_iter()
+        .map(|index| InlineParagraph {
+            index,
+            list: ListKind::Numbered,
+        })
+        .collect();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let name = slide.find(r#"name="Card title""#).unwrap();
+    let end = slide[name..].find("</p:sp>").unwrap() + name;
+    let shape = &slide[name..end];
+    let numbering: Vec<_> = shape
+        .split("<a:p>")
+        .skip(1)
+        .map(|paragraph| {
+            let start = paragraph.find("<a:bu").unwrap();
+            let end = paragraph[start..].find("/>").unwrap() + start + 2;
+            &paragraph[start..end]
+        })
+        .collect();
+    assert_eq!(
+        numbering,
+        [
+            r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="3"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="4"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="5"/>"#,
+            "<a:buNone/>",
+            r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#,
+        ]
+    );
+    assert!(!shape.contains("<a:t> </a:t>"));
+}
+
+#[test]
+fn formatted_card_numbered_list_uses_one_indent_across_double_digit_items() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            &["item"; 12].join("\n"),
+            Vec2::ZERO,
+            Card::new(CardKind::Text, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(id).unwrap().inline_text.paragraphs = (0..12)
+        .map(|index| InlineParagraph {
+            index,
+            list: ListKind::Numbered,
+        })
+        .collect();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let start = slide.find(r#"name="Card title""#).unwrap();
+    let end = slide[start..].find("</p:sp>").unwrap() + start;
+    let shape = &slide[start..end];
+    assert_eq!(shape.matches(r#"startAt="1""#).count(), 1);
+    assert_eq!(
+        shape
+            .matches(r#"<a:buAutoNum type="arabicPeriod"/>"#)
+            .count(),
+        11
+    );
+    let indents: Vec<_> = shape
+        .split(" marL=\"")
+        .skip(1)
+        .map(|part| part.split('"').next().unwrap())
+        .collect();
+    assert_eq!(indents.len(), 12);
+    assert!(indents.iter().all(|indent| *indent == indents[0]));
+}
+
+#[test]
 fn styled_board_text_round_trips_and_renders_in_svg_and_powerpoint() {
     let mut sheet = Sheet::new("Board", "Anchor");
     sheet.root_mode = SheetRootMode::Hidden;

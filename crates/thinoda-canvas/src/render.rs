@@ -2583,41 +2583,59 @@ fn paint_topic(
     // Title.
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
-        let font = FontId::new(
-            crate::measure::render_font_size(st.font_size * z),
-            crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
-        );
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = tr.width() / if st.bold { BOLD_WIDTH } else { 1.0 } + 1.0;
-        job.halign = match st.align {
-            TextAlign::Left => Align::LEFT,
-            TextAlign::Center => Align::Center,
-            TextAlign::Right => Align::RIGHT,
-        };
-        let line = Stroke::new((st.font_size * z / 14.0).max(0.6), text_color);
-        job.append(
-            &topic.title,
-            0.0,
-            TextFormat {
-                font_id: font,
-                color: text_color,
-                italics: st.italic,
-                underline: if st.underline { line } else { Stroke::NONE },
-                strikethrough: if st.strikethrough { line } else { Stroke::NONE },
-                ..Default::default()
-            },
-        );
-        let g = painter.layout_job(job);
-        let x = match st.align {
-            TextAlign::Left => tr.left(),
-            TextAlign::Center => tr.center().x,
-            TextAlign::Right => tr.right(),
-        };
-        let pos = pos2(x, tr.center().y - g.size().y / 2.0);
-        if st.bold {
-            painter.galley(pos + vec2(0.45 * z, 0.0), g.clone(), text_color);
+        if !topic.inline_text.is_empty() {
+            let style = thinoda_core::label_style::card_title_style(st);
+            let layout = thinoda_core::label_style::layout_rich_in_frame(
+                &style,
+                t.title_rect,
+                &topic.title,
+                &topic.inline_text,
+            );
+            crate::label_text::paint(
+                painter,
+                &layout,
+                &style,
+                text_color,
+                if dim { 0.3 } else { 1.0 },
+                xf,
+            );
+        } else {
+            let font = FontId::new(
+                crate::measure::render_font_size(st.font_size * z),
+                crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
+            );
+            let mut job = LayoutJob::default();
+            job.wrap.max_width = tr.width() / if st.bold { BOLD_WIDTH } else { 1.0 } + 1.0;
+            job.halign = match st.align {
+                TextAlign::Left => Align::LEFT,
+                TextAlign::Center => Align::Center,
+                TextAlign::Right => Align::RIGHT,
+            };
+            let line = Stroke::new((st.font_size * z / 14.0).max(0.6), text_color);
+            job.append(
+                &topic.title,
+                0.0,
+                TextFormat {
+                    font_id: font,
+                    color: text_color,
+                    italics: st.italic,
+                    underline: if st.underline { line } else { Stroke::NONE },
+                    strikethrough: if st.strikethrough { line } else { Stroke::NONE },
+                    ..Default::default()
+                },
+            );
+            let g = painter.layout_job(job);
+            let x = match st.align {
+                TextAlign::Left => tr.left(),
+                TextAlign::Center => tr.center().x,
+                TextAlign::Right => tr.right(),
+            };
+            let pos = pos2(x, tr.center().y - g.size().y / 2.0);
+            if st.bold {
+                painter.galley(pos + vec2(0.45 * z, 0.0), g.clone(), text_color);
+            }
+            painter.galley(pos, g, text_color);
         }
-        painter.galley(pos, g, text_color);
     }
 
     // Icons.
@@ -4082,6 +4100,7 @@ mod tests {
         );
         sheet.zones.push(thinoda_core::Zone {
             id: thinoda_core::ZoneId(1),
+            drawio_source_id: None,
             name: "Offscreen clip".into(),
             frame: thinoda_core::Rect::from_center_size(
                 Vec2::new(140.0, 0.0),
@@ -5148,6 +5167,7 @@ mod tests {
         ]);
         sheet.zones.push(Zone {
             id: ZoneId(1),
+            drawio_source_id: None,
             name: "Offscreen clip".into(),
             frame: thinoda_core::Rect::from_center_size(
                 Vec2::new(145.0, 40.0),
@@ -5552,6 +5572,7 @@ mod tests {
         sheet.zones = vec![
             Zone {
                 id: ZoneId(1),
+                drawio_source_id: None,
                 name: "Root clip".into(),
                 frame: root_clip,
                 roots: vec![root],
@@ -5563,6 +5584,7 @@ mod tests {
             },
             Zone {
                 id: ZoneId(2),
+                drawio_source_id: None,
                 name: "A clip".into(),
                 frame: a_clip,
                 roots: vec![a],
@@ -5574,6 +5596,7 @@ mod tests {
             },
             Zone {
                 id: ZoneId(3),
+                drawio_source_id: None,
                 name: "B clip".into(),
                 frame: b_clip,
                 roots: vec![b],
@@ -5585,6 +5608,7 @@ mod tests {
             },
             Zone {
                 id: ZoneId(4),
+                drawio_source_id: None,
                 name: "Summary clip".into(),
                 frame: summary_clip,
                 roots: vec![summary_topic],
@@ -6401,6 +6425,7 @@ mod tests {
 
         let zone = Zone {
             id: ZoneId(90),
+            drawio_source_id: None,
             name: "Colored zone".into(),
             frame: thinoda_core::Rect::from_center_size(center, Vec2::new(70.0, 55.0)),
             roots: vec![sheet.root],

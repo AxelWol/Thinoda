@@ -349,6 +349,9 @@ pub struct Topic {
     pub marker_colors: std::collections::BTreeMap<usize, Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
+    /// Imported draw.io cell identity; cleared when the topic is copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "TopicStyle::is_default")]
     pub style: TopicStyle,
     /// Inline style runs and list semantics for supported board-card titles.
@@ -402,6 +405,7 @@ impl Topic {
             markers: Vec::new(),
             marker_colors: Default::default(),
             hyperlink: None,
+            drawio_source_id: None,
             style: TopicStyle::default(),
             inline_text: crate::rich_text::InlineText::default(),
             position: None,
@@ -490,6 +494,9 @@ pub struct Zone {
     pub id: ZoneId,
     pub name: String,
     pub frame: Rect,
+    /// Source draw.io cell ID; copied zones must receive a fresh identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<TopicId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -626,6 +633,7 @@ impl Subtree {
         let m = |id: TopicId| *map.get(&id).unwrap_or(&id);
         for t in &mut self.topics {
             t.id = m(t.id);
+            t.drawio_source_id = None;
             t.parent = t.parent.map(m);
             for c in &mut t.children {
                 *c = m(*c);
@@ -763,6 +771,13 @@ impl Sheet {
         self.topics
             .values()
             .any(|topic| !topic.inline_text.is_empty())
+    }
+
+    /// Whether card text uses baseline overrides introduced after inline formatting.
+    pub fn has_card_baseline_overrides(&self) -> bool {
+        self.topics
+            .values()
+            .any(|topic| topic.inline_text.has_baseline_overrides())
     }
 
     /// Whether the sheet needs waypoint-aware persistence.
@@ -915,7 +930,29 @@ impl Sheet {
     }
 
     pub fn has_drawio_passthrough(&self) -> bool {
-        self.drawio.is_some() || self.canvas.has_drawio_passthrough()
+        self.drawio.is_some()
+            || self.canvas.has_drawio_passthrough()
+            || self.has_drawio_zone_source_ids()
+            || self.has_drawio_topic_source_ids()
+    }
+
+    pub fn has_drawio_group_source_ids(&self) -> bool {
+        self.canvas
+            .groups
+            .iter()
+            .any(|group| group.drawio_source_id.is_some())
+    }
+
+    pub fn has_drawio_topic_source_ids(&self) -> bool {
+        self.topics
+            .values()
+            .any(|topic| topic.drawio_source_id.is_some())
+    }
+
+    pub fn has_drawio_zone_source_ids(&self) -> bool {
+        self.zones
+            .iter()
+            .any(|zone| zone.drawio_source_id.is_some())
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -1624,6 +1661,12 @@ impl Sheet {
             return Err("root has a parent".into());
         }
         for (id, t) in &self.topics {
+            if let Some(source) = &t.drawio_source_id {
+                crate::drawio_passthrough::valid_id(source, "draw.io topic id")?;
+                if matches!(source.as_str(), "0" | "1") {
+                    return Err("draw.io topic id is reserved".into());
+                }
+            }
             if !t.inline_text.is_empty() {
                 if !t.card.is_some_and(|card| {
                     matches!(
@@ -1638,15 +1681,6 @@ impl Sheet {
                 t.inline_text
                     .validate(&t.title)
                     .map_err(|error| format!("topic {id}: {error}"))?;
-                if t.inline_text
-                    .runs
-                    .iter()
-                    .any(|run| run.style.baseline.is_some())
-                {
-                    return Err(format!(
-                        "topic {id} has a baseline override reserved for shape labels"
-                    ));
-                }
             }
             if t.marker_colors
                 .keys()
@@ -1734,6 +1768,12 @@ impl Sheet {
         for zone in &self.zones {
             if !zone_ids.insert(zone.id) {
                 return Err(format!("duplicate zone id {}", zone.id));
+            }
+            if let Some(id) = &zone.drawio_source_id {
+                crate::drawio_passthrough::valid_id(id, "draw.io zone id")?;
+                if matches!(id.as_str(), "0" | "1") {
+                    return Err("draw.io zone id is reserved".into());
+                }
             }
             if zone.roots.is_empty() && zone.objects.is_empty() && !zone.keep_empty {
                 return Err(format!("zone {} has no floating topics", zone.id));
@@ -1950,6 +1990,7 @@ impl Sheet {
             id,
             name: name.trim().to_string(),
             frame,
+            drawio_source_id: None,
             roots,
             objects: Vec::new(),
             keep_empty,
@@ -2608,6 +2649,9 @@ pub struct Workbook {
     pub active_sheet: usize,
     #[serde(default)]
     pub metadata: Metadata,
+    /// Imported draw.io document data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioDocumentPassthrough>>,
 }
 
 impl Workbook {
@@ -2616,12 +2660,18 @@ impl Workbook {
             sheets: vec![sheet],
             active_sheet: 0,
             metadata: Metadata::default(),
+            drawio: None,
         }
     }
 
     /// Whether any sheet needs inline-card-text-aware persistence.
     pub fn has_inline_text(&self) -> bool {
         self.sheets.iter().any(Sheet::has_inline_text)
+    }
+
+    /// Whether any sheet uses card baseline overrides.
+    pub fn has_card_baseline_overrides(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_card_baseline_overrides)
     }
 
     /// Whether any sheet needs waypoint-aware persistence.
@@ -2784,7 +2834,23 @@ impl Workbook {
     }
 
     pub fn has_drawio_passthrough(&self) -> bool {
+        self.drawio.is_some() || self.has_drawio_page_passthrough()
+    }
+
+    pub fn has_drawio_page_passthrough(&self) -> bool {
         self.sheets.iter().any(Sheet::has_drawio_passthrough)
+    }
+
+    pub fn has_drawio_zone_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_zone_source_ids)
+    }
+
+    pub fn has_drawio_topic_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_topic_source_ids)
+    }
+
+    pub fn has_drawio_group_source_ids(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_group_source_ids)
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -2857,6 +2923,7 @@ impl Workbook {
     pub fn masked_copy(&self) -> Self {
         let mut copy = self.clone();
         copy.metadata = Metadata::default();
+        copy.drawio = None;
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
             sheet.fim = None;
             sheet.drawio = None;
@@ -2891,6 +2958,7 @@ impl Workbook {
                 topic.notes = None;
                 topic.labels.clear();
                 topic.hyperlink = None;
+                topic.drawio_source_id = None;
                 topic.image = None;
                 topic.attachment = None;
                 topic.image_size = None;
@@ -2907,6 +2975,7 @@ impl Workbook {
             }
             for (index, zone) in sheet.zones.iter_mut().enumerate() {
                 zone.name = format!("Frame {}", index + 1);
+                zone.drawio_source_id = None;
             }
             for (index, slide) in sheet.presentation.slides.iter_mut().enumerate() {
                 slide.title = format!("Slide {}", index + 1);
@@ -2991,6 +3060,9 @@ impl Workbook {
     pub fn validate(&self) -> Result<(), String> {
         if self.sheets.is_empty() {
             return Err("workbook has no sheets".into());
+        }
+        if let Some(drawio) = &self.drawio {
+            drawio.validate()?;
         }
         self.validate_resource_limits()?;
         for (i, s) in self.sheets.iter().enumerate() {

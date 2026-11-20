@@ -120,6 +120,43 @@ fn assert_same_branch(source: &Sheet, source_id: TopicId, target: &Sheet, target
 }
 
 #[test]
+fn card_baseline_topic_clipboard_requires_version_two() {
+    let mut sheet = Sheet::new("Board", "Root");
+    let card = sheet
+        .add_card(
+            "A🙂B",
+            Vec2::ZERO,
+            thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+        )
+        .unwrap();
+    sheet
+        .topic_mut(card)
+        .unwrap()
+        .inline_text
+        .update_range("A🙂B", 1..2, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+        })
+        .unwrap();
+    let payload = copy_topics(&sheet, &[card]).unwrap().unwrap();
+    let encoded = encode_topic_payload(&payload).unwrap();
+    assert!(encoded.starts_with("THINODA-TOPIC-CLIPBOARD-2\n"));
+    assert_eq!(decode_topic_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_topic_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    assert!(
+        decode_topic_payload(&encoded.replacen(
+            "THINODA-TOPIC-CLIPBOARD-2",
+            "THINODA-TOPIC-CLIPBOARD-1",
+            1
+        ))
+        .unwrap_err()
+        .contains("card baseline overrides require topic clipboard version 2")
+    );
+}
+
+#[test]
 fn nested_topics_resources_and_tasks_roundtrip_and_paste() {
     let fixture = fixture();
     let source_before = fixture.source.clone();
@@ -673,7 +710,7 @@ fn version_and_serialized_size_boundaries_include_the_prefix() {
             .contains("16 MiB")
     );
     assert!(
-        decode_topic_payload("THINODA-TOPIC-CLIPBOARD-2\n{}")
+        decode_topic_payload("THINODA-TOPIC-CLIPBOARD-3\n{}")
             .unwrap_err()
             .contains("supported")
     );

@@ -246,6 +246,8 @@ pub struct LabelLine {
     pub rect: Rect,
     /// Alignment within this line's estimated box.
     pub align: TextAlign,
+    /// Source paragraph index for rich lines, including wrapped continuations.
+    pub paragraph_index: Option<usize>,
     /// Positioned runs; empty for the existing whole-label rendering path.
     pub runs: Vec<LabelRun>,
 }
@@ -453,6 +455,7 @@ pub fn layout_with(
                     Vec2::new(width, line_height),
                 ),
                 align: style.align,
+                paragraph_index: None,
                 runs: Vec::new(),
             }
         })
@@ -503,7 +506,9 @@ fn rich_lines(glyphs: &[RichGlyph], width: f32, wrap: bool, indent: usize) -> Ve
         let mut used = padding.iter().map(|glyph| glyph.width).sum::<f32>();
         let mut end = start;
         let mut last_space = None;
-        while end < glyphs.len() && (used + glyphs[end].width <= width || end == start) {
+        // Frame coordinates can be large enough for f32 subtraction to lose
+        // fractions of a sheet unit; avoid rewrapping a measured line there.
+        while end < glyphs.len() && (used + glyphs[end].width <= width + 0.25 || end == start) {
             used += glyphs[end].width;
             if glyphs[end].ch.is_whitespace() {
                 last_space = Some(end);
@@ -609,11 +614,11 @@ fn layout_rich(
         lines.extend(
             rich_lines(&glyphs, layout.frame.size.x, style.wrap, indent)
                 .into_iter()
-                .map(|line| (line, group)),
+                .map(|line| (line, group, paragraph_index)),
         );
     }
     let mut list_widths = vec![0.0_f32; list_groups];
-    for (glyphs, group) in &lines {
+    for (glyphs, group, _) in &lines {
         if let Some(group) = group {
             let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
             list_widths[*group] = list_widths[*group].max(width);
@@ -633,7 +638,7 @@ fn layout_rich(
     layout.lines = lines
         .into_iter()
         .enumerate()
-        .map(|(index, (glyphs, group))| {
+        .map(|(index, (glyphs, group, paragraph_index))| {
             let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
             let aligned_width = group.map_or(width, |group| list_widths[group]);
             let left = match style.align {
@@ -671,6 +676,7 @@ fn layout_rich(
                 } else {
                     style.align
                 },
+                paragraph_index: Some(paragraph_index),
                 runs,
             }
         })
@@ -682,6 +688,51 @@ fn layout_rich(
         .reduce(union)
         .unwrap_or(Rect::from_center_size(layout.frame.center(), Vec2::ZERO));
     layout
+}
+
+/// Lay out rich text in a fixed frame. The style controls font, alignment and
+/// wrapping; frame geometry is supplied by the owning object.
+pub fn layout_rich_in_frame(
+    style: &LabelStyle,
+    frame: Rect,
+    text: &str,
+    rich: &InlineText,
+) -> LabelLayout {
+    layout_rich(style, frame, 0.0, frame, text, rich)
+}
+
+/// Whole-card typography used as the inheritance base for rich card titles.
+pub fn card_title_style(style: &crate::theme::ResolvedStyle) -> LabelStyle {
+    LabelStyle {
+        font_family: style.font_family.clone(),
+        font_size: Some(style.font_size),
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+        strikethrough: style.strikethrough,
+        align: style.align,
+        spacing: 0.0,
+        ..Default::default()
+    }
+}
+
+/// Estimate the wrapped dimensions of rich text without allocating a text renderer.
+pub fn measure_rich_text(text: &str, rich: &InlineText, size: f32, width: f32) -> Vec2 {
+    let style = LabelStyle {
+        font_size: Some(size),
+        align: TextAlign::Left,
+        vertical_align: LabelVAlign::Top,
+        spacing: 0.0,
+        wrap: true,
+        ..Default::default()
+    };
+    let frame = Rect::from_min_size(
+        Vec2::ZERO,
+        Vec2::new(width.max(1.0), crate::board::MAX_BOARD_COORDINATE),
+    );
+    layout_rich(&style, frame, 0.0, frame, text, rich)
+        .block
+        .size
 }
 
 #[cfg(test)]
@@ -898,12 +949,41 @@ mod tests {
         assert!(layout.lines.len() >= 3);
         assert!(layout.lines[0].text.starts_with("\u{2022} "));
         assert!(layout.lines[1].text.starts_with("  "));
+        assert_eq!(layout.lines[0].paragraph_index, Some(0));
+        assert_eq!(layout.lines[1].paragraph_index, Some(0));
+        assert_eq!(layout.lines.last().unwrap().paragraph_index, Some(1));
         assert!(layout.lines.iter().flat_map(|line| &line.runs).any(|run| {
             run.text.contains("bold")
                 && run.style.bold == Some(true)
                 && run.style.baseline == Some(InlineBaseline::Superscript)
         }));
         assert_eq!(layout.lines.last().unwrap().text, "last");
+    }
+
+    #[test]
+    fn measured_rich_card_lines_do_not_rewrap_at_large_coordinates() {
+        let text = "Bold🙂\nSmall";
+        let mut rich = InlineText {
+            paragraphs: vec![crate::InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        };
+        rich.update_range(text, 0..5, |style| style.font_size = Some(24.0))
+            .unwrap();
+        let size = measure_rich_text(text, &rich, 16.0, 192.0);
+        let style = LabelStyle {
+            font_size: Some(16.0),
+            spacing: 0.0,
+            ..Default::default()
+        };
+        for x in [0.0, 260.0, -999_000.0, 999_000.0] {
+            let frame = Rect::from_min_size(Vec2::new(x, 0.0), size);
+            let layout = layout_rich_in_frame(&style, frame, text, &rich);
+            assert_eq!(layout.lines.len(), 2, "{x}: {:?}", layout.lines);
+            assert_eq!(layout.lines[0].text, "• Bold🙂");
+        }
     }
 
     #[test]

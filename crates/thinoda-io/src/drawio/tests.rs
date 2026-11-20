@@ -48,6 +48,7 @@ fn connectors(sheet: &Sheet) -> Vec<&CanvasConnector> {
 /// passthrough (ids, unknown keys) that every imported page now carries.
 fn feature_version(book: &Workbook) -> u64 {
     let mut book = book.clone();
+    book.drawio = None;
     for sheet in &mut book.sheets {
         sheet.drawio = None;
         for object in &mut sheet.canvas.objects {
@@ -1692,6 +1693,106 @@ fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
 }
 
 #[test]
+fn rich_card_html_imports_and_round_trips_styles_and_lists() {
+    let markup = "<ul><li><b>A🙂</b></li><li><i>two</i></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="rich-card" value="{}" style="shape=note;thinodaCard=sticky;html=1;fillColor=#FFFF88;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="160" height="100" as="geometry"/></mxCell>"##,
+        esc(markup),
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+    let book = report.workbook;
+    let card = book.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(card.title, "A🙂\ntwo");
+    let rich = card.inline_text.clone();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[1].style.italic, Some(true));
+    assert_eq!(rich.paragraphs.len(), 2);
+
+    let losses = export_losses(&book, Format::DrawIo, &ExportOptions::default());
+    assert!(
+        !losses
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_))),
+        "{losses:?}"
+    );
+    let exported = export(&book).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(restored.title, card.title);
+    assert_eq!(restored.inline_text, rich);
+    book.validate().unwrap();
+}
+
+#[test]
+fn rich_card_baseline_and_other_styles_round_trip() {
+    let markup = "<b>Bold</b> <sup><i>up</i></sup> <sub>down</sub> <span style=\"vertical-align:baseline\">normal</span>";
+    let xml = page(&format!(
+        r#"<mxCell id="card" value="{}" style="shape=note;html=1;" vertex="1" parent="1"><mxGeometry width="160" height="100" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    report.workbook.validate().unwrap();
+    let card = report.workbook.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(card.title, "Bold up down normal");
+    assert!(card.inline_text.runs.iter().any(|run| run.style.baseline
+        == Some(thinoda_core::InlineBaseline::Superscript)
+        && run.style.italic == Some(true)));
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.baseline == Some(thinoda_core::InlineBaseline::Subscript))
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.baseline == Some(thinoda_core::InlineBaseline::Normal))
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.bold == Some(true))
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.italic == Some(true))
+    );
+    let bytes = export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    let restored = crate::import_bytes(Format::Thinoda, &bytes).unwrap();
+    assert_eq!(restored, report.workbook);
+    let drawio = export(&restored).unwrap();
+    let reimported = import(&drawio).unwrap().workbook;
+    let reimported_card = reimported.sheets[0]
+        .topics
+        .values()
+        .find(|t| t.card.is_some())
+        .unwrap();
+    assert_eq!(reimported_card.inline_text, card.inline_text);
+}
+
+#[test]
 fn rich_connector_html_imports_and_round_trips_primary_label() {
     use thinoda_core::InlineBaseline;
 
@@ -3091,7 +3192,7 @@ fn appearance_swimlane_body_colors_that_cannot_be_preserved_are_reported() {
 
     for value in ["none", "transparent"] {
         let xml = page(&format!(
-            r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+            r#"<mxCell id="lane" value="Lane" style="swimlane;startSize=24;collapsible=0;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
         assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
@@ -5061,7 +5162,7 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
     let pages = read_pages(&bytes).unwrap();
     let mut squares = 0;
     let mut rounded = 0;
-    for source_page in &pages {
+    for source_page in &pages.pages {
         let cells = read_cells(&source_page.model, &mut BTreeSet::new());
         for cell in &cells {
             if !cell
@@ -5169,7 +5270,7 @@ fn supplied_requirements_flow_imports_invisible_anchors() {
     }
     let bytes = std::fs::read(path).unwrap();
     let mut count = 0;
-    for source_page in read_pages(&bytes).unwrap() {
+    for source_page in read_pages(&bytes).unwrap().pages {
         for cell in read_cells(&source_page.model, &mut BTreeSet::new()) {
             if !cell
                 .style
@@ -6064,6 +6165,10 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         .unwrap();
     let mut book = Workbook::new(first);
     book.sheets.push(second);
+    book.active_sheet = 1;
+    book.drawio = Some(Arc::new(DrawioDocumentPassthrough {
+        attributes: vec![("owner".into(), "team & <design>".into())],
+    }));
     let opts = ExportOptions {
         sheet: Some(1),
         ..Default::default()
@@ -6076,6 +6181,10 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         assert!(format.can_import() && format.can_export());
         assert!(export_losses(&book, format, &opts).is_empty());
         let bytes = export_bytes(&book, format, &opts).unwrap();
+        assert_eq!(
+            bytes,
+            export_bytes(&book, format, &ExportOptions::default()).unwrap()
+        );
         assert_eq!(detect_format(Path::new(name), &bytes), Some(Format::DrawIo));
         if format == Format::DrawIoPng {
             let first_chunk_len = u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize;
@@ -6118,6 +6227,7 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
         }
         let report = import(&bytes).unwrap();
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.workbook.drawio, book.drawio);
         assert_eq!(report.workbook.sheets.len(), 1);
         assert_eq!(report.workbook.sheets[0].title, "Second");
         let objects = shapes(&report.workbook.sheets[0]);
@@ -6140,14 +6250,26 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
         "<svg content=\"existing\"></svg>",
         "<svg xmlns=\"x\"></svg><svg xmlns=\"x\"></svg>",
     ] {
-        assert!(embed_svg(svg.to_owned(), &sheet).is_err(), "{svg}");
+        assert!(embed_svg(svg.to_owned(), &sheet, None).is_err(), "{svg}");
     }
 
     let png = image::DynamicImage::new_rgba8(1, 1);
     let mut buffer = std::io::Cursor::new(Vec::new());
     png.write_to(&mut buffer, image::ImageFormat::Png).unwrap();
     let png = buffer.into_inner();
-    assert!(embed_png(png.clone(), &sheet).is_ok());
+    assert!(embed_png(png.clone(), &sheet, None).is_ok());
+    let invalid_document = DrawioDocumentPassthrough {
+        attributes: vec![("bad\" name".into(), "x".into())],
+    };
+    assert!(
+        embed_svg(
+            "<svg xmlns=\"x\"></svg>".into(),
+            &sheet,
+            Some(&invalid_document)
+        )
+        .is_err()
+    );
+    assert!(embed_png(png.clone(), &sheet, Some(&invalid_document)).is_err());
     for invalid in [
         vec![],
         PNG_SIGNATURE.to_vec(),
@@ -6164,11 +6286,26 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
             trailing
         },
     ] {
-        assert!(embed_png(invalid, &sheet).is_err());
+        assert!(embed_png(invalid, &sheet, None).is_err());
     }
     let oversized_svg = format!("<svg xmlns=\"x\">{}</svg>", " ".repeat(MAX_BYTES));
     assert!(
-        embed_svg(oversized_svg, &sheet)
+        embed_svg(oversized_svg, &sheet, None)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    let base_svg = "<svg xmlns=\"x\"></svg>";
+    let embedded_length = embed_svg(base_svg.into(), &sheet, None).unwrap().len();
+    let padded_svg = format!(
+        "<svg xmlns=\"x\">{}</svg>",
+        " ".repeat(MAX_BYTES - embedded_length)
+    );
+    let document = DrawioDocumentPassthrough {
+        attributes: vec![("owner".into(), "&".repeat(1024))],
+    };
+    assert!(
+        embed_svg(padded_svg, &sheet, Some(&document))
             .unwrap_err()
             .to_string()
             .contains("size limit")
@@ -6179,7 +6316,7 @@ fn editable_image_exports_reject_invalid_render_containers_and_oversized_output(
         bytes
     };
     assert!(
-        embed_png(oversized_png, &sheet)
+        embed_png(oversized_png, &sheet, None)
             .unwrap_err()
             .to_string()
             .contains("size limit")
@@ -6451,7 +6588,10 @@ fn out_of_range_group_center_uses_only_a_usable_explicit_fallback() {
             let sheet = &report.workbook.sheets[0];
             let edges = connectors(sheet);
             if fallback == Some("7") {
-                assert_eq!(report.warnings, vec![ImportWarning::DetachedConnectors]);
+                assert_eq!(
+                    report.warnings,
+                    vec![ImportWarning::DetachedConnectors, ImportWarning::Other]
+                );
                 assert_eq!(edges.len(), 1);
                 assert_eq!(edges[0].from, Endpoint::Point(Vec2::new(7.0, 8.0)));
                 assert_eq!(edges[0].to, Endpoint::Object(shapes(sheet)[0].id));
@@ -7906,8 +8046,11 @@ fn nested_geometry_groups_containers_and_edge_labels() {
         "#,
     );
     let report = load(&xml);
-    // `<b>` is formatting without a native equivalent.
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    // The formatting and non-connectable group cannot both be preserved.
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::Formatting, ImportWarning::Other]
+    );
     let sheet = &report.workbook.sheets[0];
     let find = |label: &str| {
         shapes(sheet)
@@ -10362,6 +10505,249 @@ fn drawio_object_data_imports_edits_and_exports() {
 }
 
 #[test]
+fn drawio_document_attributes_round_trip_through_native_workbooks() {
+    let xml = r#"<mxfile host="app.diagrams.net" type="device" customOwner="team-a"><diagram name="Page"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let report = crate::import_bytes_with_report(Format::DrawIo, xml.as_bytes()).unwrap();
+    assert!(report.warnings.is_empty());
+    assert_eq!(
+        report.workbook.drawio.as_ref().unwrap().attributes,
+        [("customOwner".into(), "team-a".into())]
+    );
+    assert_eq!(crate::required_native_version(&report.workbook), 53);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(reopened.drawio, report.workbook.drawio);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&content),
+        Err(IoError::NewerVersion(_))
+    ));
+    let v52 = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":52,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&v52),
+        Err(IoError::NewerVersion(_))
+    ));
+    let exported = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(exported.contains("customOwner=\"team-a\""), "{exported}");
+    assert!(
+        exported.contains("host=\"Thinoda\" type=\"device\""),
+        "{exported}"
+    );
+    assert!(reopened.masked_copy().drawio.is_none());
+    let mut invalid = reopened.clone();
+    invalid.drawio = Some(std::sync::Arc::new(
+        thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+            attributes: vec![("bad\" name".into(), "x".into())],
+        },
+    ));
+    assert!(export(&invalid).is_err());
+
+    let unsupported = r#"<mxfile xmlns:future="urn:future"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let report = crate::import_bytes_with_report(Format::DrawIo, unsupported.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+}
+
+#[test]
+fn drawio_page_passthrough_reports_dropped_attributes_and_invalid_ids() {
+    let large = "x".repeat(thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2);
+    let xml = format!(
+        r#"<mxfile><diagram id="{}" name="Page"><mxGraphModel xmlns:future="urn:future" oversized="{large}" kept="yes"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
+        "p".repeat(thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES + 1)
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let page = report.workbook.active().drawio.as_ref().unwrap();
+    assert!(page.diagram_id.is_none());
+    assert_eq!(page.model_attributes, [("kept".into(), "yes".into())]);
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(exported.contains("kept=\"yes\""));
+    assert!(!exported.contains("oversized="));
+    assert!(!exported.contains("xmlns:future"));
+}
+
+#[test]
+fn drawio_document_passthrough_reports_oversized_attributes_without_losing_other_data() {
+    let large = "x".repeat(thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES);
+    let xml = format!(
+        r#"<mxfile oversized="{large}" kept="A &amp; B"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+    assert_eq!(
+        report.workbook.drawio.as_ref().unwrap().attributes,
+        [("kept".into(), "A & B".into())]
+    );
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let exported = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(exported.contains("kept=\"A &amp; B\""));
+    assert!(!exported.contains("oversized="));
+
+    let at_limit =
+        "x".repeat(thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES - "full".len());
+    let xml = format!(
+        r#"<mxfile full="{at_limit}" extra="x"><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = import(xml.as_bytes()).unwrap();
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+    let document = report.workbook.drawio.as_ref().unwrap();
+    assert_eq!(
+        document.byte_len(),
+        thinoda_core::drawio_passthrough::MAX_DOCUMENT_PASSTHROUGH_BYTES
+    );
+    assert_eq!(document.attributes.len(), 1);
+    assert_eq!(document.attributes[0].0, "full");
+}
+
+#[test]
+fn drawio_page_passthrough_rejects_reserved_and_oversized_attributes() {
+    let mut book = Workbook::new(Sheet::new("Page", "Root"));
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        model_attributes: vec![("grid".into(), "0".into())],
+        ..Default::default()
+    }));
+    assert!(book.validate().is_err());
+    assert!(export(&book).is_err());
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        model_attributes: vec![(
+            "large".into(),
+            "x".repeat(thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES),
+        )],
+        ..Default::default()
+    }));
+    assert!(book.active().canvas.objects.is_empty());
+    assert!(book.validate().is_err());
+    assert!(export(&book).is_err());
+}
+
+#[test]
+fn drawio_import_reports_unsupported_document_and_page_xml() {
+    let graph =
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+    let cases = [
+        format!(r#"<mxfile><future/><diagram>{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile>unexpected<diagram>{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile><diagram custom="future">{graph}</diagram></mxfile>"#),
+        format!(r#"<mxfile><diagram>{graph}<future/></diagram></mxfile>"#),
+        r#"<mxfile><diagram><mxGraphModel><future/><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#.into(),
+        r#"<mxfile><diagram><mxGraphModel><root custom="future"><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#.into(),
+    ];
+    for xml in cases {
+        let report = import(xml.as_bytes()).unwrap();
+        assert!(report.warnings.contains(&ImportWarning::Other), "{xml}");
+    }
+
+    let xml = format!(
+        r#"<mxfile><diagram name="First">{graph}</diagram><diagram name="Second" custom="future">{graph}</diagram></mxfile>"#
+    );
+    let (report, first) = import_with_first_page_warnings(xml.as_bytes()).unwrap();
+    assert!(first.is_empty());
+    assert_eq!(report.warnings, [ImportWarning::Other]);
+}
+
+#[test]
+fn drawio_import_reports_unrepresented_cell_and_geometry_xml() {
+    let geometry = r#"<mxGeometry x="0" y="0" width="100" height="60" as="geometry"/>"#;
+    let baseline =
+        format!(r#"<mxCell id="shape" value="Label" vertex="1" parent="1">{geometry}</mxCell>"#);
+    assert!(load(&page(&baseline)).warnings.is_empty());
+    let cases = [
+        baseline.replace("vertex=\"1\"", "vertex=\"1\" custom=\"data\""),
+        baseline.replace("vertex=\"1\"", "vertex=\"1\" connectable=\"0\""),
+        baseline.replace("</mxCell>", "<future/></mxCell>"),
+        baseline.replace(geometry, &format!("{geometry}{geometry}")),
+        baseline.replace("as=\"geometry\"", "as=\"geometry\" custom=\"data\""),
+        baseline.replace("as=\"geometry\"", "as=\"geometry\" relative=\"true\""),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><mxPoint as="offset" x="1" custom="data"/></mxGeometry>"#,
+        ),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><mxPoint as="offset" x="1"/><mxPoint as="offset" x="2"/></mxGeometry>"#,
+        ),
+        baseline.replace(
+            geometry,
+            r#"<mxGeometry width="100" height="60" as="geometry"><Array as="points"><future/></Array></mxGeometry>"#,
+        ),
+        format!(
+            r#"<object id="shape" label="Label"><mxCell vertex="1" parent="1">{geometry}</mxCell><future/></object>"#
+        ),
+    ];
+    for cell in cases {
+        let report = load(&page(&cell));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{cell}");
+    }
+}
+
+#[test]
+fn drawio_import_keeps_parentless_vertices_and_edges_with_a_warning() {
+    let xml = page(concat!(
+        r#"<mxCell id="shape" value="Parentless" vertex="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge" edge="1"><mxGeometry relative="1" as="geometry"><mxPoint x="10" y="20" as="sourcePoint"/><mxPoint x="100" y="80" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(shapes(sheet).len(), 1);
+    assert_eq!(shapes(sheet)[0].label(), "Parentless");
+    assert_eq!(connectors(sheet).len(), 1);
+    let reopened = import(&export(&report.workbook).unwrap()).unwrap();
+    assert_eq!(shapes(&reopened.workbook.sheets[0]).len(), 1);
+    assert_eq!(connectors(&reopened.workbook.sheets[0]).len(), 1);
+}
+
+#[test]
+fn drawio_import_reports_missing_cell_ids() {
+    let xml = page(
+        r#"<mxCell value="No id" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "No id");
+}
+
+#[test]
+fn drawio_import_reports_unrepresented_root_and_layer_data() {
+    let root = r#"<mxCell id="0"/><mxCell id="1" parent="0"/>"#;
+    let wrap = |cells: &str| {
+        format!(
+            "<mxfile><diagram><mxGraphModel><root>{cells}</root></mxGraphModel></diagram></mxfile>"
+        )
+    };
+    assert!(load(&wrap(root)).warnings.is_empty());
+    let cases = [
+        root.replace(r#"id="0"/>"#, r#"id="0" value="root data"/>"#),
+        root.replace(r#"id="0"/>"#, r#"id="0" visible="0"/>"#),
+        root.replace(
+            r#"id="0"/>"#,
+            r#"id="0"><mxGeometry as="geometry"/></mxCell>"#,
+        ),
+        root.replace(r#"id="1""#, r#"id="base""#),
+        root.replace(r#"id="1""#, r#"id="1" style="custom=1;""#),
+        root.replace(r#"id="1""#, r#"id="1" value="Background""#),
+        format!(r#"{root}<mxCell id="l" value="  Layer  " parent="0"/>"#),
+        format!(r#"{root}<mxCell id="l" value="Layer" style="custom=1;" parent="0"/>"#),
+        r#"<mxCell id="0"/><mxCell id="1" value="Named" parent="0"/>"#.into(),
+    ];
+    for cells in cases {
+        let report = load(&wrap(&cells));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{cells}");
+    }
+    let supported =
+        format!(r#"{root}<mxCell id="l" value="Locked" style="locked=1;" parent="0"/>"#);
+    assert!(load(&wrap(&supported)).warnings.is_empty());
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
@@ -10386,10 +10772,661 @@ fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     assert!(!out.contains("fillColor=#ff0000"), "{out}");
     assert!(out.contains("dashed=1;dashPattern=1 4;"), "{out}");
     assert!(!out.contains("id=\"gone\""), "{out}");
-    // `t1` is reserved for topics, so the shape falls back to its own id.
-    assert!(!out.contains("id=\"t1\""), "{out}");
+    // The hidden root no longer steals the shape's source id.
+    assert!(out.contains("id=\"t1\""), "{out}");
     let masked = book.masked_copy();
     assert!(!masked.has_drawio_passthrough());
+}
+
+#[test]
+fn drawio_generated_edge_labels_do_not_reuse_deleted_object_ids() {
+    let xml = page(concat!(
+        r##"<mxCell id="e" value="main" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        r#"<mxCell id="extra" value="Extra" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"><mxGeometry x="0.5" relative="1" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="e-label-1" value="Delete" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    ));
+    let mut book = load(&xml).workbook;
+    let sheet = book.active_mut();
+    assert!(
+        sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "e-label-1")
+    );
+    sheet.canvas.objects.retain(|object| {
+        object
+            .drawio
+            .as_ref()
+            .and_then(|passthrough| passthrough.source_id.as_deref())
+            != Some("e-label-1")
+    });
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(r#"id="e-label-1""#), "{xml}");
+    assert!(xml.contains(r#"id="e-label-1x""#), "{xml}");
+    let reopened = import(xml.as_bytes()).unwrap();
+    assert_eq!(
+        connectors(reopened.workbook.active())[0].extra_labels.len(),
+        1
+    );
+}
+
+#[test]
+fn drawio_generated_zones_and_groups_do_not_reuse_source_ids() {
+    let mut sheet = Sheet::new("Page", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let zone = sheet
+        .create_board_frame("Zone", rect(100.0, 100.0, 400.0, 300.0))
+        .unwrap();
+    let first = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(140.0, 150.0, 80.0, 60.0),
+            "First",
+        ))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(260.0, 180.0, 80.0, 60.0),
+            "Second",
+        ))
+        .unwrap();
+    sheet
+        .set_zone_members(zone, vec![], vec![first, second])
+        .unwrap();
+    let group = sheet.group_canvas_objects(&[first, second]).unwrap();
+    let zone_id = format!("z{}", zone.0);
+    let group_id = format!("g{}", group.0);
+    sheet.canvas.object_mut(first).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(group_id.clone()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![zone_id.clone(), format!("{zone_id}-1")],
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{zone_id}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{zone_id}-2""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{group_id}-1""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"parent="{zone_id}-2""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"parent="{group_id}-1""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{group_id}""#)), "{xml}");
+    let reopened = load(&xml).workbook;
+    let objects = shapes(reopened.active());
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0].rect.min, Vec2::new(140.0, 150.0));
+    assert_eq!(objects[1].rect.min, Vec2::new(260.0, 180.0));
+}
+
+#[test]
+fn drawio_generated_map_cells_avoid_source_ids() {
+    let mut sheet = Sheet::new("Root", "Root");
+    let first = sheet.add_child(sheet.root, None, "First");
+    let second = sheet.add_child(sheet.root, None, "Second");
+    sheet.add_boundary(&[first, second]).unwrap();
+    sheet.add_relationship(first, second).unwrap();
+    sheet.add_summary(&[first, second], "Summary").unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    assert!(!layout.boundaries.is_empty());
+    assert!(!layout.connectors.is_empty());
+    assert!(!layout.relationships.is_empty());
+    assert!(!layout.summaries.is_empty());
+    let mut ids = Vec::new();
+    ids.extend(layout.boundaries.iter().map(|b| format!("b{}", b.id.0)));
+    ids.extend((0..layout.connectors.len()).map(|n| format!("e{n}")));
+    ids.extend(layout.relationships.iter().map(|r| format!("r{}", r.id.0)));
+    ids.extend(layout.summaries.iter().map(|s| format!("s{}", s.id.0)));
+    let object = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 400.0, 80.0, 60.0),
+            "Source e0",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some("e0".into()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: ids.iter().filter(|id| *id != "e0").cloned().collect(),
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    for id in ids {
+        assert_eq!(
+            xml.matches(&format!(r#"id="{id}""#)).count(),
+            usize::from(id == "e0"),
+            "{xml}"
+        );
+        assert!(xml.contains(&format!(r#"id="{id}-1""#)), "{xml}");
+    }
+    let restored = load(&xml);
+    assert!(connectors(restored.workbook.active()).len() >= layout.connectors.len());
+}
+
+#[test]
+fn drawio_generated_topic_ids_avoid_sources_and_keep_connector_targets() {
+    let mut sheet = Sheet::new("Page", "Root");
+    let root = sheet.root;
+    let child = sheet.add_child(root, None, "Child");
+    let original_root = format!("t{}", root.0);
+    let original_child = format!("t{}", child.0);
+    let object = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 400.0, 80.0, 60.0),
+            "Source object",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(original_root.clone()),
+        ..Default::default()
+    }));
+    sheet.drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![original_child.clone()],
+        ..Default::default()
+    }));
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(xml.contains(&format!(r#"id="{original_root}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{original_root}-1""#)), "{xml}");
+    assert!(!xml.contains(&format!(r#"id="{original_child}""#)), "{xml}");
+    assert!(
+        xml.contains(&format!(r#"id="{original_child}-1""#)),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(r#"source="{original_root}-1""#)),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(r#"target="{original_child}-1""#)),
+        "{xml}"
+    );
+    let restored = load(&xml);
+    assert_eq!(connectors(restored.workbook.active()).len(), 1);
+}
+
+#[test]
+fn sankey_shape_node_conversion_discloses_lost_shape_and_retains_identity() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let node = *thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|id| book.active().topics[id].card.is_some())
+        .unwrap();
+    let topic = book.active_mut().topics.get_mut(&node).unwrap();
+    topic.hyperlink = Some("https://example.com/retained".into());
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..1, |style| style.bold = Some(true))
+        .unwrap();
+    let title = topic.title.clone();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let xml = sankey_node_as_shape(&xml, node);
+    let report = load(&xml);
+    assert!(report.workbook.has_sankey());
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    let topic = report
+        .workbook
+        .active()
+        .topics
+        .values()
+        .find(|topic| topic.title == title)
+        .unwrap();
+    assert_eq!(
+        topic.hyperlink.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(
+        topic.drawio_source_id.as_deref(),
+        Some(format!("t{}", node.0).as_str())
+    );
+    assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+    assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
+    assert_eq!(topic.style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(topic.style.align, Some(TextAlign::Right));
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let exported = export(&reopened).unwrap();
+    let restored = import(&exported).unwrap();
+    assert!(restored.workbook.has_sankey());
+    let topic = restored
+        .workbook
+        .active()
+        .topics
+        .values()
+        .find(|topic| topic.title == title)
+        .unwrap();
+    assert_eq!(
+        topic.hyperlink.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(
+        topic.drawio_source_id.as_deref(),
+        Some(format!("t{}", node.0).as_str())
+    );
+    assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+    assert_eq!(topic.card.unwrap().color, Some(Color::rgb(255, 255, 255)));
+    assert_eq!(topic.style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(topic.style.align, Some(TextAlign::Right));
+}
+
+fn sankey_node_as_shape(xml: &str, node: TopicId) -> String {
+    let id = format!(r#"id="t{}""#, node.0);
+    let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+    let start = line.find("style=\"").unwrap() + "style=\"".len();
+    let end = start + line[start..].find('"').unwrap();
+    let replacement = format!(
+        "{}shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#123456;align=right;{}",
+        &line[..start],
+        &line[end..]
+    );
+    xml.replacen(line, &replacement, 1)
+}
+
+#[test]
+fn sankey_shape_node_metadata_refuses_conversion_without_losing_prior_nodes() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let mut nodes: Vec<_> = thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .filter(|id| book.active().topics[id].card.is_some())
+        .copied()
+        .collect();
+    nodes.sort();
+    let [first, last, ..] = nodes.as_slice() else {
+        panic!("fixture requires two Sankey cards")
+    };
+    book.active_mut().topics.get_mut(last).unwrap().hyperlink =
+        Some("https://example.com/retained".into());
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let xml = sankey_node_as_shape(&sankey_node_as_shape(&xml, *first), *last);
+    let needle = format!(r#"id="t{}" link="https://example.com/retained""#, last.0);
+    assert!(xml.contains(&needle));
+    let xml = xml.replacen(
+        &needle,
+        &format!(r#"{needle} tooltip="Retained tooltip" custom="Retained data""#),
+        1,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.workbook.has_sankey());
+    for node in [first, last] {
+        let id = format!("t{}", node.0);
+        assert!(
+            report
+                .workbook
+                .active()
+                .canvas
+                .objects
+                .iter()
+                .any(|object| {
+                    object
+                        .drawio
+                        .as_ref()
+                        .and_then(|data| data.source_id.as_deref())
+                        == Some(id.as_str())
+                })
+        );
+    }
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.alt_text == "Retained tooltip")
+        .unwrap();
+    let data = object.data.as_ref().unwrap();
+    assert_eq!(data.link.as_deref(), Some("https://example.com/retained"));
+    assert_eq!(data.property("custom"), Some("Retained data"));
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let restored = import(&export(&reopened).unwrap()).unwrap();
+    let object = restored
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.alt_text == "Retained tooltip")
+        .unwrap();
+    assert_eq!(
+        object.data.as_ref().unwrap().link.as_deref(),
+        Some("https://example.com/retained")
+    );
+    assert_eq!(
+        object.data.as_ref().unwrap().property("custom"),
+        Some("Retained data")
+    );
+}
+
+#[test]
+fn sankey_shape_node_retains_tooltip_and_unknown_style() {
+    for kind in ["tooltip", "style"] {
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let node = *thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|id| book.active().topics[id].card.is_some())
+            .unwrap();
+        let topic = book.active_mut().topics.get_mut(&node).unwrap();
+        if kind == "tooltip" {
+            topic.hyperlink = Some("https://example.com".into());
+        }
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        let mut xml = sankey_node_as_shape(&xml, node);
+        match kind {
+            "tooltip" => {
+                xml = xml.replacen(
+                    r#"link="https://example.com""#,
+                    r#"tooltip="Retained tooltip""#,
+                    1,
+                );
+            }
+            "style" => {
+                let id = format!(r#"id="t{}""#, node.0);
+                let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+                let changed =
+                    line.replacen("shape=rectangle;", "shape=rectangle;customKey=retained;", 1);
+                xml = xml.replacen(line, &changed, 1);
+            }
+            _ => {}
+        }
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{kind}: {:?}",
+            report.warnings
+        );
+        let id = format!("t{}", node.0);
+        let object = report
+            .workbook
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| {
+                object
+                    .drawio
+                    .as_ref()
+                    .and_then(|data| data.source_id.as_deref())
+                    == Some(id.as_str())
+            })
+            .unwrap();
+        match kind {
+            "tooltip" => assert_eq!(object.alt_text, "Retained tooltip"),
+            "style" => assert!(
+                object
+                    .drawio
+                    .as_ref()
+                    .unwrap()
+                    .style
+                    .contains(&("customKey".into(), "retained".into()))
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn sankey_shape_node_retains_lock_and_container_membership() {
+    for kind in ["locked", "layer", "group", "zone", "scene"] {
+        let book = thinoda_core::templates::instantiate("sankey-budget");
+        let node = *thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|id| book.active().topics[id].card.is_some())
+            .unwrap();
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        let mut xml = sankey_node_as_shape(&xml, node);
+        let id = format!(r#"id="t{}""#, node.0);
+        let line = xml.lines().find(|line| line.contains(&id)).unwrap();
+        let changed = if kind == "locked" {
+            line.replacen("shape=rectangle;", "shape=rectangle;locked=1;", 1)
+        } else {
+            line.replacen(r#"parent="1""#, r#"parent="holder""#, 1)
+        };
+        assert_ne!(line, changed);
+        xml = xml.replacen(line, &changed, 1);
+        let holder = match kind {
+            "layer" => r#"<mxCell id="holder" value="Layer" parent="0"/>"#,
+            "group" => concat!(
+                r#"<mxCell id="holder" style="group;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#,
+                r#"<mxCell id="peer" value="Peer" style="shape=rectangle;" vertex="1" parent="holder"><mxGeometry width="20" height="20" as="geometry"/></mxCell>"#
+            ),
+            "zone" => {
+                r#"<mxCell id="holder" value="Zone" style="swimlane;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#
+            }
+            "scene" => {
+                r#"<mxCell id="holder" value="Container" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="600" height="400" as="geometry"/></mxCell>"#
+            }
+            _ => "",
+        };
+        xml = xml.replacen("</root>", &format!("{holder}</root>"), 1);
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{kind}: {:?}",
+            report.warnings
+        );
+        let sheet = report.workbook.active();
+        let source = format!("t{}", node.0);
+        let object = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| {
+                object
+                    .drawio
+                    .as_ref()
+                    .and_then(|data| data.source_id.as_deref())
+                    == Some(source.as_str())
+            })
+            .unwrap();
+        match kind {
+            "locked" => assert!(object.locked),
+            "layer" => assert!(object.layer.is_some()),
+            "group" => assert!(object.group.is_some()),
+            "zone" => assert!(
+                sheet
+                    .zones
+                    .iter()
+                    .any(|zone| zone.objects.contains(&object.id))
+            ),
+            "scene" => assert!(sheet.canvas.scene.parents.contains_key(&object.id)),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn drawio_sankey_source_id_collisions_remap_without_losing_semantics() {
+    for template in [
+        "sankey-budget",
+        "sankey-probability",
+        "sankey-learning",
+        "sankey-circular",
+    ] {
+        let mut book = thinoda_core::templates::instantiate(template);
+        let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+        let node = *before.nodes.iter().next().unwrap();
+        let edge = book
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()))
+            .unwrap()
+            .id;
+        let node_id = format!("t{}", node.0);
+        let edge_id = format!("o{}", edge.0);
+        book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+            cell_ids: vec![node_id.clone(), edge_id.clone()],
+            ..Default::default()
+        }));
+        let object = book
+            .active_mut()
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(800.0, 800.0, 80.0, 60.0),
+                "Source object",
+            ))
+            .unwrap();
+        book.active_mut().canvas.object_mut(object).unwrap().drawio = Some(Arc::new(Passthrough {
+            source_id: Some(edge_id.clone()),
+            ..Default::default()
+        }));
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert!(!xml.contains(&format!(r#"id="{node_id}""#)), "{template}");
+        assert_eq!(xml.matches(&format!(r#"id="{edge_id}""#)).count(), 1);
+        let report = load(&xml);
+        assert!(
+            !report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+            "{template}: {:?}",
+            report.warnings
+        );
+        assert!(report.workbook.has_sankey(), "{template}");
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(after_mass, before_mass, "{template}");
+        assert_eq!(before.nodes.len(), after.nodes.len(), "{template}");
+        if template == "sankey-budget" {
+            for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+                let bytes = crate::export_bytes_with_consent(
+                    &book,
+                    format,
+                    &ExportOptions::default(),
+                    true,
+                )
+                .unwrap();
+                let restored = import(&bytes).unwrap();
+                assert!(restored.workbook.has_sankey(), "{format:?}");
+                assert!(
+                    !restored
+                        .warnings
+                        .contains(&ImportWarning::DrawioSankeyStale),
+                    "{format:?}: {:?}",
+                    restored.warnings
+                );
+            }
+        }
+    }
+
+    // A live Sankey edge may keep its own numeric source ID.
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let edge = book
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()))
+        .unwrap()
+        .id;
+    let id = format!("o{}", edge.0);
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![id.clone()],
+        ..Default::default()
+    }));
+    book.active_mut().canvas.object_mut(edge).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some(id.clone()),
+        ..Default::default()
+    }));
+    let bytes = export(&book).unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains(&format!(r#"id="{id}""#)));
+    assert!(import(&bytes).unwrap().workbook.has_sankey());
+
+    let duplicate = book
+        .active_mut()
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(800.0, 800.0, 80.0, 60.0),
+            "Conflicting source",
+        ))
+        .unwrap();
+    book.active_mut()
+        .canvas
+        .object_mut(duplicate)
+        .unwrap()
+        .drawio = Some(Arc::new(Passthrough {
+        source_id: Some(format!("o{}", edge.0)),
+        ..Default::default()
+    }));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(&format!(r#"id="{id}""#)).count(), 1);
+    assert!(load(&xml).workbook.has_sankey());
+}
+
+#[test]
+fn drawio_sankey_extension_preserves_inactive_stage_settings() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let extra = book
+        .active_mut()
+        .add_card(
+            "Stored stage",
+            Vec2::new(900.0, 900.0),
+            Card::new(CardKind::Text, Vec2::new(100.0, 60.0)),
+        )
+        .unwrap();
+    book.active_mut()
+        .sankey
+        .as_mut()
+        .unwrap()
+        .stages
+        .insert(extra, 3);
+    assert!(
+        !thinoda_core::sankey::evaluate(book.active())
+            .unwrap()
+            .nodes
+            .contains(&extra)
+    );
+    book.active_mut().drawio = Some(Arc::new(DrawioPagePassthrough {
+        cell_ids: vec![format!("t{}", extra.0)],
+        ..Default::default()
+    }));
+    let report = import(&export(&book).unwrap()).unwrap();
+    assert!(
+        !report.warnings.contains(&ImportWarning::DrawioSankeyStale),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.active();
+    assert!(
+        sheet
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stages
+            .iter()
+            .any(|(id, stage)| {
+                *stage == 3
+                    && sheet
+                        .topic(*id)
+                        .is_some_and(|topic| topic.title == "Stored stage")
+            })
+    );
 }
 
 #[test]
@@ -10957,6 +11994,898 @@ fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip()
 }
 
 #[test]
+fn drawio_unrepresented_container_metadata_is_reported() {
+    for (style, children) in [
+        ("swimlane;", ""),
+        (
+            "group;",
+            r#"<mxCell id="child-a" vertex="1" parent="container"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="child-b" vertex="1" parent="container"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell>"#,
+        ),
+    ] {
+        let document = |attributes: &str| {
+            let label = if style == "group;" { "" } else { "Container" };
+            page(&format!(
+                r#"<UserObject id="container" label="{label}" {attributes}><mxCell style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject>{children}"#
+            ))
+        };
+        assert!(
+            !load(&document("")).warnings.contains(&ImportWarning::Other),
+            "{style}"
+        );
+        for attribute in [
+            r#"link="https://example.com""#,
+            r#"tooltip="Important details""#,
+            r#"placeholders="1""#,
+        ] {
+            assert!(
+                load(&document(attribute))
+                    .warnings
+                    .contains(&ImportWarning::Other),
+                "{style}: {attribute}"
+            );
+        }
+    }
+
+    let card = page(
+        r#"<UserObject id="card" label="Card" link="https://example.com"><mxCell style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></UserObject>"#,
+    );
+    let report = load(&card);
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(
+        report
+            .workbook
+            .active()
+            .topics
+            .values()
+            .find(|topic| topic.card.is_some())
+            .unwrap()
+            .hyperlink
+            .as_deref(),
+        Some("https://example.com")
+    );
+    let object = page(
+        r#"<UserObject id="object" label="Object" link="https://example.com" tooltip="Details" placeholders="1"><mxCell vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></UserObject>"#,
+    );
+    assert!(!load(&object).warnings.contains(&ImportWarning::Other));
+}
+
+#[test]
+fn drawio_group_discloses_discarded_content_and_styles() {
+    let document = |style: &str, attributes: &str| {
+        page(&format!(
+            r#"<mxCell id="g" {attributes} style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell><mxCell id="a" vertex="1" parent="g"><mxGeometry width="50" height="40" as="geometry"/></mxCell><mxCell id="b" vertex="1" parent="g"><mxGeometry x="100" width="50" height="40" as="geometry"/></mxCell>"#
+        ))
+    };
+    for style in ["group;", "group;locked=0;", "group;locked=1;"] {
+        let report = load(&document(style, ""));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        assert_eq!(report.workbook.active().canvas.groups.len(), 1);
+    }
+    for style in [
+        "group;fillColor=#ff0000;",
+        "group;custom=value;",
+        "group;locked=invalid;",
+        "group;otherStyle;",
+        ";group;",
+    ] {
+        let report = load(&document(style, ""));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+    for attributes in [r#"value="Important""#, r#"collapsed="1""#] {
+        let report = load(&document("group;", attributes));
+        assert!(
+            report.warnings.contains(&ImportWarning::Other),
+            "{attributes}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn drawio_zone_discloses_unsupported_explicit_styles() {
+    let document = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="zone" value="Lane" style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+    };
+    let baseline = "swimlane;whiteSpace=wrap;html=1;startSize=24;collapsible=0;";
+    let report = load(&document(baseline));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.workbook.active().zones.len(), 1);
+    for style in [
+        "swimlane;collapsible=0;",
+        "swimlane;startSize=24;",
+        "swimlane;startSize=40;",
+        "swimlane;startSize=invalid;",
+        "swimlane;horizontal=0;",
+        "swimlane;collapsible=1;",
+        "swimlane;strokeWidth=4;",
+        "swimlane;custom=value;",
+        "swimlane;otherStyle;",
+        ";swimlane;",
+    ] {
+        let report = load(&document(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+        assert_eq!(report.workbook.active().zones.len(), 1, "{style}");
+    }
+}
+
+#[test]
+fn drawio_zone_source_id_survives_native_and_drawio_round_trips() {
+    let xml = page(concat!(
+        r#"<mxCell id="source-zone" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="300" height="200" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="child" value="Child" vertex="1" parent="source-zone"><mxGeometry x="20" y="30" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    let book = report.workbook;
+    let sheet = book.active();
+    assert_eq!(
+        sheet.zones[0].drawio_source_id.as_deref(),
+        Some("source-zone")
+    );
+    assert!(
+        sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "source-zone")
+    );
+    assert_eq!(crate::required_native_version(&book), 54);
+
+    let native = crate::formats::native_export(&book).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let content = serde_json::to_vec(&reopened).unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&content),
+        Err(IoError::NewerVersion(_))
+    ));
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":53,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    let exported = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(exported.contains(r#"id="source-zone""#), "{exported}");
+    assert!(exported.contains(r#"parent="source-zone""#), "{exported}");
+    let again = load(&exported).workbook;
+    assert_eq!(
+        again.active().zones[0].drawio_source_id.as_deref(),
+        Some("source-zone")
+    );
+    assert!(
+        again.masked_copy().active().zones[0]
+            .drawio_source_id
+            .is_none()
+    );
+
+    let mut doc = thinoda_core::Document::new(reopened);
+    let id = doc.sheet().zones[0].id;
+    doc.remove_zone(id).unwrap();
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().zones[0].drawio_source_id.as_deref(),
+        Some("source-zone")
+    );
+    assert!(doc.redo());
+    assert!(
+        doc.sheet()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "source-zone")
+    );
+}
+
+#[test]
+fn drawio_deleted_zone_source_id_is_not_reused_by_new_objects() {
+    let document = |id: &str| {
+        page(&format!(
+            r#"<mxCell id="{id}" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+    };
+    let replace_zone = |book: &mut Workbook| {
+        let sheet = book.active_mut();
+        let zone = sheet.zones[0].id;
+        sheet.remove_zone(zone).unwrap();
+        sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(400.0, 100.0, 80.0, 60.0),
+                "New",
+            ))
+            .unwrap()
+    };
+    let mut probe = load(&document("old-zone")).workbook;
+    let source = format!("o{}", replace_zone(&mut probe).0);
+    let report = load(&document(&source));
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(format!("o{}", replace_zone(&mut reopened).0), source);
+    let xml = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{source}-1""#)), "{xml}");
+}
+
+#[test]
+fn drawio_zone_source_id_budget_omissions_are_reported() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="zone-source" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(
+        report.workbook.active().zones[0]
+            .drawio_source_id
+            .as_deref(),
+        Some("zone-source")
+    );
+    assert!(
+        !report
+            .workbook
+            .active()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "zone-source")
+    );
+    let xml = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(xml.contains(r#"id="zone-source""#));
+
+    let long = "x".repeat(thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES + 1);
+    let xml = page(&format!(
+        r#"<mxCell id="{long}" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(report.workbook.active().zones[0].drawio_source_id.is_none());
+}
+
+#[test]
+fn drawio_zone_source_id_conflicts_do_not_duplicate_cells() {
+    let xml = page(concat!(
+        r#"<mxCell id="zone-a" value="Lane" style="swimlane;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="object-a" value="Object" vertex="1" parent="1"><mxGeometry x="400" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let mut book = load(&xml).workbook;
+    book.active_mut().zones[0].drawio_source_id = Some("object-a".into());
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(r#"id="object-a""#).count(), 1, "{xml}");
+    let report = load(&xml);
+    assert_eq!(report.workbook.active().zones.len(), 1);
+    assert_eq!(shapes(report.workbook.active()).len(), 1);
+}
+
+#[test]
+fn drawio_zone_source_ids_reserve_sankey_node_and_edge_ids() {
+    for node_collision in [true, false] {
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+        let node = *before.nodes.iter().next().unwrap();
+        let edge = book
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()))
+            .unwrap()
+            .id;
+        let source = if node_collision {
+            format!("t{}", node.0)
+        } else {
+            format!("o{}", edge.0)
+        };
+        let sheet = book.active_mut();
+        sheet
+            .create_board_frame("Lane", rect(900.0, 900.0, 300.0, 200.0))
+            .unwrap();
+        sheet.zones.last_mut().unwrap().drawio_source_id = Some(source.clone());
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(&format!(r#"id="{source}""#)).count(), 1);
+        let report = load(&xml);
+        assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+        assert_eq!(
+            report.workbook.active().zones[0]
+                .drawio_source_id
+                .as_deref(),
+            Some(source.as_str())
+        );
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(before_mass, after_mass);
+    }
+}
+
+#[test]
+fn drawio_card_source_ids_round_trip_and_reserve_deleted_ids() {
+    let xml = page(concat!(
+        r#"<mxCell id="t3" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge" edge="1" parent="1" source="t3"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="40" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let mut probe = load(&xml).workbook;
+    let sheet = probe.active_mut();
+    sheet.detach_subtree(sheet.floating[0]).unwrap();
+    let next = sheet
+        .add_card(
+            "Replacement",
+            Vec2::new(300.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    let source = format!("t{}", next.0);
+    let xml = xml.replace("t3", &source);
+    let report = load(&xml);
+    let sheet = report.workbook.active();
+    let card = *sheet.floating.first().unwrap();
+    assert_eq!(
+        sheet.topic(card).unwrap().drawio_source_id.as_deref(),
+        Some(source.as_str())
+    );
+    assert_eq!(crate::required_native_version(&report.workbook), 55);
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut reopened = crate::formats::native_import(&native).unwrap();
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":54,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
+    for _ in 0..2 {
+        let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+        assert_eq!(out.matches(&format!(r#"id="{source}""#)).count(), 1);
+        assert!(out.contains(&format!(r#"source="{source}""#)));
+        reopened = load(&out).workbook;
+        assert_eq!(
+            reopened
+                .active()
+                .topic(reopened.active().floating[0])
+                .unwrap()
+                .drawio_source_id
+                .as_deref(),
+            Some(source.as_str())
+        );
+    }
+    let sheet = reopened.active_mut();
+    let card = sheet.floating[0];
+    sheet.detach_subtree(card).unwrap();
+    let replacement = sheet
+        .add_card(
+            "Replacement",
+            Vec2::new(300.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert_eq!(replacement, next);
+    assert!(!out.contains(&format!(r#"id="{source}""#)));
+    assert!(out.contains(&format!(r#"id="t{}-1""#, replacement.0)));
+}
+
+#[test]
+fn drawio_card_source_id_collisions_do_not_steal_other_owners() {
+    let mut book = Workbook::default();
+    let sheet = book.active_mut();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(100.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(card).unwrap().drawio_source_id = Some("shared".into());
+    let shape = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(300.0, 100.0, 80.0, 60.0),
+            "Shape",
+        ))
+        .unwrap();
+    sheet.canvas.object_mut(shape).unwrap().drawio = Some(Arc::new(Passthrough {
+        source_id: Some("shared".into()),
+        ..Default::default()
+    }));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(r#"id="shared""#).count(), 1);
+    let restored = load(&xml);
+    assert_eq!(cards(restored.workbook.active()).len(), 1);
+    assert!(shapes(restored.workbook.active()).iter().any(|object| {
+        object.label() == "Shape"
+            && object
+                .drawio
+                .as_ref()
+                .and_then(|data| data.source_id.as_deref())
+                == Some("shared")
+    }));
+}
+
+#[test]
+fn drawio_card_invalid_source_id_is_disclosed() {
+    let id = "x".repeat(thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES + 1);
+    let xml = page(&format!(
+        r#"<mxCell id="{id}" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report
+            .workbook
+            .active()
+            .topics
+            .values()
+            .all(|topic| topic.drawio_source_id.is_none())
+    );
+}
+
+#[test]
+fn drawio_card_source_id_survives_when_tombstone_budget_is_exhausted() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="card-source" value="Card" style="text;thinodaCard=text;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert!(
+        sheet
+            .topics
+            .values()
+            .any(|topic| topic.drawio_source_id.as_deref() == Some("card-source"))
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "card-source")
+    );
+    let xml = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(xml.contains(r#"id="card-source""#));
+}
+
+#[test]
+fn drawio_sankey_topic_source_ids_remain_stable_with_semantics() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let node = *thinoda_core::sankey::evaluate(book.active())
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|id| book.active().topics[id].card.is_some())
+        .unwrap();
+    book.active_mut().topic_mut(node).unwrap().drawio_source_id = Some("t9876".into());
+    let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+    for _ in 0..2 {
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(r#"id="t9876""#).count(), 1);
+        let report = load(&xml);
+        assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+        assert!(
+            report
+                .workbook
+                .active()
+                .topics
+                .values()
+                .any(|topic| { topic.drawio_source_id.as_deref() == Some("t9876") })
+        );
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(before_mass, after_mass);
+        book = report.workbook;
+    }
+}
+
+#[test]
+fn drawio_group_source_ids_round_trip_and_reserve_deleted_ids() {
+    let template = concat!(
+        r#"<mxCell id="g3" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="a" value="A" vertex="1" parent="g3"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" value="B" vertex="1" parent="g3"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+    );
+    let regroup = |book: &mut Workbook| {
+        let sheet = book.active_mut();
+        let group = sheet.canvas.groups[0].id;
+        let members = sheet.board_group_members(group);
+        sheet.ungroup_board_members(group).unwrap();
+        sheet.group_board_members(&members).unwrap()
+    };
+    let mut probe = load(&page(template)).workbook;
+    let next = regroup(&mut probe);
+    let source = format!("g{}", next.0);
+    let xml = page(&template.replace("g3", &source));
+    let mut book = load(&xml).workbook;
+    assert_eq!(
+        book.active().canvas.groups[0].drawio_source_id.as_deref(),
+        Some(source.as_str())
+    );
+    assert_eq!(crate::required_native_version(&book), 56);
+    let native = crate::formats::native_export(&book).unwrap();
+    book = crate::formats::native_import(&native).unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":55,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
+    for _ in 0..2 {
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(&format!(r#"id="{source}""#)).count(), 1);
+        assert_eq!(xml.matches(&format!(r#"parent="{source}""#)).count(), 2);
+        book = load(&xml).workbook;
+        assert_eq!(
+            book.active().canvas.groups[0].drawio_source_id.as_deref(),
+            Some(source.as_str())
+        );
+    }
+    assert_eq!(regroup(&mut book), next);
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source}""#)));
+    assert!(xml.contains(&format!(r#"id="{source}-1""#)));
+}
+
+#[test]
+fn drawio_nested_and_small_groups_disclose_unretained_identity() {
+    for children in [
+        "",
+        r#"<mxCell id="a" vertex="1" parent="outer"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        concat!(
+            r#"<mxCell id="inner" style="group" vertex="1" parent="outer"><mxGeometry width="200" height="100" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="a" vertex="1" parent="inner"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="b" vertex="1" parent="inner"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="outer" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>{children}"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Other));
+        if children.contains("inner") {
+            assert_eq!(
+                report.workbook.active().canvas.groups[0]
+                    .drawio_source_id
+                    .as_deref(),
+                Some("outer")
+            );
+            assert!(
+                !report
+                    .workbook
+                    .active()
+                    .drawio
+                    .as_ref()
+                    .unwrap()
+                    .cell_ids
+                    .iter()
+                    .any(|id| id == "inner")
+            );
+        } else {
+            assert!(report.workbook.active().canvas.groups.is_empty());
+        }
+    }
+}
+
+#[test]
+fn drawio_group_source_ids_handle_collisions_and_budget_limits() {
+    let cells = concat!(
+        r#"<mxCell id="group-source" style="group" vertex="1" parent="1"><mxGeometry width="300" height="120" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="a" value="A" vertex="1" parent="group-source"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" value="B" vertex="1" parent="group-source"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+    );
+    let mut book = load(&page(cells)).workbook;
+    let sheet = book.active_mut();
+    let object = sheet
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| object.label() == "A")
+        .unwrap();
+    object.drawio = Some(Arc::new(Passthrough {
+        source_id: Some("group-source".into()),
+        ..Default::default()
+    }));
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches(r#"id="group-source""#).count(), 1);
+    let report = load(&xml);
+    assert!(
+        report
+            .workbook
+            .active()
+            .canvas
+            .objects
+            .iter()
+            .any(|object| {
+                object.label() == "A"
+                    && object
+                        .drawio
+                        .as_ref()
+                        .and_then(|data| data.source_id.as_deref())
+                        == Some("group-source")
+            })
+    );
+    assert_ne!(
+        report.workbook.active().canvas.groups[0]
+            .drawio_source_id
+            .as_deref(),
+        Some("group-source")
+    );
+
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/>{cells}</root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert_eq!(
+        sheet.canvas.groups[0].drawio_source_id.as_deref(),
+        Some("group-source")
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "group-source")
+    );
+    let xml = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(xml.contains(r#"id="group-source""#));
+}
+
+#[test]
+fn drawio_group_source_ids_reserve_sankey_node_and_edge_ids() {
+    for node_collision in [true, false] {
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let before = thinoda_core::sankey::evaluate(book.active()).unwrap();
+        let node = *before.nodes.iter().next().unwrap();
+        let edge = book.active().canvas.objects.iter().find(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some())
+        }).unwrap().id;
+        let source = if node_collision {
+            format!("t{}", node.0)
+        } else {
+            format!("o{}", edge.0)
+        };
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(900.0, 900.0, 80.0, 60.0),
+                "A",
+            ))
+            .unwrap();
+        let second = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(1000.0, 900.0, 80.0, 60.0),
+                "B",
+            ))
+            .unwrap();
+        sheet
+            .group_board_members(&[BoardMember::Object(first), BoardMember::Object(second)])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some(source.clone());
+        let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(xml.matches(&format!(r#"id="{source}""#)).count(), 1);
+        let report = load(&xml);
+        assert!(!report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+        assert_eq!(
+            report.workbook.active().canvas.groups[0]
+                .drawio_source_id
+                .as_deref(),
+            Some(source.as_str())
+        );
+        let after = thinoda_core::sankey::evaluate(report.workbook.active()).unwrap();
+        let mut before_mass: Vec<_> = before.mass.values().copied().collect();
+        let mut after_mass: Vec<_> = after.mass.values().copied().collect();
+        before_mass.sort_by(f64::total_cmp);
+        after_mass.sort_by(f64::total_cmp);
+        assert_eq!(before_mass, after_mass);
+    }
+}
+
+#[test]
+fn drawio_scene_container_ids_survive_as_page_tombstones() {
+    let xml = page(concat!(
+        r#"<mxCell id="card-source" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="zone-source" value="Zone" style="swimlane;" vertex="1" parent="1"><mxGeometry x="200" width="300" height="200" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-source" style="group;" vertex="1" parent="1"><mxGeometry x="600" width="200" height="100" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-child-a" vertex="1" parent="group-source"><mxGeometry width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="group-child-b" vertex="1" parent="group-source"><mxGeometry x="100" width="60" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="scene-source" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry x="900" width="300" height="200" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    let sheet = report.workbook.active();
+    assert_eq!(cards(sheet).len(), 1);
+    assert_eq!(sheet.zones.len(), 1);
+    assert_eq!(sheet.canvas.groups.len(), 1);
+    assert_eq!(sheet.canvas.scene.containers.len(), 1);
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    let ids = &reopened.active().drawio.as_ref().unwrap().cell_ids;
+    for id in [
+        "card-source",
+        "group-source",
+        "group-child-a",
+        "group-child-b",
+        "scene-source",
+        "zone-source",
+    ] {
+        assert!(ids.iter().any(|retained| retained == id), "missing {id}");
+    }
+    let first = export(&reopened).unwrap();
+    assert!(String::from_utf8_lossy(&first).contains(r#"id="scene-source""#));
+    let second = export(&import(&first).unwrap().workbook).unwrap();
+    assert!(String::from_utf8_lossy(&second).contains(r#"id="scene-source""#));
+}
+
+#[test]
+fn drawio_deleted_scene_container_source_id_is_not_reused_by_new_objects() {
+    let document = |id: &str| {
+        page(&format!(
+            r#"<mxCell id="{id}" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+    };
+    let replace_container = |book: &mut Workbook| {
+        let sheet = book.active_mut();
+        let container = *sheet.canvas.scene.containers.iter().next().unwrap();
+        sheet.remove_canvas_objects(&[container]).unwrap();
+        sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(200.0, 100.0, 80.0, 60.0),
+                "New",
+            ))
+            .unwrap()
+    };
+    let mut probe = load(&document("old-container")).workbook;
+    let source = format!("o{}", replace_container(&mut probe).0);
+
+    let report = load(&document(&source));
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(format!("o{}", replace_container(&mut reopened).0), source);
+    let xml = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{source}-1""#)), "{xml}");
+    assert_eq!(shapes(load(&xml).workbook.active()).len(), 1);
+}
+
+#[test]
+fn drawio_scene_container_tombstones_warn_when_page_budget_is_exhausted() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="scene-source" value="Scene" style="swimlane;thinodaSceneContainer=1;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert_eq!(report.workbook.active().canvas.scene.containers.len(), 1);
+    assert!(
+        !report
+            .workbook
+            .active()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .iter()
+            .any(|id| id == "scene-source")
+    );
+    report.workbook.validate().unwrap();
+}
+
+#[test]
+fn drawio_deleted_layer_ids_are_not_reused_by_new_layers() {
+    let document = |id: &str| {
+        format!(
+            r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="{id}" value="Old" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+        )
+    };
+    let mut probe = load(&document("old")).workbook;
+    let old = probe.active().canvas.layers[0].id;
+    probe.active_mut().remove_board_layer(old).unwrap();
+    let new = probe.active_mut().add_board_layer("New").unwrap();
+    let source_id = format!("l{}", new.0);
+
+    let report = load(&document(&source_id));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(
+        report
+            .workbook
+            .active()
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .contains(&source_id)
+    );
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let mut book = crate::formats::native_import(&native).unwrap();
+    let old = book.active().canvas.layers[0].id;
+    book.active_mut().remove_board_layer(old).unwrap();
+    let new = book.active_mut().add_board_layer("New").unwrap();
+    assert_eq!(format!("l{}", new.0), source_id);
+
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!xml.contains(&format!(r#"id="{source_id}""#)), "{xml}");
+    assert!(xml.contains(&format!(r#"id="{source_id}-1""#)), "{xml}");
+    let reopened = load(&xml);
+    assert_eq!(reopened.workbook.active().canvas.layers[0].name, "New");
+}
+
+#[test]
+fn drawio_layer_tombstones_obey_the_page_budget_and_warn_when_dropped() {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let padding = "x".repeat(budget - "padding".len() - 1);
+    let xml = format!(
+        r#"<mxfile><diagram><mxGraphModel padding="{padding}"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="layer-source" value="Layer" parent="0"/></root></mxGraphModel></diagram></mxfile>"#
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = report.workbook.active();
+    assert_eq!(
+        sheet.canvas.layers[0].source_id.as_deref(),
+        Some("layer-source")
+    );
+    assert!(
+        !sheet
+            .drawio
+            .as_ref()
+            .unwrap()
+            .cell_ids
+            .contains(&"layer-source".to_owned())
+    );
+    assert!(report.workbook.validate().is_ok());
+}
+
+#[test]
 fn drawio_named_first_layer_and_layered_cards_stay_explicit() {
     let xml = concat!(
         r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,
@@ -11057,6 +12986,10 @@ fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
     ))
     .replace("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#);
     let sheet = clean(&xml);
+    let retained = &sheet.drawio.as_ref().unwrap().cell_ids;
+    for source in ["t", "c00", "c02", "c10", "c11", "c12", "c20", "c21"] {
+        assert!(retained.iter().any(|id| id == source), "missing {source}");
+    }
     let summary = table_summary(&sheet);
     let label = |r: u16, c: u16, rs: u16, cs: u16, label: &str| (r, c, rs, cs, label.to_string());
     assert_eq!(summary.0, vec![40.0; 3]);
@@ -11115,6 +13048,15 @@ fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
     assert_eq!(drawio.matches("shape=tableRow").count(), 3);
     assert_eq!(drawio.matches(r#"visible="0""#).count(), 2);
     assert!(drawio.contains("colspan=2;") && drawio.contains("rowspan=2;"));
+    let mut with_tombstone = sheet.clone();
+    let page = with_tombstone
+        .drawio
+        .get_or_insert_with(|| Arc::new(DrawioPagePassthrough::default()));
+    Arc::make_mut(page).cell_ids.push("t-row0".into());
+    let reserved = String::from_utf8(export(&Workbook::new(with_tombstone)).unwrap()).unwrap();
+    assert!(!reserved.contains(r#"id="t-row0""#), "{reserved}");
+    assert!(reserved.contains(r#"id="t-row0x""#), "{reserved}");
+    assert_eq!(table_summary(load(&reserved).workbook.active()), summary);
     // The export drops the page's adaptiveColors="none", so fixed colours warn.
     let report = load(&drawio);
     assert_eq!(

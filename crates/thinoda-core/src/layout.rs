@@ -849,6 +849,11 @@ impl Engine<'_> {
             max_w,
             style.font_family.as_deref(),
         );
+        if !t.inline_text.is_empty() {
+            let rich = crate::label_style::measure_rich_text(title, &t.inline_text, fs, max_w);
+            ts.x = ts.x.max(rich.x);
+            ts.y = ts.y.max(rich.y);
+        }
         if let Some(w) = style.width.filter(|_| card.is_none()) {
             ts.x = ts.x.max(w);
         }
@@ -1611,6 +1616,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn formatted_card_layout_accounts_for_larger_runs_and_list_markers() {
+        use crate::{Card, CardKind, InlineParagraph, InlineText, ListKind};
+
+        let mut sheet = Sheet::new("Cards", "Root");
+        let id = sheet
+            .add_card(
+                "A\nB",
+                Vec2::ZERO,
+                Card::new(CardKind::Sticky, Vec2::new(240.0, 180.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.inline_text = InlineText {
+            runs: Vec::new(),
+            paragraphs: vec![
+                InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Numbered,
+                },
+            ],
+        };
+        topic
+            .inline_text
+            .update_range("A\nB", 0..1, |style| {
+                style.bold = Some(true);
+                style.font_size = Some(48.0);
+            })
+            .unwrap();
+
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let title = layout.topics[&id].title_rect;
+        assert!(title.size.y >= 120.0, "rich title height: {}", title.size.y);
+        assert!(title.size.x > ApproxMeasure.measure("A\nB", 14.0, false, 212.0).x);
+
+        let measured = crate::label_style::measure_rich_text(
+            "A\nB",
+            &sheet.topic(id).unwrap().inline_text,
+            14.0,
+            212.0,
+        );
+        assert!(measured.y >= 120.0);
+        assert!(measured.x > 0.0);
     }
 
     #[test]

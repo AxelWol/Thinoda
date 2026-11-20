@@ -6108,6 +6108,977 @@ fn image_card_accessible_name_preserves_its_kind_when_renamed() {
 }
 
 #[test]
+fn repeated_label_input_preserves_formatting_at_the_actual_caret() {
+    for connector in [false, true] {
+        for paste in [false, true] {
+            for (anchor, focus) in [(1, 1), (1, 3), (3, 1)] {
+                let selection = anchor != focus;
+                let mut sheet = board();
+                let id = if connector {
+                    let mut line = CanvasConnector::new(
+                        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                        Endpoint::Point(Vec2::new(100.0, 0.0)),
+                    );
+                    line.label = "aaa".into();
+                    sheet
+                        .add_canvas_object(CanvasObject::connector(line))
+                        .unwrap()
+                } else {
+                    shape(&mut sheet, 0.0, 0.0, "aaa")
+                };
+                let mut rich = thinoda_core::InlineText::default();
+                rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+                    .unwrap();
+                sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                    Some(std::sync::Arc::new(rich.clone()));
+                let mut h = harness(sheet);
+                {
+                    let state = h.state_mut();
+                    assert!(state.view.begin_board_label(&state.doc, id));
+                }
+                h.run_steps(3);
+                let edit_id = MapCanvas::board_label_editor_id();
+                let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(anchor),
+                        egui::text::CCursor::new(focus),
+                    )));
+                state.store(&h.ctx, edit_id);
+                let inserted = if selection { "aa" } else { "a" };
+                if paste {
+                    h.input_mut().events.push(egui::Event::Key {
+                        key: Key::V,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::COMMAND,
+                    });
+                }
+                h.input_mut().events.push(if paste {
+                    egui::Event::Paste(inserted.into())
+                } else {
+                    egui::Event::Text(inserted.into())
+                });
+                h.run_steps(2);
+                h.key_press(Key::Enter);
+                h.run_steps(3);
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), if selection { "aaa" } else { "aaaa" });
+                let updated = object.label_rich_text.as_ref().unwrap();
+                assert_eq!(
+                    (updated.runs[0].start, updated.runs[0].end),
+                    if selection { (1, 3) } else { (2, 3) },
+                    "connector={connector}, paste={paste}, anchor={anchor}, focus={focus}"
+                );
+                assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                assert!(h.state_mut().doc.undo());
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), "aaa");
+                assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+            }
+        }
+    }
+}
+
+#[test]
+fn repeated_label_deletion_preserves_formatting_at_the_actual_range() {
+    for connector in [false, true] {
+        for key in [Key::Backspace, Key::Delete] {
+            for selection in [false, true] {
+                let mut sheet = board();
+                let id = if connector {
+                    let mut line = CanvasConnector::new(
+                        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                        Endpoint::Point(Vec2::new(100.0, 0.0)),
+                    );
+                    line.label = "aaa".into();
+                    sheet
+                        .add_canvas_object(CanvasObject::connector(line))
+                        .unwrap()
+                } else {
+                    shape(&mut sheet, 0.0, 0.0, "aaa")
+                };
+                let mut rich = thinoda_core::InlineText::default();
+                let bold_start = if selection { 2 } else { 1 };
+                rich.update_range("aaa", bold_start..bold_start + 1, |style| {
+                    style.bold = Some(true)
+                })
+                .unwrap();
+                sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                    Some(std::sync::Arc::new(rich.clone()));
+                let mut h = harness(sheet);
+                {
+                    let state = h.state_mut();
+                    assert!(state.view.begin_board_label(&state.doc, id));
+                }
+                h.run_steps(3);
+                let edit_id = MapCanvas::board_label_editor_id();
+                let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+                let caret = if key == Key::Backspace { 1 } else { 0 };
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(if selection { 2 } else { caret }),
+                        egui::text::CCursor::new(if selection { 0 } else { caret }),
+                    )));
+                state.store(&h.ctx, edit_id);
+                h.key_press(key);
+                h.run_steps(2);
+                h.key_press(Key::Enter);
+                h.run_steps(3);
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), if selection { "a" } else { "aa" });
+                let updated = object.label_rich_text.as_ref().unwrap();
+                assert_eq!(
+                    (updated.runs[0].start, updated.runs[0].end),
+                    (0, 1),
+                    "connector={connector}, key={key:?}, selection={selection}"
+                );
+                assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                assert!(h.state_mut().doc.undo());
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), "aaa");
+                assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+            }
+        }
+    }
+}
+
+#[test]
+fn rich_label_local_undo_and_redo_preserve_style_positions() {
+    for connector in [false, true] {
+        for redo_key in [Key::Z, Key::Y] {
+            let mut sheet = board();
+            let id = if connector {
+                let mut line = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                line.label = "aaa".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(line))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "aaa")
+            };
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+            let mut h = harness(sheet);
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(3);
+            let edit_id = MapCanvas::board_label_editor_id();
+            let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(1),
+                )));
+            state.store(&h.ctx, edit_id);
+            h.event(egui::Event::Text("a".into()));
+            h.run_steps(2);
+            h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+            h.run_steps(2);
+            let (_, _, text, rich) = h.state().view.board_rich_label_draft().unwrap();
+            assert_eq!(text, "aaa");
+            let rich = rich.unwrap();
+            assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+            let cursor = egui::TextEdit::load_state(&h.ctx, edit_id)
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap();
+            assert_eq!(cursor.primary.index.0, 1);
+            h.key_press_modifiers(
+                if redo_key == Key::Z {
+                    Modifiers::COMMAND | Modifiers::SHIFT
+                } else {
+                    Modifiers::COMMAND
+                },
+                redo_key,
+            );
+            h.run_steps(2);
+            let (_, _, text, rich) = h.state().view.board_rich_label_draft().unwrap();
+            assert_eq!(text, "aaaa");
+            let rich = rich.unwrap();
+            assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+            let cursor = egui::TextEdit::load_state(&h.ctx, edit_id)
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap();
+            assert_eq!(cursor.primary.index.0, 2);
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn rich_label_undo_groups_ime_preedit_and_commit() {
+    for same_frame in [false, true] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text =
+            Some(std::sync::Arc::new(rich.clone()));
+        let mut h = harness(sheet);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        let events = [
+            egui::ImeEvent::Preedit {
+                text: "n".into(),
+                active_range_chars: None,
+            },
+            egui::ImeEvent::Preedit {
+                text: "ni".into(),
+                active_range_chars: None,
+            },
+            egui::ImeEvent::Commit("日".into()),
+        ];
+        if same_frame {
+            h.input_mut()
+                .events
+                .extend(events.into_iter().map(egui::Event::Ime));
+            h.run_steps(1);
+        } else {
+            for event in events {
+                h.event(egui::Event::Ime(event));
+                h.run_steps(1);
+            }
+        }
+        let (_, _, text, composed) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "a日aa");
+        let composed = composed.unwrap().clone();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaa", "same_frame={same_frame}");
+        assert_eq!(restored, Some(&rich));
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        h.run_steps(2);
+        let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "a日aa");
+        assert_eq!(restored, Some(&composed));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_undo_does_not_replace_an_active_ime_composition() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "abc");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "preedit".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(1);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "preedit");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(1);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "preedit");
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("during rich-text composition"))
+    );
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("done".into())));
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(1);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "abc");
+}
+
+#[test]
+fn rich_label_mixed_ime_and_keyboard_events_keep_input_order() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.input_mut().events.extend([
+        egui::Event::Text("x".into()),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "a".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        egui::Event::Key {
+            key: Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+    ]);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "axaa");
+    let rich = restored.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_mixed_ime_undo_during_composition_is_rejected() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "abc");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Key {
+            key: Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "x");
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("during rich-text composition"))
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "abc");
+}
+
+#[test]
+fn rich_label_undo_before_ime_commit_in_same_frame() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "z".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Ime(egui::ImeEvent::Commit("z".into())),
+    ]);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "azaa");
+    let rich = restored.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_ime_candidate_keys_keep_ordered_formatting() {
+    for key in [Key::Enter, Key::Tab, Key::Escape] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut().events.extend([
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "a".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        ]);
+        h.run_steps(2);
+        let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaaa", "key={key:?}");
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_empty_ime_preserves_redo_when_composition_cancels() {
+    for empty_preedit in [true, false] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text =
+            Some(std::sync::Arc::new(rich.clone()));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.event(egui::Event::Text("x".into()));
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        h.event(egui::Event::Ime(if empty_preedit {
+            egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }
+        } else {
+            egui::ImeEvent::Commit(String::new())
+        }));
+        h.run_steps(2);
+        let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaa", "empty_preedit={empty_preedit}");
+        assert_eq!(restored, Some(&rich));
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        h.run_steps(2);
+        let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "axaa", "empty_preedit={empty_preedit}");
+        assert_eq!(restored.unwrap().runs[0].start, 2);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_ime_surrounding_deletion_undoes_as_one_transaction() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "abcd");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("abcd", 2..3, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "n".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+        before_chars: 1,
+        after_chars: 1,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+    h.run_steps(1);
+    let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "xcd");
+    assert_eq!(
+        (changed.unwrap().runs[0].start, changed.unwrap().runs[0].end),
+        (1, 2)
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "abcd");
+    assert_eq!(restored, Some(&rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_ime_surrounding_deletion_respects_repeated_text() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "n".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+        before_chars: 0,
+        after_chars: 1,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+    h.run_steps(1);
+    let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "axa");
+    assert!(changed.is_none(), "{changed:?}");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(&rich));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "axa");
+    assert!(restored.is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_batched_ime_surrounding_deletion_respects_repeated_text() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "n".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+            before_chars: 0,
+            after_chars: 1,
+        }),
+        egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+    ]);
+    h.run_steps(1);
+    let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "axa");
+    assert!(changed.is_none(), "{changed:?}");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(&rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_ime_repeated_insertion_preserves_style_position() {
+    for same_frame in [false, true] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text =
+            Some(std::sync::Arc::new(rich.clone()));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        let events = [
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "a".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        ];
+        if same_frame {
+            h.input_mut().events.extend(events);
+            h.run_steps(1);
+        } else {
+            for event in events {
+                h.event(event);
+                h.run_steps(1);
+            }
+        }
+        let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaaa");
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaa");
+        assert_eq!(restored, Some(&rich));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn inserting_a_repeated_line_break_preserves_rich_label_positions() {
+    for connector in [false, true] {
+        for (anchor, focus) in [(1, 1), (1, 2), (2, 1)] {
+            let selection = anchor != focus;
+            let mut sheet = board();
+            let id = if connector {
+                let mut line = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                line.label = "\n\n".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(line))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "\n\n")
+            };
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("\n\n", 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            rich.paragraphs.push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Bulleted,
+            });
+            sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                Some(std::sync::Arc::new(rich.clone()));
+            let mut h = harness(sheet);
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(3);
+            let edit_id = MapCanvas::board_label_editor_id();
+            let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(anchor),
+                    egui::text::CCursor::new(focus),
+                )));
+            state.store(&h.ctx, edit_id);
+            h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+            h.run_steps(2);
+            h.key_press(Key::Enter);
+            h.run_steps(3);
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), if selection { "\n\n" } else { "\n\n\n" });
+            let updated = object.label_rich_text.as_ref().unwrap();
+            assert_eq!(
+                (updated.runs[0].start, updated.runs[0].end),
+                if selection { (1, 2) } else { (2, 3) },
+                "connector={connector}, anchor={anchor}, focus={focus}"
+            );
+            assert_eq!(
+                updated.paragraphs,
+                [
+                    thinoda_core::InlineParagraph {
+                        index: 1,
+                        list: thinoda_core::ListKind::Bulleted,
+                    },
+                    thinoda_core::InlineParagraph {
+                        index: 2,
+                        list: thinoda_core::ListKind::Bulleted,
+                    },
+                ]
+            );
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+            assert!(h.state_mut().doc.undo());
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "\n\n");
+            assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+        }
+    }
+}
+
+#[test]
+fn cutting_repeated_label_text_preserves_formatting_on_remaining_characters() {
+    for connector in [false, true] {
+        for (anchor, focus) in [(0, 1), (1, 0)] {
+            let mut sheet = board();
+            let id = if connector {
+                let mut line = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                line.label = "aaa".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(line))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "aaa")
+            };
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                Some(std::sync::Arc::new(rich.clone()));
+            let mut h = harness(sheet);
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(3);
+            let edit_id = MapCanvas::board_label_editor_id();
+            let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(anchor),
+                    egui::text::CCursor::new(focus),
+                )));
+            state.store(&h.ctx, edit_id);
+            h.event(egui::Event::Cut);
+            h.run_steps(1);
+            assert!(
+                h.output()
+                    .platform_output
+                    .commands
+                    .contains(&egui::OutputCommand::CopyText("a".into()))
+            );
+            h.key_press(Key::Enter);
+            h.run_steps(3);
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "aa");
+            let updated = object.label_rich_text.as_ref().unwrap();
+            assert_eq!((updated.runs[0].start, updated.runs[0].end), (0, 1));
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+            assert!(h.state_mut().doc.undo());
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "aaa");
+            assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+        }
+    }
+}
+
+#[test]
+fn same_frame_repeated_label_insertions_keep_their_positions() {
+    for connector in [false, true] {
+        let mut sheet = board();
+        let id = if connector {
+            let mut line = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            line.label = "aaa".into();
+            sheet
+                .add_canvas_object(CanvasObject::connector(line))
+                .unwrap()
+        } else {
+            shape(&mut sheet, 0.0, 0.0, "aaa")
+        };
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut().events.extend([
+            egui::Event::Text("a".into()),
+            egui::Event::Text("a".into()),
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        let object = h.state().doc.sheet().canvas.object(id).unwrap();
+        assert_eq!(object.label(), "aaaaa");
+        let rich = object.label_rich_text.as_ref().unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (3, 4));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn same_frame_deletion_and_insertion_preserve_rich_edit_order() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 0..1, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(2),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::Backspace,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("a".into()),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    assert_eq!(object.label(), "aaa");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn pending_text_is_applied_before_finishing_board_labels() {
     for connector in [false, true] {
         for key in [Key::Enter, Key::Tab, Key::Escape] {

@@ -3377,6 +3377,633 @@ fn last_title_keystroke_and_close_tab_click_in_one_frame_preserve_the_draft() {
 }
 
 #[test]
+fn formatted_title_input_precedes_close_tab_click() {
+    for ime in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("formatted-close.thinoda");
+        let (mut app, id) = app_with_card(CardKind::Sticky);
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("Card title", 0..4, |style| style.bold = Some(true))
+            .unwrap();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .set_card_title_with_rich_text(id, "Card title", rich)
+            .unwrap();
+        doc.save_to(&path, false).unwrap();
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(5);
+        let label = format!("Close Tab: {}", h.state().doc().unwrap().title());
+        let close = h
+            .get_by_role_and_label(Role::Button, &label)
+            .rect()
+            .center();
+        if ime {
+            h.input_mut().events.extend([
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "n".into(),
+                    active_range_chars: None,
+                }),
+                egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+            ]);
+        } else {
+            h.input_mut().events.push(egui::Event::Text("x".into()));
+        }
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(close),
+            egui::Event::PointerButton {
+                pos: close,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: close,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("y".into()),
+        ]);
+        run_input_hook_steps(&mut h, 8);
+        let doc = h.state().doc().unwrap();
+        let topic = doc.doc.sheet().topic(id).unwrap();
+        assert_eq!(topic.title, "Card titlex", "IME={ime}");
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+        assert!(h.state().dialogs.close.is_some());
+    }
+}
+
+#[test]
+fn formatted_card_selection_shortcut_changes_only_selected_text() {
+    for existing in [false, true] {
+        let (mut app, id) = app_with_card(CardKind::Sticky);
+        if existing {
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("Card title", 0..4, |style| style.italic = Some(true))
+                .unwrap();
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .set_card_title_with_rich_text(id, "Card title", rich)
+                .unwrap();
+        }
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(3);
+        let editor_id = MapCanvas::title_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(4),
+                egui::text::CCursor::new(0),
+            )));
+        state.store(&h.ctx, editor_id);
+        h.input_mut()
+            .events
+            .extend(raw_key_press(Key::B, Modifiers::COMMAND));
+        run_input_hook_steps(&mut h, 3);
+        let doc = h.state().doc().unwrap();
+        let draft = doc.view.title_rich_formatting_draft().unwrap();
+        assert_eq!(draft.runs[0].style.bold, Some(true));
+        assert_eq!(draft.runs[0].style.italic, existing.then_some(true));
+        assert_eq!((draft.runs[0].start, draft.runs[0].end), (0, 4));
+        assert_ne!(
+            doc.doc.sheet().topic(id).unwrap().inline_text,
+            draft,
+            "formatting remains in the draft until commit"
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .inline_text,
+            draft
+        );
+    }
+}
+
+#[test]
+fn formatted_card_toolbar_applies_inline_run_and_list_formats_to_selection() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(3);
+    let editor_id = MapCanvas::title_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(4),
+            egui::text::CCursor::new(0),
+        )));
+    state.store(&h.ctx, editor_id);
+    assert!(MapCanvas::title_has_selection(&h.ctx));
+    scroll_and_click(&mut h, Role::Button, "Inline superscript");
+    let draft = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    assert_eq!(
+        draft.runs[0].style.baseline,
+        Some(thinoda_core::InlineBaseline::Superscript)
+    );
+    scroll_and_click(&mut h, Role::Button, "Inline bulleted list");
+    let draft = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    assert_eq!(draft.paragraphs[0].list, thinoda_core::ListKind::Bulleted);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let topic = h.state().doc().unwrap().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.inline_text, draft);
+}
+
+#[test]
+fn formatted_card_toolbar_sets_typing_style_at_caret() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(3);
+    assert!(!MapCanvas::title_has_selection(&h.ctx));
+    scroll_and_click(&mut h, Role::Button, "Inline bold");
+    h.event(egui::Event::Text("!".into()));
+    run_input_hook_steps(&mut h, 3);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.view.editing_text(), Some("Card title!"));
+    let draft = doc.view.title_rich_formatting_draft().unwrap();
+    assert_eq!(draft.runs.len(), 1);
+    assert_eq!((draft.runs[0].start, draft.runs[0].end), (10, 11));
+    assert_eq!(draft.runs[0].style.bold, Some(true));
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let topic = h.state().doc().unwrap().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.inline_text, draft);
+}
+
+#[test]
+fn formatted_card_toolbar_applies_inline_font_size_and_color() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(3);
+    let editor_id = MapCanvas::title_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(4),
+            egui::text::CCursor::new(0),
+        )));
+    state.store(&h.ctx, editor_id);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Monospace").click();
+    h.run_steps(3);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view),
+        Some(thinoda_canvas::CardTitleInlineValues {
+            font_family: Some(Some("monospace".into())),
+            font_size: Some(None),
+            color: Some(None),
+        }),
+        "selection={} draft={:?} whole={:?}",
+        MapCanvas::title_has_selection(&h.ctx),
+        doc.view.title_rich_formatting_draft(),
+        doc.doc.sheet().topic(id).unwrap().style.font_family
+    );
+    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.get_by_role_and_label(Role::SpinButton, "Inline Font Size")
+        .type_text("24");
+    h.key_press(Key::Enter);
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::ColorWell, "Inline Text Color #E8455C");
+    let doc = h.state().doc().unwrap();
+    let draft = doc.view.title_rich_formatting_draft().unwrap();
+    assert_eq!(doc.view.editing_topic(), Some(id));
+    assert_eq!(draft.runs.len(), 1);
+    assert_eq!((draft.runs[0].start, draft.runs[0].end), (0, 4));
+    assert_eq!(
+        draft.runs[0].style.font_family.as_deref(),
+        Some("monospace")
+    );
+    assert_eq!(draft.runs[0].style.font_size, Some(24.0));
+    assert_eq!(
+        draft.runs[0].style.color,
+        Some(Color::rgb(0xE8, 0x45, 0x5C))
+    );
+    assert!(doc.doc.sheet().topic(id).unwrap().inline_text.is_empty());
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .inline_text,
+        draft
+    );
+    let book = h.state().doc().unwrap().doc.workbook();
+    for format in [thinoda_io::Format::Thinoda, thinoda_io::Format::DrawIo] {
+        let bytes = thinoda_io::export_bytes(book, format, &Default::default()).unwrap();
+        let report = thinoda_io::import_bytes_with_report(format, &bytes).unwrap();
+        assert!(
+            report.warnings.iter().all(|warning| matches!(
+                warning,
+                thinoda_io::ImportWarning::DrawioFoldedNotesApproximated
+            )),
+            "{:?}",
+            report.warnings
+        );
+        let reopened = report.workbook;
+        let card = reopened
+            .active()
+            .topics
+            .values()
+            .find(|topic| topic.title == "Card title" && topic.card.is_some())
+            .unwrap();
+        assert_eq!(card.inline_text, draft, "{format:?}");
+    }
+}
+
+#[test]
+fn last_inline_size_keystroke_and_color_click_in_one_frame_are_preserved() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(2400.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    let color = h
+        .get_by_role_and_label(Role::ColorWell, "Inline Text Color #E8455C")
+        .rect()
+        .center();
+    h.input_mut().events.push(egui::Event::Text("27".into()));
+    h.input_mut().events.push(egui::Event::PointerMoved(color));
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: color,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    h.run_steps(4);
+    let draft = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    assert_eq!(draft.runs[0].style.font_size, Some(27.0));
+    assert_eq!(
+        draft.runs[0].style.color,
+        Some(Color::rgb(0xE8, 0x45, 0x5C))
+    );
+}
+
+#[test]
+fn last_inline_size_keystroke_and_save_in_one_frame_are_preserved() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("fast-inline-size-save.thinoda");
+    let (mut app, id) = app_with_card(CardKind::Text);
+    app.doc_mut().unwrap().save_to(&path, false).unwrap();
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    h.input_mut().events.push(egui::Event::Text("27".into()));
+    h.input_mut()
+        .events
+        .extend(raw_key_press(Key::S, Modifiers::COMMAND));
+    run_input_hook_steps(&mut h, 5);
+    let saved = thinoda_io::import_file(&path).unwrap();
+    assert_eq!(
+        saved.active().topic(id).unwrap().inline_text.runs[0]
+            .style
+            .font_size,
+        Some(27.0)
+    );
+}
+
+#[test]
+fn inline_size_input_continues_after_save_in_event_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("continued-inline-size-save.thinoda");
+    let (mut app, id) = app_with_card(CardKind::Text);
+    app.doc_mut().unwrap().save_to(&path, false).unwrap();
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    h.input_mut().events.push(egui::Event::Text("6".into()));
+    h.input_mut()
+        .events
+        .extend(raw_key_press(Key::S, Modifiers::COMMAND));
+    h.input_mut().events.push(egui::Event::Text("4".into()));
+    run_input_hook_steps(&mut h, 8);
+    let saved = thinoda_io::import_file(&path).unwrap();
+    assert_eq!(
+        saved.active().topic(id).unwrap().inline_text.runs[0]
+            .style
+            .font_size,
+        Some(6.0)
+    );
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        doc.view.title_rich_formatting_draft().unwrap().runs[0]
+            .style
+            .font_size,
+        Some(64.0)
+    );
+    assert!(doc.is_dirty());
+}
+
+#[test]
+fn inline_size_and_color_auto_restore_inherited_values() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.get_by_role_and_label(Role::SpinButton, "Inline Font Size")
+        .type_text("24");
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    scroll_and_click(&mut h, Role::ColorWell, "Inline Text Color #E8455C");
+    scroll_and_click(&mut h, Role::Button, "Inline Font Size Auto");
+    scroll_and_click(&mut h, Role::Button, "Inline Text Color Auto");
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view),
+        Some(thinoda_canvas::CardTitleInlineValues {
+            font_family: Some(None),
+            font_size: Some(None),
+            color: Some(None),
+        })
+    );
+    assert!(doc.view.title_rich_formatting_draft().unwrap().is_empty());
+}
+
+#[test]
+fn inline_font_auto_clears_a_mixed_selection() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+    }
+    h.run_steps(4);
+    let editor = MapCanvas::title_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, editor).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(4),
+            egui::text::CCursor::new(0),
+        )));
+    state.store(&h.ctx, editor);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Monospace").click();
+    h.run_steps(4);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view)
+            .unwrap()
+            .font_family,
+        None
+    );
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Auto").click();
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view)
+            .unwrap()
+            .font_family,
+        Some(None)
+    );
+    assert!(doc.view.title_rich_formatting_draft().unwrap().is_empty());
+}
+
+#[test]
+fn inline_font_search_preserves_selection_and_filters_choices() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    assert!(h.get_by_label("Search fonts").is_focused());
+    h.get_by_label("Search fonts").type_text("mono");
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Monospace").is_some(),
+        "search present={} title={:?} focus={:?}",
+        h.query_by_label("Search fonts").is_some(),
+        h.state().doc().unwrap().view.editing_text(),
+        h.ctx.memory(|memory| memory.focused())
+    );
+    assert!(h.query_by_label("Auto").is_none());
+    h.get_by_label("Monospace").click();
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    let draft = doc.view.title_rich_formatting_draft().unwrap();
+    assert_eq!((draft.runs[0].start, draft.runs[0].end), (0, 10));
+    assert_eq!(
+        draft.runs[0].style.font_family.as_deref(),
+        Some("monospace")
+    );
+    assert_eq!(doc.view.editing_text(), Some("Card title"));
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    assert!(h.query_by_label("Auto").is_some());
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    h.get_by_label("Search fonts").type_text("mono");
+    h.run_steps(2);
+    h.key_press(Key::Escape);
+    h.run_steps(4);
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Inline Font Family")
+            .is_some(),
+        "draft={:?} topic={:?} toolbar={}",
+        h.state().doc().unwrap().view.editing_text(),
+        h.state().doc().unwrap().view.editing_topic(),
+        h.query_by_role_and_label(Role::Button, "Bold").is_some()
+    );
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    assert!(h.query_by_label("Auto").is_some());
+}
+
+#[test]
+fn inline_font_search_ime_composition_cannot_apply_a_font() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1600.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    h.get_by_label("Search fonts").click();
+    h.run_steps(2);
+    assert!(h.get_by_label("Search fonts").is_focused());
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "mono".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    assert!(
+        h.get_by_label("Monospace").accesskit_node().is_disabled(),
+        "search focused={} title={:?}",
+        h.get_by_label("Search fonts").is_focused(),
+        h.state().doc().unwrap().view.editing_text()
+    );
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_text(),
+        Some("Card title")
+    );
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("mono".into())));
+    h.run_steps(3);
+    assert!(!h.get_by_label("Monospace").accesskit_node().is_disabled());
+}
+
+#[test]
+fn canceled_and_multitouch_inline_color_keep_the_title_draft() {
+    for (contacts, cancel) in [(1, true), (2, false)] {
+        let (app, id) = app_with_card(CardKind::Sticky);
+        let mut h = harness(app, vec2(1600.0, 700.0));
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, true);
+        }
+        h.run_steps(4);
+        let label = "Inline Text Color #E8455C";
+        h.get_by_role_and_label(Role::ColorWell, label)
+            .scroll_to_me();
+        h.run_steps(4);
+        let pos = h
+            .get_by_role_and_label(Role::ColorWell, label)
+            .rect()
+            .center();
+        h.event(egui::Event::PointerMoved(pos));
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        for id in 1..=contacts {
+            h.event(egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(id),
+                phase: egui::TouchPhase::Start,
+                pos: pos + vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        h.run_steps(1);
+        for id in 1..=contacts {
+            h.event(egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(id),
+                phase: if cancel {
+                    egui::TouchPhase::Cancel
+                } else {
+                    egui::TouchPhase::End
+                },
+                pos: pos + vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.view.editing_topic(), Some(id));
+        assert!(
+            doc.view
+                .title_rich_formatting_draft()
+                .is_none_or(|draft| draft.is_empty())
+        );
+        assert!(h.get_by_label("Topic title").is_focused());
+    }
+}
+
+#[test]
 fn last_title_keystroke_and_window_close_in_one_frame_preserve_the_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fast-window-close.thinoda");

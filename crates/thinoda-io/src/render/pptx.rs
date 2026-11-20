@@ -216,8 +216,6 @@ impl Drawing {
         color: Color,
         opacity: f32,
     ) {
-        use thinoda_core::rich_text::InlineBaseline;
-
         let id = self.id();
         let left = if line.align == layout.align {
             layout.frame.min.x
@@ -238,56 +236,269 @@ impl Drawing {
         };
         let mut runs = String::new();
         for run in &line.runs {
-            let size = (thinoda_core::label_style::run_font_size(layout.size, &run.style)
-                * self.scale
-                / 127.0)
-                .round()
-                .clamp(100.0, 400_000.0) as u32;
-            let family = esc(run
-                .style
-                .font_family
-                .as_deref()
-                .or(style.font_family.as_deref())
-                .unwrap_or("Segoe UI")
-                .split(',')
-                .next()
-                .unwrap_or("Segoe UI")
-                .trim()
-                .trim_matches('"'));
-            let baseline = match run.style.baseline {
-                Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
-                Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
-                _ => "",
-            };
-            let color = run.style.color.map_or(color, |value| {
-                Color::rgba(
-                    value.r,
-                    value.g,
-                    value.b,
-                    (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
-                )
-            });
-            let preserve = if run.text.starts_with(char::is_whitespace)
-                || run.text.ends_with(char::is_whitespace)
-            {
-                r#" xml:space="preserve""#
-            } else {
-                ""
-            };
-            runs.push_str(&format!(
-                r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
-                u8::from(run.style.bold.unwrap_or(style.bold)),
-                u8::from(run.style.italic.unwrap_or(style.italic)),
-                if run.style.underline.unwrap_or(style.underline) { "sng" } else { "none" },
-                if run.style.strikethrough.unwrap_or(style.strikethrough) { "sngStrike" } else { "noStrike" },
-                fill(Some(color)),
-                esc(&run.text),
+            runs.push_str(&self.rich_run(
+                &run.text,
+                &run.style,
+                layout.size,
+                style,
+                color,
+                opacity,
             ));
         }
         self.xml.push_str(&format!(
             r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Label"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/>{runs}</a:p></p:txBody></p:sp>"#,
             self.transform(rect),
         ));
+    }
+
+    fn rich_run(
+        &self,
+        text: &str,
+        run: &thinoda_core::InlineTextStyle,
+        base_size: f32,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+        opacity: f32,
+    ) -> String {
+        use thinoda_core::rich_text::InlineBaseline;
+
+        let size = (thinoda_core::label_style::run_font_size(base_size, run) * self.scale / 127.0)
+            .round()
+            .clamp(100.0, 400_000.0) as u32;
+        let family = esc(run
+            .font_family
+            .as_deref()
+            .or(style.font_family.as_deref())
+            .unwrap_or("Segoe UI")
+            .split(',')
+            .next()
+            .unwrap_or("Segoe UI")
+            .trim()
+            .trim_matches('"'));
+        let baseline = match run.baseline {
+            Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
+            Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
+            _ => "",
+        };
+        let color = run.color.map_or(color, |value| {
+            Color::rgba(
+                value.r,
+                value.g,
+                value.b,
+                (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+            )
+        });
+        let preserve =
+            if text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace) {
+                r#" xml:space="preserve""#
+            } else {
+                ""
+            };
+        format!(
+            r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
+            u8::from(run.bold.unwrap_or(style.bold)),
+            u8::from(run.italic.unwrap_or(style.italic)),
+            if run.underline.unwrap_or(style.underline) {
+                "sng"
+            } else {
+                "none"
+            },
+            if run.strikethrough.unwrap_or(style.strikethrough) {
+                "sngStrike"
+            } else {
+                "noStrike"
+            },
+            fill(Some(color)),
+            esc(text),
+        )
+    }
+
+    fn rich_card_title(
+        &mut self,
+        text: &str,
+        rich: &thinoda_core::InlineText,
+        layout: &thinoda_core::label_style::LabelLayout,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+    ) -> Result<(), IoError> {
+        use thinoda_core::{InlineTextStyle, ListKind};
+
+        let id = self.id();
+        let top = layout
+            .lines
+            .first()
+            .map_or(layout.frame.min.y, |line| line.rect.min.y);
+        let rect = Rect::from_min_size(
+            Vec2::new(layout.frame.min.x, top),
+            Vec2::new(
+                layout.frame.size.x,
+                (layout.frame.max().y - top)
+                    .max(layout.block.size.y)
+                    .max(layout.line_height),
+            ),
+        );
+        let align = match style.align {
+            TextAlign::Left => "l",
+            TextAlign::Center => "ctr",
+            TextAlign::Right => "r",
+        };
+        let line_spacing = (layout.line_height * self.scale / 127.0)
+            .round()
+            .clamp(1.0, 158_400.0) as u32;
+        let default_size = (layout.size * self.scale / 127.0)
+            .round()
+            .clamp(100.0, 400_000.0) as u32;
+        let family = esc(style
+            .font_family
+            .as_deref()
+            .unwrap_or("Segoe UI")
+            .split(',')
+            .next()
+            .unwrap_or("Segoe UI")
+            .trim()
+            .trim_matches('"'));
+        let defaults = format!(
+            r#"<a:defRPr lang="en-US" sz="{default_size}" b="{}" i="{}" u="{}" strike="{}">{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:defRPr>"#,
+            u8::from(style.bold),
+            u8::from(style.italic),
+            if style.underline { "sng" } else { "none" },
+            if style.strikethrough {
+                "sngStrike"
+            } else {
+                "noStrike"
+            },
+            fill(Some(color)),
+        );
+        let mut numbered_prefixes = HashMap::new();
+        let mut paragraph_left = vec![None; text.split('\n').count()];
+        for line in &layout.lines {
+            let index = line.paragraph_index.ok_or_else(|| {
+                IoError::Invalid("rich card layout is missing a paragraph index".into())
+            })?;
+            let left = paragraph_left.get_mut(index).ok_or_else(|| {
+                IoError::Invalid("rich card layout paragraph index is out of range".into())
+            })?;
+            if left.is_none() {
+                *left = Some(line.rect.min.x);
+            }
+        }
+        let mut index = 0;
+        while index < rich.paragraphs.len() {
+            if rich.paragraphs[index].list != ListKind::Numbered {
+                index += 1;
+                continue;
+            }
+            let first = index;
+            index += 1;
+            while index < rich.paragraphs.len()
+                && rich.paragraphs[index].list == ListKind::Numbered
+                && rich.paragraphs[index].index == rich.paragraphs[index - 1].index + 1
+            {
+                index += 1;
+            }
+            let prefix_chars = (index - first).to_string().len() + 2;
+            for paragraph in &rich.paragraphs[first..index] {
+                numbered_prefixes.insert(paragraph.index as usize, prefix_chars);
+            }
+        }
+        let mut paragraphs = String::new();
+        let mut scalar = 0usize;
+        let mut run_index = 0usize;
+        let mut previous_list = None;
+        let mut explicit_numbering = false;
+        let mut number = 0usize;
+        for (index, paragraph) in text.split('\n').enumerate() {
+            let list = rich
+                .paragraphs
+                .iter()
+                .find(|p| p.index as usize == index)
+                .map(|p| p.list);
+            let bullet = match list {
+                Some(ListKind::Bulleted) => "<a:buChar char=\"•\"/>".to_owned(),
+                Some(ListKind::Numbered) if explicit_numbering => {
+                    number += 1;
+                    format!(r#"<a:buAutoNum type="arabicPeriod" startAt="{number}"/>"#)
+                }
+                Some(ListKind::Numbered) if previous_list == list => {
+                    number += 1;
+                    r#"<a:buAutoNum type="arabicPeriod"/>"#.to_owned()
+                }
+                Some(ListKind::Numbered) => {
+                    number = 1;
+                    r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#.to_owned()
+                }
+                None => "<a:buNone/>".to_owned(),
+            };
+            if list != Some(ListKind::Numbered) {
+                explicit_numbering = false;
+            } else if paragraph.is_empty() {
+                // PowerPoint skips empty items and does not continue after a non-1 startAt.
+                explicit_numbering = true;
+            }
+            previous_list = list;
+            let (paragraph_align, indent) = if list.is_some() {
+                let left = paragraph_left[index].ok_or_else(|| {
+                    IoError::Invalid("rich card layout is missing a list paragraph".into())
+                })?;
+                let prefix_chars = numbered_prefixes.get(&index).copied().unwrap_or(2);
+                let prefix = self
+                    .emu(
+                        style.size() * thinoda_core::label_style::GLYPH_WIDTH * prefix_chars as f32,
+                    )
+                    .clamp(1, 51_206_400);
+                let offset = self.emu((left - layout.frame.min.x).max(0.0));
+                let margin = offset.saturating_add(prefix).min(51_206_400);
+                ("l", format!(r#" marL="{margin}" indent="-{prefix}""#))
+            } else {
+                (align, String::new())
+            };
+            let mut runs = String::new();
+            let mut segment = String::new();
+            let mut segment_style = InlineTextStyle::default();
+            for ch in paragraph.chars() {
+                while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= scalar {
+                    run_index += 1;
+                }
+                let current = rich
+                    .runs
+                    .get(run_index)
+                    .filter(|run| run.start as usize <= scalar && scalar < run.end as usize)
+                    .map_or_else(InlineTextStyle::default, |run| run.style.clone());
+                if !segment.is_empty() && segment_style != current {
+                    runs.push_str(&self.rich_run(
+                        &segment,
+                        &segment_style,
+                        layout.size,
+                        style,
+                        color,
+                        1.0,
+                    ));
+                    segment.clear();
+                }
+                segment_style = current;
+                segment.push(ch);
+                scalar += 1;
+            }
+            if !segment.is_empty() {
+                runs.push_str(&self.rich_run(
+                    &segment,
+                    &segment_style,
+                    layout.size,
+                    style,
+                    color,
+                    1.0,
+                ));
+            }
+            scalar += 1;
+            paragraphs.push_str(&format!(
+                r#"<a:p><a:pPr algn="{paragraph_align}"{indent}><a:lnSpc><a:spcPts val="{line_spacing}"/></a:lnSpc>{bullet}{defaults}</a:pPr>{runs}<a:endParaRPr sz="{default_size}"/></a:p>"#
+            ));
+        }
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Card title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>{paragraphs}</p:txBody></p:sp>"#,
+            self.transform(rect),
+        ));
+        Ok(())
     }
 
     fn label(&mut self, rect: Rect, value: &str, size: f32, color: Color) {
@@ -915,28 +1126,39 @@ pub(crate) fn editable_slide(
                 draw.transform(rect)));
         }
         let family = s.font_family.as_deref().unwrap_or("Segoe UI");
-        let block = text.topic(*id);
-        for (index, line) in block.lines.iter().enumerate() {
-            let rect = Rect::from_min_size(
-                Vec2::new(
-                    tl.title_rect.min.x,
-                    tl.title_rect.min.y + index as f32 * block.line_height,
-                ),
-                Vec2::new(tl.title_rect.size.x, block.line_height),
+        if !topic.inline_text.is_empty() {
+            let style = thinoda_core::label_style::card_title_style(s);
+            let rich = thinoda_core::label_style::layout_rich_in_frame(
+                &style,
+                tl.title_rect,
+                &topic.title,
+                &topic.inline_text,
             );
-            draw.text(
-                &format!("Topic {id} text line {index}"),
-                rect,
-                &line.text,
-                s.font_size,
-                family,
-                text_color,
-                s.bold,
-                s.italic,
-                s.underline,
-                s.strikethrough,
-                s.align,
-            );
+            draw.rich_card_title(&topic.title, &topic.inline_text, &rich, &style, text_color)?;
+        } else {
+            let block = text.topic(*id);
+            for (index, line) in block.lines.iter().enumerate() {
+                let rect = Rect::from_min_size(
+                    Vec2::new(
+                        tl.title_rect.min.x,
+                        tl.title_rect.min.y + index as f32 * block.line_height,
+                    ),
+                    Vec2::new(tl.title_rect.size.x, block.line_height),
+                );
+                draw.text(
+                    &format!("Topic {id} text line {index}"),
+                    rect,
+                    &line.text,
+                    s.font_size,
+                    family,
+                    text_color,
+                    s.bold,
+                    s.italic,
+                    s.underline,
+                    s.strikethrough,
+                    s.align,
+                );
+            }
         }
         if let Some((number, rect)) = &tl.number {
             draw.text(
@@ -1224,6 +1446,97 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn editable_card_list_blocks_use_shared_layout_alignment() {
+        use thinoda_core::{
+            InlineParagraph, InlineText, ListKind,
+            label_style::{LabelStyle, layout_rich_in_frame},
+        };
+
+        let text = "short\nlonger words that wrap\n\nplain\nsolo\nend";
+        let rich = InlineText {
+            paragraphs: [
+                (0, ListKind::Bulleted),
+                (1, ListKind::Bulleted),
+                (2, ListKind::Bulleted),
+                (4, ListKind::Numbered),
+            ]
+            .into_iter()
+            .map(|(index, list)| InlineParagraph { index, list })
+            .collect(),
+            ..Default::default()
+        };
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 250.0));
+        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+            let style = LabelStyle {
+                align,
+                font_size: Some(12.0),
+                spacing: 0.0,
+                ..Default::default()
+            };
+            let layout = layout_rich_in_frame(&style, frame, text, &rich);
+            assert!(
+                layout
+                    .lines
+                    .iter()
+                    .filter(|line| line.paragraph_index == Some(1))
+                    .count()
+                    > 1
+            );
+            let mut draw = Drawing {
+                xml: String::new(),
+                next_id: 1,
+                frame,
+                scale: 12_700.0,
+                width: 9_144_000,
+                height: 6_858_000,
+                rotation: None,
+            };
+            draw.rich_card_title(text, &rich, &layout, &style, Color::rgb(0, 0, 0))
+                .unwrap();
+            let paragraphs: Vec<_> = draw.xml.split("<a:p>").skip(1).collect();
+            assert_eq!(paragraphs.len(), 6);
+            for index in [0, 1, 2, 4] {
+                let paragraph = paragraphs[index];
+                assert!(paragraph.contains(r#"<a:pPr algn="l" "#));
+                let attr = |name: &str| {
+                    paragraph
+                        .split_once(&format!(r#"{name}=""#))
+                        .unwrap()
+                        .1
+                        .split('"')
+                        .next()
+                        .unwrap()
+                        .parse::<i64>()
+                        .unwrap()
+                };
+                let left = layout
+                    .lines
+                    .iter()
+                    .find(|line| line.paragraph_index == Some(index))
+                    .unwrap()
+                    .rect
+                    .min
+                    .x;
+                let expected = draw.emu((left - frame.min.x).max(0.0));
+                assert_eq!(
+                    attr("marL") + attr("indent"),
+                    expected,
+                    "{align:?} paragraph {index}"
+                );
+            }
+            let expected_align = match align {
+                TextAlign::Left => "l",
+                TextAlign::Center => "ctr",
+                TextAlign::Right => "r",
+            };
+            for index in [3, 5] {
+                assert!(paragraphs[index].contains(&format!(r#"<a:pPr algn="{expected_align}">"#)));
+                assert!(paragraphs[index].contains("<a:buNone/>"));
+            }
+        }
+    }
 
     #[test]
     fn editable_sankey_slide_includes_scale_legend_when_enabled() {

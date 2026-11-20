@@ -169,21 +169,41 @@ Rules (each backed by a test):
 5. **Undo**: passthrough blobs are immutable `Arc<…>`, shared across snapshots and counted
    once in history memory accounting.
 6. **Privacy**: `masked_copy`/`mask_canvas` masks labels, tooltips, links, properties,
-   HTML labels and drops `attrs_rest` text content.
+   HTML labels and drops `attrs_rest` text content; `masked_copy` also drops document
+   passthrough attributes.
 7. **Budgets**: cumulative caps per object, sheet and workbook for passthrough bytes;
    exceeding them is an import diagnostic, not silent truncation.
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
-**As implemented in D6** (`thinoda_core::drawio_passthrough`, native v37, board
-clipboard v30): objects carry `DrawioCellPassthrough { source_id, style, attributes }`
-and sheets carry `DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`.
-Deviations from the rules above: the workbook level, opaque objects for unmappable cells
-and cut-once provenance are deferred to D10, so every clipboard copy clears `source_id`.
-Tombstones (`cell_ids`) list only cells that became canvas objects, because topic and
-zone ids are regenerated on each import. Export prefers a stored source id over the
-generated `o{id}` (Sankey connectors always use `o{id}`), which keeps renumbered
-re-imports stable. Object passthrough is an immutable `Arc`, shared across undo snapshots.
+**As implemented through D10 groundwork** (`thinoda_core::drawio_passthrough`, native
+v37 for cells/pages, v53 for document attributes, v54 for zone source IDs, v55 for
+topic source IDs, v56 for group source IDs, board clipboard v30): objects carry
+`DrawioCellPassthrough { source_id, style, attributes }`, sheets carry
+`DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`, and workbooks carry
+bounded safe unknown `<mxfile>` attributes in `DrawioDocumentPassthrough`. Other
+workbook-level XML, opaque objects for unmappable cells and cut-once provenance remain
+deferred to D10, so every clipboard copy clears `source_id`.
+Editable draw.io SVG/PNG exports embed only the selected sheet but include these
+workbook-level attributes; use a masked copy when source metadata must be removed.
+Document attributes use the `THINODA-XMIND-DRAWIO-DOCUMENT-1` snapshot and
+`THINODA-RECOVERY-DRAWIO-DOCUMENT-1` / `THINODA-RECOVERY-INK-DRAWIO-DOCUMENT-1`
+recovery envelopes; older envelopes are rejected if they contain these attributes.
+Zones, imported cards and representable flat groups own bounded source IDs;
+native v54–v56, private XMind snapshots and recovery preserve them. Topic moves
+retain ownership, while clipboard, duplication and masked copies clear it. Tombstones
+(`cell_ids`) cover represented canvas objects, including scene containers and
+represented table cells, named layers, zones, cards and groups with retained
+source IDs. Nested and undersized groups cannot retain their own identities and
+are disclosed on import. Generated object, layer,
+zone, group, topic, map-decoration and auxiliary cell IDs avoid retained tombstones.
+Zone, group, topic and map-decoration IDs also avoid live source IDs even when the
+tombstone budget omitted them. Sankey cell IDs use collision-free numeric IDs remapped
+consistently in the existing version 2 semantic extension; a Sankey topic can
+reuse only a canonical numeric `t` ID. Export prefers a unique stored object,
+zone, topic or group source ID when it can be retained. Tombstones persist in native workbooks,
+not as deleted cells in draw.io exports. Object passthrough is an immutable `Arc`,
+shared across undo snapshots.
 
 **As implemented in D7 (markers):** the 18 library marker kinds need native v38,
 board clipboard v31 and sheet clipboard v27. Private XMind snapshots use
@@ -761,6 +781,14 @@ clipboard v40, board clipboard v44, XMind
 `THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1` gate this content,
 including combinations with earlier rich-label and style features. Unsupported
 HTML and other label kinds remain open.
+
+*As implemented in D9 (card baseline subset):* floating sticky and text cards
+use the shared `InlineText` layout and inert draw.io HTML interchange for
+baseline overrides. Their previously invalid baseline values require native
+v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind
+`THINODA-XMIND-CARD-BASELINE-1`, and recovery
+`THINODA-RECOVERY-CARD-BASELINE-1` /
+`THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open.
 
 *As implemented in D9 (inline typography):* shape and primary connector
 label drafts can adjust a selected grapheme range or pending caret style's size

@@ -1,6 +1,6 @@
 //! View-only board gestures. Document edits happen once, on release.
 
-mod label_format;
+pub(super) mod label_format;
 
 use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
@@ -331,6 +331,8 @@ pub(super) struct LabelEdit {
     original_label_style: Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
     selection: Option<std::ops::Range<usize>>,
     typing_style: Option<label_format::TypingStyle>,
+    history: Option<label_format::LabelHistory>,
+    history_plain_fallback: bool,
     rich_reconciliation_error: Option<String>,
     toolbar_page: LabelToolbarPage,
     family_filter: String,
@@ -348,6 +350,57 @@ pub(super) struct LabelEdit {
     /// Started by typing: the draft holds the typed text and the caret must follow it.
     seeded: bool,
     ime_composing: bool,
+}
+
+fn label_history_selection(
+    ctx: &egui::Context,
+    edit_id: Id,
+    edit: &LabelEdit,
+) -> thinoda_core::rich_text_draft::DraftSelection {
+    let range = TextEdit::load_state(ctx, edit_id).and_then(|state| state.cursor.char_range());
+    if let Some(range) = range {
+        let end = edit.text.chars().count();
+        thinoda_core::rich_text_draft::DraftSelection {
+            anchor: range.secondary.index.0.min(end),
+            focus: range.primary.index.0.min(end),
+        }
+    } else {
+        let end = edit.text.chars().count();
+        thinoda_core::rich_text_draft::DraftSelection {
+            anchor: end,
+            focus: end,
+        }
+    }
+}
+
+fn restore_label_history(ctx: &egui::Context, edit_id: Id, edit: &mut LabelEdit) {
+    let Some(history) = &edit.history else {
+        return;
+    };
+    let draft = history.draft();
+    let selection = draft.selection();
+    edit.text = draft.text().to_owned();
+    edit.rich_source_text.clone_from(&edit.text);
+    edit.rich_text = (!draft.formatting().is_empty()).then(|| draft.formatting().clone());
+    edit.typing_style = draft
+        .typing_style()
+        .cloned()
+        .map(|style| label_format::TypingStyle {
+            position: selection.focus,
+            style,
+        });
+    edit.rich_reconciliation_error = None;
+    edit.selection =
+        Some(selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus));
+    let mut state = TextEdit::load_state(ctx, edit_id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(selection.focus),
+            egui::text::CCursor::new(selection.anchor),
+        )));
+    state.store(ctx, edit_id);
+    ctx.request_repaint();
 }
 
 impl MapView {
@@ -684,6 +737,8 @@ fn begin_label_at(
         original_label_style: object.label_style.clone(),
         selection: None,
         typing_style: None,
+        history: None,
+        history_plain_fallback: false,
         rich_reconciliation_error: None,
         toolbar_page: LabelToolbarPage::Formatting,
         family_filter: String::new(),
@@ -6071,15 +6126,31 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
     }
 }
 
-struct LabelEditorLayout<'a> {
-    ctx: &'a egui::Context,
-    base: &'a thinoda_core::label_style::LabelStyle,
-    font: &'a FontId,
-    zoom: f32,
-    color: Color32,
-    background: Color32,
-    wrap_width: f32,
-    align: egui::Align,
+pub(super) struct LabelEditorLayout<'a> {
+    pub(super) ctx: &'a egui::Context,
+    pub(super) base: &'a thinoda_core::label_style::LabelStyle,
+    pub(super) font: &'a FontId,
+    pub(super) zoom: f32,
+    pub(super) color: Color32,
+    pub(super) background: Color32,
+    pub(super) wrap_width: f32,
+    pub(super) align: egui::Align,
+}
+
+pub(super) fn card_title_grapheme_replacement_range(
+    text: &str,
+    selection: std::ops::Range<usize>,
+    snap_caret: bool,
+) -> Result<std::ops::Range<usize>, String> {
+    label_format::grapheme_replacement_range(text, selection, snap_caret)
+}
+
+pub(super) fn card_title_grapheme_deletion_range(
+    text: &str,
+    selection: std::ops::Range<usize>,
+    backward: bool,
+) -> Result<std::ops::Range<usize>, String> {
+    label_format::grapheme_deletion_range(text, selection, backward)
 }
 
 struct LabelListMarker {
@@ -6237,6 +6308,22 @@ fn label_editor_layout_job(
     job.halign = layout.align;
     job.keep_trailing_whitespace = true;
     (job, bold, markers)
+}
+
+pub(super) fn card_title_layout_job(
+    text: &str,
+    rich: &InlineText,
+    layout: &LabelEditorLayout<'_>,
+) -> (egui::text::LayoutJob, Vec<bool>, Vec<(usize, String, f32)>) {
+    let (job, bold, markers) = label_editor_layout_job(text, Some(rich), layout);
+    (
+        job,
+        bold,
+        markers
+            .into_iter()
+            .map(|marker| (marker.start, marker.text, marker.indent))
+            .collect(),
+    )
 }
 
 fn extra_label_at_point(
@@ -7001,15 +7088,45 @@ fn show_label_format_toolbar(
 }
 
 pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
-    matches!(
-        event,
-        egui::Event::Text(_)
-            | egui::Event::Paste(_)
-            | egui::Event::Cut
-            | egui::Event::Copy
-            | egui::Event::Ime(_)
-            | egui::Event::Key { .. }
-    )
+    label_accessibility_replacement(event).is_some()
+        || label_accessibility_set_value(event).is_some()
+        || matches!(
+            event,
+            egui::Event::Text(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Cut
+                | egui::Event::Copy
+                | egui::Event::Ime(_)
+                | egui::Event::Key { .. }
+        )
+}
+
+fn label_accessibility_replacement(event: &egui::Event) -> Option<&str> {
+    label_accessibility_value(event, egui::accesskit::Action::ReplaceSelectedText)
+}
+
+fn label_accessibility_set_value(event: &egui::Event) -> Option<&str> {
+    label_accessibility_value(event, egui::accesskit::Action::SetValue)
+}
+
+fn label_accessibility_value(
+    event: &egui::Event,
+    expected: egui::accesskit::Action,
+) -> Option<&str> {
+    match event {
+        egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+            action,
+            target_node,
+            target_tree,
+            data: Some(egui::accesskit::ActionData::Value(text)),
+        }) if *action == expected
+            && *target_node == MapCanvas::board_label_editor_id().accesskit_id()
+            && *target_tree == egui::accesskit::TreeId::ROOT =>
+        {
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 fn plain_key_press(event: &egui::Event, expected: Key) -> bool {
@@ -7348,8 +7465,22 @@ pub(super) fn show_label_editor(
             return;
         }
     }
+    let toolbar_has_focus = view.board_input.label.as_ref().is_some_and(|edit| {
+        ui.memory(|memory| {
+            memory
+                .focused()
+                .is_some_and(|id| edit.toolbar_buttons.contains(&id))
+        })
+    });
     let split_shortcuts = !minimap_blocks_keyboard
-        && ui.memory(|memory| memory.has_focus(edit_id))
+        && (ui.memory(|memory| memory.has_focus(edit_id))
+            || (toolbar_has_focus
+                && ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| label_accessibility_set_value(event).is_some())
+                })))
         && view.board_input.label.as_ref().is_some_and(|edit| {
             !edit.ime_composing
                 && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
@@ -7361,15 +7492,14 @@ pub(super) fn show_label_editor(
         })
         && ui.input(|input| {
             input.focused
-                && (view
-                    .board_input
-                    .label
-                    .as_ref()
-                    .is_some_and(|edit| edit.typing_style.is_some())
-                    || input
-                        .events
-                        .iter()
-                        .any(|event| label_format_shortcut(event).is_some()))
+                && (view.board_input.label.as_ref().is_some_and(|edit| {
+                    edit.typing_style.is_some()
+                        || edit.rich_text.is_some()
+                        || edit.history.is_some()
+                }) || input
+                    .events
+                    .iter()
+                    .any(|event| label_format_shortcut(event).is_some()))
                 && input
                     .events
                     .iter()
@@ -7380,12 +7510,69 @@ pub(super) fn show_label_editor(
                     matches!(
                         event,
                         egui::Event::PointerButton { .. } | egui::Event::Ime(_)
-                    ) || plain_key_press(event, Key::F6)
+                    ) || (matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::F6,
+                            pressed: true,
+                            ..
+                        }
+                    ) && !plain_key_press(event, Key::F6))
                 })
         });
-    if split_shortcuts {
-        // TextEdit reports only the final selection, so process formatting keys
-        // between surrounding text events instead of applying them afterward.
+    let split_ime = !minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && view.board_input.label.is_some()
+        && ui.input(|input| {
+            let keyboard: Vec<_> = input
+                .events
+                .iter()
+                .filter(|event| label_keyboard_event(event))
+                .collect();
+            input.focused
+                && keyboard.len() > 1
+                && keyboard
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Ime(_)))
+                && !keyboard.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::F6,
+                            pressed: true,
+                            ..
+                        }
+                    ) && !plain_key_press(event, Key::F6)
+                })
+                && !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    if split_shortcuts || split_ime {
+        #[allow(deprecated)]
+        if split_ime
+            && (view
+                .board_input
+                .label
+                .as_ref()
+                .is_some_and(|edit| edit.ime_composing)
+                || ui.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Ime(
+                                egui::ImeEvent::Preedit { .. }
+                                    | egui::ImeEvent::Commit(_)
+                                    | egui::ImeEvent::Disabled
+                            )
+                        )
+                    })
+                }))
+        {
+            consume_ime_candidate_keys(ui.ctx(), edit_id);
+        }
+        // Keep ordered keyboard events separate so each edit has its own range.
         let (events, pointer) = ui.input_mut(|input| {
             (
                 std::mem::take(&mut input.events),
@@ -7400,6 +7587,9 @@ pub(super) fn show_label_editor(
         }
         let mut processed = vec![false; events.len()];
         for (batch_index, batch) in batches.into_iter().enumerate() {
+            let formatting_focus = batch
+                .iter()
+                .any(|&index| plain_key_press(&events[index], Key::F6));
             ui.input_mut(|input| {
                 input.events = batch.iter().map(|&index| events[index].clone()).collect();
             });
@@ -7413,7 +7603,15 @@ pub(super) fn show_label_editor(
                     .style(ui.style().clone()),
             );
             child.set_clip_rect(Rect::NOTHING);
-            show_label_editor_pass(&mut child, doc, view, scene, false, edit_error, true);
+            show_label_editor_pass(
+                &mut child,
+                doc,
+                view,
+                scene,
+                false,
+                edit_error,
+                !formatting_focus,
+            );
             for index in batch {
                 processed[index] = true;
             }
@@ -7501,11 +7699,260 @@ fn show_label_editor_pass(
                     .any(|event| plain_key_press(event, Key::Escape))
         });
     let editor_owns_keyboard = editor_focused || escape_released_editor;
+    let editor_was_ime_composing = view
+        .board_input
+        .label
+        .as_ref()
+        .is_some_and(|edit| edit.ime_composing);
     if !minimap_blocks_keyboard
         && editor_owns_keyboard
         && let Some(edit) = &mut view.board_input.label
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
+    }
+    let history_input = ui.input(|input| {
+        if input
+            .events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Ime(_)))
+        {
+            label_format::HistoryInput::Ime
+        } else if input.events.iter().any(|event| match event {
+            egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut => true,
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                matches!(key, Key::Backspace | Key::Delete)
+                    || (*key == Key::Enter && modifiers.matches_exact(Modifiers::SHIFT))
+            }
+            _ => {
+                label_accessibility_replacement(event).is_some()
+                    || label_accessibility_set_value(event).is_some()
+            }
+        }) {
+            label_format::HistoryInput::Typing
+        } else {
+            label_format::HistoryInput::Other
+        }
+    });
+    if let Some(edit) = &mut view.board_input.label {
+        let selection = label_history_selection(ui.ctx(), edit_id, edit);
+        let typing = edit
+            .typing_style
+            .as_ref()
+            .map(|typing| typing.style.clone());
+        if edit.history.is_none()
+            && !edit.history_plain_fallback
+            && edit.rich_reconciliation_error.is_none()
+            && edit.rich_source_text == edit.text
+            && edit.text.chars().count() <= thinoda_core::MAX_INLINE_TEXT_CHARS
+        {
+            match label_format::LabelHistory::new(
+                edit.text.clone(),
+                edit.rich_text.clone().unwrap_or_default(),
+                selection,
+                typing.clone(),
+            ) {
+                Ok(history) => edit.history = Some(history),
+                Err(error) => *edit_error = Some(EditError::Invalid(error)),
+            }
+        }
+        if let Some(history) = &mut edit.history {
+            let synchronized = history.draft().text() == edit.text
+                && edit.rich_reconciliation_error.is_none()
+                && edit.rich_source_text == edit.text
+                && edit.rich_text.as_ref().map_or_else(
+                    || history.draft().formatting().is_empty(),
+                    |rich| rich == history.draft().formatting(),
+                );
+            if synchronized && let Err(error) = history.set_context(selection, typing) {
+                *edit_error = Some(EditError::Invalid(error));
+            }
+            let undo = if editor_owns_keyboard && !minimap_blocks_keyboard {
+                ui.input_mut(|input| {
+                    if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                        || input.consume_key(Modifiers::COMMAND, Key::Y)
+                    {
+                        Some(true)
+                    } else if input.consume_key(Modifiers::COMMAND, Key::Z) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            if let Some(redo) = undo {
+                let result =
+                    if edit.ime_composing || history_input == label_format::HistoryInput::Ime {
+                        Err("cannot undo or redo during rich-text composition".into())
+                    } else if !synchronized && redo {
+                        Err("resolve the invalid rich-text edit before redo".into())
+                    } else if !synchronized {
+                        Ok(true)
+                    } else if redo {
+                        history.redo()
+                    } else {
+                        history.undo()
+                    };
+                match result {
+                    Ok(true) => restore_label_history(ui.ctx(), edit_id, edit),
+                    Ok(false) => {}
+                    Err(error) => *edit_error = Some(EditError::Invalid(error)),
+                }
+            }
+        }
+    }
+    if editor_focused
+        && !minimap_blocks_keyboard
+        && let Some(edit) = &mut view.board_input.label
+        && !editor_was_ime_composing
+    {
+        enum GraphemeEdit {
+            Delete(bool),
+            ModifiedDelete(bool),
+            Replace,
+            AccessibilityReplace(bool),
+            Cut,
+        }
+        let operation = ui.input(|input| {
+            if input.pointer.any_pressed() || input.pointer.any_released() {
+                return None;
+            }
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            match (events.next(), events.next()) {
+                (
+                    Some(egui::Event::Key {
+                        pressed: true,
+                        modifiers,
+                        key,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::NONE)
+                    && matches!(key, Key::Backspace | Key::Delete) =>
+                {
+                    Some(GraphemeEdit::Delete(*key == Key::Backspace))
+                }
+                (
+                    Some(egui::Event::Key {
+                        pressed: true,
+                        modifiers,
+                        key,
+                        ..
+                    }),
+                    None,
+                ) if matches!(key, Key::Backspace | Key::Delete)
+                    && (modifiers.matches_exact(Modifiers::CTRL)
+                        || modifiers.matches_exact(Modifiers::ALT)
+                        || modifiers.matches_exact(Modifiers::COMMAND)) =>
+                {
+                    Some(GraphemeEdit::ModifiedDelete(*key == Key::Backspace))
+                }
+                (
+                    Some(egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::SHIFT) => Some(GraphemeEdit::Replace),
+                (Some(egui::Event::Text(text)), None)
+                    if !text.is_empty() && text != "\n" && text != "\r" =>
+                {
+                    Some(GraphemeEdit::Replace)
+                }
+                (Some(egui::Event::Paste(text)), None) if !text.is_empty() => {
+                    Some(GraphemeEdit::Replace)
+                }
+                (Some(event), None) if label_accessibility_replacement(event).is_some() => {
+                    Some(GraphemeEdit::AccessibilityReplace(
+                        label_accessibility_replacement(event).is_some_and(|text| !text.is_empty()),
+                    ))
+                }
+                (
+                    Some(egui::Event::Ime(
+                        egui::ImeEvent::Preedit { text, .. } | egui::ImeEvent::Commit(text),
+                    )),
+                    None,
+                ) if !text.is_empty() && text != "\n" && text != "\r" => {
+                    Some(GraphemeEdit::Replace)
+                }
+                (Some(egui::Event::Cut), None) => Some(GraphemeEdit::Cut),
+                _ => None,
+            }
+        });
+        if let Some(operation) = operation
+            && let Some(mut state) = TextEdit::load_state(ui.ctx(), edit_id)
+            && let Some(selection) = state.cursor.char_range()
+        {
+            let selection = selection.as_sorted_char_range();
+            let selection = selection.start.0..selection.end.0;
+            let range = match operation {
+                GraphemeEdit::Delete(backward) => {
+                    label_format::grapheme_deletion_range(&edit.text, selection.clone(), backward)
+                }
+                GraphemeEdit::Replace => {
+                    label_format::grapheme_replacement_range(&edit.text, selection.clone(), true)
+                }
+                GraphemeEdit::AccessibilityReplace(snap_caret) => {
+                    label_format::grapheme_replacement_range(
+                        &edit.text,
+                        selection.clone(),
+                        snap_caret,
+                    )
+                }
+                GraphemeEdit::Cut => {
+                    label_format::grapheme_replacement_range(&edit.text, selection.clone(), false)
+                }
+                GraphemeEdit::ModifiedDelete(backward) if selection.is_empty() => {
+                    if backward {
+                        label_format::grapheme_replacement_range(
+                            &edit.text,
+                            selection.clone(),
+                            true,
+                        )
+                    } else {
+                        label_format::grapheme_deletion_range(&edit.text, selection.clone(), false)
+                            .map(|cluster| {
+                                let position = cluster.start.min(selection.start);
+                                position..position
+                            })
+                    }
+                }
+                GraphemeEdit::ModifiedDelete(_) => {
+                    label_format::grapheme_replacement_range(&edit.text, selection.clone(), false)
+                }
+            };
+            match range {
+                Ok(range) if range != selection => {
+                    if selection.is_empty()
+                        && range.is_empty()
+                        && let Some(typing) = &mut edit.typing_style
+                        && typing.position == selection.start
+                    {
+                        typing.position = range.start;
+                    }
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(range.end),
+                            egui::text::CCursor::new(range.start),
+                        )));
+                    state.store(ui.ctx(), edit_id);
+                }
+                Ok(_) => {}
+                Err(error) => *edit_error = Some(EditError::Invalid(error)),
+            }
+        }
     }
     let family_filter_id = MapCanvas::id().with("board-label-family-filter");
     let toolbar_value_id = MapCanvas::id().with("board-label-toolbar-value");
@@ -7652,6 +8099,142 @@ fn show_label_editor_pass(
     let mut layout_typing = edit.typing_style.clone();
     let mut layout_source = edit.rich_source_text.clone();
     let require_pending_match = edit.rich_reconciliation_error.is_some();
+    let track_insertion = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(event, egui::Event::Text(_) | egui::Event::Paste(_))
+                        || label_accessibility_replacement(event)
+                            .is_some_and(|text| !text.is_empty())
+                        || label_accessibility_set_value(event).is_some_and(|text| !text.is_empty())
+                })
+                .count()
+                == 1
+                && !input.events.iter().any(|event| match event {
+                    egui::Event::Ime(_) | egui::Event::Cut => true,
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
+                        matches!(key, Key::Backspace | Key::Delete | Key::Enter | Key::Tab)
+                            || (modifiers.command && *key != Key::V)
+                    }
+                    _ => false,
+                })
+        });
+    let tracked_deletion =
+        if layout_rich.is_some() && !require_pending_match && layout_source == edit.text {
+            ui.input(|input| {
+                let mut events = input.events.iter().filter(|event| {
+                    label_keyboard_event(event)
+                        && !matches!(event, egui::Event::Key { pressed: false, .. })
+                });
+                match (events.next(), events.next()) {
+                    (
+                        Some(egui::Event::Key {
+                            key: Key::Backspace,
+                            pressed: true,
+                            ..
+                        }),
+                        None,
+                    ) => Some(label_format::Deletion::Backward),
+                    (
+                        Some(egui::Event::Key {
+                            key: Key::Delete,
+                            pressed: true,
+                            ..
+                        }),
+                        None,
+                    ) => Some(label_format::Deletion::Forward),
+                    (Some(egui::Event::Cut), None) => Some(label_format::Deletion::Selection),
+                    (Some(event), None)
+                        if label_accessibility_replacement(event).is_some_and(str::is_empty)
+                            || label_accessibility_set_value(event).is_some_and(str::is_empty) =>
+                    {
+                        Some(label_format::Deletion::Selection)
+                    }
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
+    let track_line_break = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::SHIFT)
+            )
+        });
+    let track_surrounding = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { .. })),
+                    None,
+                )
+            ) && !input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    let track_ime_replace = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Ime(
+                        egui::ImeEvent::Preedit { .. } | egui::ImeEvent::Commit(_)
+                    )),
+                    None,
+                )
+            ) && !input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    let track_edit = track_insertion
+        || track_line_break
+        || tracked_deletion.is_some()
+        || track_surrounding
+        || track_ime_replace;
+    let tracked_source = track_edit.then(|| layout_source.clone());
+    let tracked_rich = track_edit.then(|| layout_rich.clone()).flatten();
+    let tracked_typing = track_edit.then(|| layout_typing.clone()).flatten();
+    let operations = std::cell::RefCell::new(Vec::new());
     let deletion = ui.input(|input| {
         input.events.iter().find_map(|event| match event {
             egui::Event::Key {
@@ -7678,7 +8261,57 @@ fn show_label_editor_pass(
     let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
         let text = buffer.as_str();
         layout_error = None;
-        if let Some(rich) = &mut layout_rich
+        let tracked = tracked_rich
+            .as_ref()
+            .zip(tracked_source.as_deref())
+            .map(|(rich, source)| {
+                if track_surrounding {
+                    label_format::reconcile_tracked_surrounding_deletion(
+                        rich,
+                        source,
+                        text,
+                        &tracked_typing,
+                        &operations.borrow(),
+                    )
+                } else {
+                    let operations = operations.borrow();
+                    let deletion = if track_ime_replace
+                        && matches!(
+                            operations.as_slice(),
+                            [label_format::TextOperation::Delete(_)]
+                        ) {
+                        Some(label_format::Deletion::Selection)
+                    } else {
+                        tracked_deletion
+                    };
+                    label_format::reconcile_tracked_edit(
+                        rich,
+                        source,
+                        text,
+                        &tracked_typing,
+                        &operations,
+                        deletion,
+                    )
+                }
+            });
+        let mut applied = false;
+        if let Some(result) = tracked {
+            match result {
+                Ok(Some((rich, typing))) => {
+                    layout_rich = Some(rich);
+                    layout_typing = typing;
+                    layout_source = text.to_owned();
+                    applied = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    layout_error = Some(error);
+                    applied = true;
+                }
+            }
+        }
+        if !applied
+            && let Some(rich) = &mut layout_rich
             && layout_source != text
         {
             match label_format::reconcile_typing(
@@ -7716,7 +8349,12 @@ fn show_label_editor_pass(
         list_markers = markers;
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
-    let mut text_edit = TextEdit::multiline(&mut edit.text)
+    let mut tracked_buffer = label_format::TrackedBuffer {
+        text: &mut edit.text,
+        operations: &operations,
+        track: track_edit,
+    };
+    let mut text_edit = TextEdit::multiline(&mut tracked_buffer)
         .id(edit_id)
         .font(font.clone())
         .text_color(text_color)
@@ -7784,7 +8422,13 @@ fn show_label_editor_pass(
             *edit_error = Some(error);
         }
     }
-    if output.response.has_focus()
+    let accessibility_set_value = ui.input(|input| {
+        input
+            .events
+            .iter()
+            .any(|event| label_accessibility_set_value(event).is_some())
+    });
+    if (output.response.has_focus() || (accessibility_set_value && output.response.changed()))
         && let Some(range) = output.state.cursor.char_range()
     {
         let range = range.as_sorted_char_range();
@@ -7920,7 +8564,14 @@ fn show_label_editor_pass(
                 .is_some_and(|id| edit.toolbar_buttons.contains(&id))
         });
     }
-    if !format_actions.is_empty() {
+    if edit.history_plain_fallback && !format_actions.is_empty() {
+        format_actions.clear();
+        *edit_error = Some(EditError::Invalid(
+            "finish and reopen this label before applying formatting; its plain-text undo history is active".into(),
+        ));
+    }
+    let formatting_changed = !format_actions.is_empty();
+    if formatting_changed {
         let selection = edit
             .selection
             .clone()
@@ -8021,6 +8672,42 @@ fn show_label_editor_pass(
         }
         ui.ctx().request_repaint();
         toolbar_now_focused = false;
+    }
+    if edit.rich_reconciliation_error.is_none() && edit.rich_source_text == edit.text {
+        if edit.rich_text.is_none()
+            && edit.typing_style.is_none()
+            && edit.text.chars().count() > thinoda_core::MAX_INLINE_TEXT_CHARS
+        {
+            edit.history = None;
+            edit.history_plain_fallback = true;
+        } else {
+            let selection = label_history_selection(ui.ctx(), edit_id, edit);
+            if let Some(history) = &mut edit.history {
+                let input = if formatting_changed {
+                    label_format::HistoryInput::Other
+                } else {
+                    history_input
+                };
+                let time = ui.input(|input| input.time);
+                let default_rich = InlineText::default();
+                if let Err(error) = history.record(
+                    &edit.text,
+                    edit.rich_text.as_ref().unwrap_or(&default_rich),
+                    selection,
+                    edit.typing_style
+                        .as_ref()
+                        .map(|typing| typing.style.clone()),
+                    label_format::HistoryEvent {
+                        input,
+                        time,
+                        ime_composing: edit.ime_composing,
+                    },
+                ) {
+                    edit.rich_reconciliation_error = Some(error.clone());
+                    *edit_error = Some(EditError::Invalid(error));
+                }
+            }
+        }
     }
     if commit {
         match view.try_commit_board_label(doc) {
@@ -8248,6 +8935,35 @@ mod accessibility_index_tests {
     use super::*;
     use thinoda_core::Workbook;
 
+    #[test]
+    fn label_accessibility_text_actions_only_claim_their_own_node() {
+        for action in [
+            egui::accesskit::Action::ReplaceSelectedText,
+            egui::accesskit::Action::SetValue,
+        ] {
+            let mut request = egui::accesskit::ActionRequest {
+                action,
+                target_node: MapCanvas::board_label_editor_id().accesskit_id(),
+                target_tree: egui::accesskit::TreeId::ROOT,
+                data: Some(egui::accesskit::ActionData::Value("x".into())),
+            };
+            assert!(label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request.clone()
+            )));
+            request.target_node = MapCanvas::board_label_editor_id()
+                .with("other")
+                .accesskit_id();
+            assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request.clone()
+            )));
+            request.target_node = MapCanvas::board_label_editor_id().accesskit_id();
+            request.data = None;
+            assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request
+            )));
+        }
+    }
+
     fn card(sheet: &mut Sheet, title: &str, x: f32) -> TopicId {
         sheet
             .add_card(
@@ -8465,10 +9181,12 @@ mod accessibility_index_tests {
             thinoda_core::board::CanvasGroup {
                 id: first_group,
                 locked: false,
+                drawio_source_id: None,
             },
             thinoda_core::board::CanvasGroup {
                 id: second_group,
                 locked: false,
+                drawio_source_id: None,
             },
         ]);
         sheet.canvas.objects[0].group = Some(first_group);
@@ -8612,6 +9330,7 @@ mod alignment_tests {
             .unwrap();
         sheet.zones.push(Zone {
             id: ZoneId(77),
+            drawio_source_id: None,
             name: "Guide clip".into(),
             frame: thinoda_core::Rect::from_center_size(
                 Vec2::new(500.0, 0.0),
@@ -8678,6 +9397,7 @@ mod alignment_tests {
         sheet.zones.extend([
             Zone {
                 id: ZoneId(10),
+                drawio_source_id: None,
                 name: "Original clip".into(),
                 frame: thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(60.0, 40.0)),
                 roots: vec![],
@@ -8689,6 +9409,7 @@ mod alignment_tests {
             },
             Zone {
                 id: ZoneId(11),
+                drawio_source_id: None,
                 name: "Destination clip".into(),
                 frame: thinoda_core::Rect::from_center_size(
                     Vec2::new(100.0, 0.0),

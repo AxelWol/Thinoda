@@ -61,6 +61,7 @@ fn side_reset_undo_and_legacy_serialization_are_compatible() {
         sheets: vec![sheet],
         active_sheet: 0,
         metadata: Default::default(),
+        drawio: None,
     });
     let before = doc.workbook().clone();
     assert!(

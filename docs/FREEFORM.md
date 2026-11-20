@@ -1896,6 +1896,55 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   `open_path`/`request_open` calls do not participate in the UI event-ordering
   wrapper.
 
+### Formatted card-title editing checkpoint and critique
+
+- Existing inline styles and list paragraphs on sticky-note/text-card titles now
+  survive ordered edits, render in the editor, and commit atomically with the
+  changed title. The draft uses bounded local undo/redo; IME preedit/commit
+  changes are grouped, and recovery validates document ownership plus the
+  original title and formatting before applying the pending draft.
+- Duck check: repeated text makes whole-string diffing ambiguous, so edits are
+  reconciled from egui's ordered insert/delete/replace operations. Recovery
+  applies both title and formatting through the core card-title transaction,
+  while ordinary unformatted title editing keeps its prior path.
+- Focused native tests cover repeated-text run movement, title commit, list/run
+  retention and document undo. Real IME/accessibility behavior and broader
+  formatted-title toolbar controls remain unverified/open; this checkpoint
+  does not claim D9 completion.
+- Follow-up critique: transient editor layouts must reconcile the current
+  ordered operations before indexing rich runs, including delete-all. Adjacent
+  selection deletion/insertion is a single replacement so it inherits the
+  selected style; committed continuations rebase formatting and check the
+  document owner. Snapshot round-trip and foreign-owner/stale-format tests
+  cover recovery. Pointer-free keyboard, IME and title-targeted accessible
+  text-value actions process each event in order. IME candidate keys stay in
+  composition and undo/redo during composition is refused; separate ordinary
+  text events create separate local undo steps. An outside canvas press now
+  applies preceding eligible text and IME input before committing, without
+  consuming later input; a rejected stale-source commit retains the draft.
+  The app's native/web input splitter orders title input before host controls;
+  synthetic formatted-title close-tab cases cover text and IME, not all host
+  actions. Eligible text, IME and title-targeted accessibility replacement
+  around one editor press now follow event order; Tab transitions preserve
+  subsequent input, with a 32-transition batch limit. Multiple presses and
+  other accessibility targets still need ordering parity. Single-event typing,
+  deletion, cut, accessible selected-text replacement and initial IME input
+  share the shape-label editor's grapheme-boundary rules.
+- A dirty formatted draft survives deletion or loss of its layout source.
+  The view warns once, refuses to replace it with a new title edit, and allows
+  cancellation or continuation after the source is restored. Recovery rejects
+  a missing source. This is in-memory retention, not durable orphan recovery;
+  programmatic view resets are not covered by this guarantee. IME updates
+  received while the source is unavailable are not added to the draft.
+- Selected text in a formatted card title or a freshly opened plain title
+  supports Command/Ctrl+B, I and U plus toolbar controls for strikethrough,
+  subscript/superscript and bulleted/numbered paragraphs. The controls use
+  grapheme-expanded ranges, show selected format state and write through
+  bounded local undo; whole-card style controls remain separate. Plain titles
+  with active plain-text edit history must be committed and reopened before
+  formatting. Inline font family/size/color, caret typing styles, other label
+  kinds, and real IME/accessibility acceptance remain open.
+
 ### Card alignment and color mixer checkpoint and rubber-duck critique
 
 - Sticky-note and text-card titles now align their complete row within the
@@ -1935,8 +1984,9 @@ The title remains a `String`, with a separate bounded `InlineText` value for
 Sticky/Text cards. The editor keeps a separate string draft; layout's
 `TextMeasure` receives a string and one font, while visual export caches shaped
 text by that same single style. The core model now validates sparse inline
-overrides and paragraph list metadata, but toolbar controls remain disabled:
-a rich selection still must survive editing, layout, save and export.
+overrides and paragraph list metadata. Whole-card style controls are available,
+but the card title editor remains plain: selected-run and list editing still
+must survive editing, layout, save and export.
 
 Implementation contract and remaining work:
 
@@ -1948,16 +1998,31 @@ Implementation contract and remaining work:
    characters, 1,024 runs and 1,024 list paragraphs; font families are limited
    to 128 bytes and sizes to 6–256 points. `None` inherits whole-card style,
    while `Some(false)` explicitly disables a property.
-2. Native format v8 is required only when inline content is present; older
+2. Native format v8 is required only when inline content is present; card
+   baseline overrides require v52. Older
    documents retain their previous version. The importer rejects inline data
-   in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
-   reports inline formatting/list loss. Until rich-aware editing is complete,
-   plain title edits reject affected cards without changing the title or
+   in pre-v8 archives and legacy unversioned JSON. Export preflight reports
+   inline formatting/list loss for unsupported formats. Until rich-aware
+   editing is complete, plain title edits reject affected cards without changing the title or
    formatting. Search/replace now remaps runs and list paragraphs atomically,
    while keeping the existing lock and size guards. Internal clipboard and
    recovery propagation preserve this model with the version and compatibility
-   limits below; rendering, rich editing and external format fidelity remain
-   open.
+   limits below; canvas, SVG/PNG/JPEG/PDF rendering and the supported draw.io
+   HTML subset, including baseline overrides, are available for formatted
+   sticky/text-card titles.
+   PowerPoint branch/zone slides emit each formatted title as one editable
+   text box with styled runs and native paragraph/list properties. One
+   rotated fixture opened, edited and saved in Windows PowerPoint. A second
+   fixture showed hidden empty-list markers and different wrapping/alignment;
+   explicit numbering after empty items preserves initial values but may
+   require manual adjustment after editing. List paragraphs now use the
+   shared layout's estimated block positions, but their margins do not adapt
+   to later PowerPoint edits. A separate Windows PowerPoint fixture still
+   wrapped the same long item differently from Thinoda. Other hosts remain unverified,
+   and viewport slides are rasterized. Run-level
+   card editing remains open. A validated, locked-
+   aware title-and-inline mutation now supplies an atomic undoable commit for
+   a future editor; it does not yet expose editing controls or drafts.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1965,12 +2030,15 @@ Implementation contract and remaining work:
    single before/after string diff, which is ambiguous for repeated text or
    multiple edits. Lists need explicit paragraph semantics rather than merely
    painting a bullet.
-4. Measure and render mixed fonts, sizes and decorations together in the canvas
-   and export paths, including wrapping, clipping and rotation. Extend export
-   preflight and clipboard fallbacks so unsupported formatting or list
-   structure is reported, not silently discarded. Editable PowerPoint requires
-   real text runs and paragraph properties; SVG-derived PDF and raster output
-   need the same visual layout, not a plain-text substitute.
+4. Canvas rendering now paints formatted sticky/text-card titles with the
+   shared rich-label layout, including wrapping and list markers; SVG and its
+   raster/PDF derivatives use the same layout, and draw.io import/export
+   round-trips the supported inert HTML subset, including baseline overrides.
+   Editable PowerPoint emits mixed styles and paragraph/list properties in a
+   single card-title text box; validate wrapping, lists, clipping and rotation
+   in Office. Extend export preflight and
+   clipboard fallbacks so unsupported formatting or list structure is
+   reported, not silently discarded.
 
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than
@@ -1984,7 +2052,7 @@ may accept only plain text. Specify and test caret-only formatting, list
 editing, accessibility and lossy-format consent before exposing these controls.
 Native and browser screen-reader, real IME and physical-device acceptance
 remain separate gates. The model foundation is implemented, but no
-selected-range or list controls are enabled.
+selected-range or list controls are enabled for card rich text.
 
 An editor prototype can investigate egui 0.37's `TextBuffer` interface: typing,
 paste and IME invoke character-indexed insert/delete operations, which avoids
@@ -1994,6 +2062,98 @@ preedit repeatedly deletes and reinserts a composition, and default
 backspace/delete operate on individual scalar values. A rich-aware history,
 composition transaction and grapheme policy must be verified before wiring the
 adapter to persisted content.
+
+Synthetic egui tests show that one frame can delete and insert several times
+without the layouter seeing the intermediate text. Final-string reconciliation
+also cannot identify where a repeated character was inserted. Shape and
+connector label editors now record the buffer range for a single eligible
+text or paste event, Shift+Enter, Backspace, Delete or cut, preserving
+formatting at the actual position and for selected replacements or deletions.
+Pointer-free, non-IME rich-label keyboard batches are now processed one event
+at a time, allowing eligible same-frame insertions and deletions to retain
+their ranges. Pointer/IME batches can still use the earlier reconciliation and
+misplace formatting. This partial fix is not a safe card editor: the complete
+replacement must retain ordered operation positions and handle empty deletions,
+input limits and IME transactions.
+
+Duck check: the single-insertion path accepts only one text or paste event,
+without IME, cut, deletion, finish keys or competing command shortcuts. It
+checks the captured operations and resulting string before using the exact
+range; unsupported sequences retain the old behavior rather than claiming
+ordered editing. Directional selections, repeated text, unchanged-text
+replacement and document undo are covered with synthetic shape and primary
+connector input; an extra connector label is also covered. These tests do not
+establish real clipboard, IME or browser acceptance.
+
+Duck check: the single-deletion path requires exactly one pressed Backspace or
+Delete among keyboard events and validates the captured range and resulting
+text before applying it. It keeps a pending typing style only at a matching
+deletion boundary. Unmodified Backspace/Delete now expand collapsed and
+partial selections to grapheme boundaries, with synthetic shape/connector
+coverage for combining marks, flags, ZWJ emoji and local undo. Isolated
+text/paste replacement, cut, Shift+Enter and the start of an IME composition
+expand partial grapheme selections; a caret inside a grapheme snaps to its end
+before insertion, preserving its pending typing style. Ignored empty text and
+paste and standalone newline text events leave the selection unchanged.
+Eligible isolated Ctrl,
+Alt and Command Backspace/Delete also expand partial selections; collapsed
+modified deletion snaps an interior caret toward the deletion direction before
+egui computes its range. That range's other endpoint and active IME
+surrounding ranges still need separate grapheme-policy work.
+Synthetic tests also cover empty initial IME events and active preedit updates
+that join adjacent graphemes; the empty events preserve the actual selection
+direction present immediately before the event.
+Eligible AccessKit `ReplaceSelectedText` requests for the active label use the
+same grapheme boundaries and tracked rich edits, including empty replacement
+and ordered keyboard batches. Synthetic shape and connector tests do not
+establish real assistive-technology behavior or cover other accessibility
+actions.
+Eligible AccessKit `SetValue` requests are tracked as whole-selection edits,
+even for empty or unchanged values. Pointer-free, non-IME batches beginning
+with a toolbar button focused now order eligible `SetValue`, focus changes and
+formatting actions while keeping the new caret. Other unfocused controls and
+real accessibility clients remain open.
+Repeated characters, selected deletion and document undo also have synthetic
+shape and connector coverage, including an extra label.
+
+Duck check: an eligible cut retains formatting outside the actual removed
+selection and clears a pending caret style. Synthetic forward and reverse
+selections verify the plain-text clipboard command and document undo; this
+does not verify host clipboard delivery or preserve rich clipboard content.
+
+Duck check: keyboard batching reuses the existing invisible per-event editor
+passes and stops when the edit closes. Synthetic repeated insertions and a
+delete-then-insert sequence retain formatting and commit with an Enter in the
+same frame. Pointer events, IME and F6 deliberately bypass batching; real input
+devices and frame-level rejection remain separate acceptance gates.
+
+Duck check: an eligible Shift+Enter uses the actual insertion or selected
+replacement range. Synthetic shape and connector cases cover repeated newlines,
+list paragraph inheritance and document undo; IME and mixed pointer input are
+not covered by this path.
+
+Duck check: label-local keyboard history stores bounded rich snapshots instead
+of using egui's plain-string undo. It retains directional selections and caret
+styles, groups typing and synthetic composition, restores the last valid
+snapshot on undo after a rejected rich edit, and refuses undo/redo during active
+composition. Shape and both connector-label kinds have synthetic coverage; the
+app's document undo stays separate until the draft is committed. A plain draft
+that exceeds the rich-text limit remains on egui's plain history even after
+shrinking; formatting reports that the label must be finished and reopened,
+avoiding a silent history reset. Physical IME, mixed pointer/IME event ordering,
+platform clipboard behavior and rich-card editing remain unverified.
+
+Duck check: an isolated, pointer-free IME surrounding-delete event uses the
+actual ordered buffer deletions, clamping oversized ranges as egui does and
+remapping the pending caret. Isolated preedit and commit replacements use
+actual buffer ranges, and pointer-free mixed IME/keyboard batches are
+processed in order while candidate keys remain protected for the whole IME
+frame. Unmodified F6 is routed according to focus and composition state.
+Synthetic tests cover repeated text, both sides of a composition, empty
+preedit/commit cancellation, candidate keys, F6, and undo before, during and
+after composition. Synthetic editor clicks around IME input and outside-click
+commit preserve repeated-text formatting. Modified F6 and other pointer
+batches still require separate acceptance.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
@@ -2008,8 +2168,11 @@ runs. It refuses to change paragraph boundaries while list metadata exists.
 The bounded sparse-style/list model, range style updates, validation,
 history-memory accounting, and native/export loss gates are production code.
 Egui event/undo integration, empty-commit versus cancellation, grapheme
-behavior, paragraph-list editing, external rich-text clipboard interoperability,
-rendering and accessibility are not production implementations.
+behavior, card paragraph-list editing, external rich-text clipboard
+interoperability, cross-format rendering and accessibility are not complete
+production implementations. Canvas and SVG-derived visual painting and the
+supported draw.io HTML subset are implemented for formatted card titles; other
+label editors retain their own already-shipped rich-text controls.
 
 #### Internal clipboard and recovery checkpoint: critique
 

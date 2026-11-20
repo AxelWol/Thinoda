@@ -57,6 +57,11 @@ const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
 const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECTOR-LABELS-1";
 const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
     "THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1";
+const CARD_BASELINE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CARD-BASELINE-1";
+const DRAWIO_DOCUMENT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-DOCUMENT-1";
+const DRAWIO_ZONE_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ZONE-IDS-1";
+const DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-TOPIC-IDS-1";
+const DRAWIO_GROUP_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-GROUP-IDS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -985,7 +990,32 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_rich_extra_connector_labels() {
+    if book.has_drawio_group_source_ids() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_GROUP_IDS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_topic_source_ids() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_zone_source_ids() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_ZONE_IDS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.drawio.is_some() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_DOCUMENT_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_card_baseline_overrides() {
+        Ok(serde_json::to_string(&(
+            CARD_BASELINE_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_extra_connector_labels() {
         Ok(serde_json::to_string(&(
             RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
             book,
@@ -1203,6 +1233,11 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == RICH_LABELS_SNAPSHOT_VERSION
                 || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
                 || version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+                || version == CARD_BASELINE_SNAPSHOT_VERSION
+                || version == DRAWIO_DOCUMENT_SNAPSHOT_VERSION
+                || version == DRAWIO_ZONE_IDS_SNAPSHOT_VERSION
+                || version == DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION
+                || version == DRAWIO_GROUP_IDS_SNAPSHOT_VERSION
         })
 }
 
@@ -1214,12 +1249,42 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .as_array()
         .and_then(|envelope| envelope.get(1))
         .unwrap_or(&value);
+    if workbook.get("drawio").is_some_and(|value| !value.is_null()) {
+        return true;
+    }
     if workbook
         .get("sheets")
         .and_then(Value::as_array)
         .is_some_and(|sheets| {
             sheets.iter().any(|sheet| {
                 sheet.get("sankey").is_some_and(|v| !v.is_null())
+                    || sheet
+                        .get("zones")
+                        .and_then(Value::as_array)
+                        .is_some_and(|zones| {
+                            zones.iter().any(|zone| {
+                                zone.get("drawio_source_id").is_some_and(|v| !v.is_null())
+                            })
+                        })
+                    || sheet
+                        .get("topics")
+                        .and_then(Value::as_object)
+                        .is_some_and(|topics| {
+                            topics.values().any(|topic| {
+                                topic.get("drawio_source_id").is_some_and(|v| !v.is_null())
+                                    || topic
+                                        .get("inline_text")
+                                        .and_then(|text| text.get("runs"))
+                                        .and_then(Value::as_array)
+                                        .is_some_and(|runs| {
+                                            runs.iter().any(|run| {
+                                                run.get("style")
+                                                    .and_then(|style| style.get("baseline"))
+                                                    .is_some_and(|value| !value.is_null())
+                                            })
+                                        })
+                            })
+                        })
                     || sheet
                         .get("canvas")
                         .and_then(|canvas| canvas.get("scene"))
@@ -1228,6 +1293,15 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                         .get("canvas")
                         .and_then(|canvas| canvas.get("layers"))
                         .is_some()
+                    || sheet
+                        .get("canvas")
+                        .and_then(|canvas| canvas.get("groups"))
+                        .and_then(Value::as_array)
+                        .is_some_and(|groups| {
+                            groups.iter().any(|group| {
+                                group.get("drawio_source_id").is_some_and(|v| !v.is_null())
+                            })
+                        })
             })
         })
     {
@@ -1334,12 +1408,73 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != RICH_LABELS_SNAPSHOT_VERSION
             && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
             && version != RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            && version != CARD_BASELINE_SNAPSHOT_VERSION
+            && version != DRAWIO_DOCUMENT_SNAPSHOT_VERSION
+            && version != DRAWIO_ZONE_IDS_SNAPSHOT_VERSION
+            && version != DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION
+            && version != DRAWIO_GROUP_IDS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        let rich_extra_connector_labels_envelope =
-            version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        let group_envelope = version == DRAWIO_GROUP_IDS_SNAPSHOT_VERSION;
+        if workbook.has_drawio_group_source_ids() != group_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require a group-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if group_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
+        let topic_envelope = version == DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION;
+        if workbook.has_drawio_topic_source_ids() != topic_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io topic source IDs require a topic-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if topic_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
+        let zone_envelope = version == DRAWIO_ZONE_IDS_SNAPSHOT_VERSION;
+        if workbook.has_drawio_zone_source_ids() != zone_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io zone source IDs require a zone-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if zone_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
+        let document_envelope = version == DRAWIO_DOCUMENT_SNAPSHOT_VERSION;
+        if workbook.drawio.is_some() != document_envelope {
+            return Err(IoError::NewerVersion(
+                "draw.io document metadata requires a document-aware private XMind snapshot".into(),
+            ));
+        }
+        if document_envelope {
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(IoError::Invalid)?;
+            return Ok(workbook);
+        }
+        let card_baseline_envelope = version == CARD_BASELINE_SNAPSHOT_VERSION;
+        if workbook.has_card_baseline_overrides() != card_baseline_envelope {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require a card-baseline-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_extra_connector_labels_envelope = version
+            == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            || card_baseline_envelope && workbook.has_rich_extra_connector_labels();
         if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich extra connector labels require a rich-extra-connector-label-aware private XMind snapshot"
@@ -1347,7 +1482,8 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             ));
         }
         let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
-            || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+            || (rich_extra_connector_labels_envelope || card_baseline_envelope)
+                && workbook.has_rich_connector_labels();
         if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich connector labels require a rich-connector-label-aware private XMind snapshot"
@@ -1355,15 +1491,20 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             ));
         }
         let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION
-            || rich_connector_labels_envelope
-            || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+            || (rich_connector_labels_envelope
+                || rich_extra_connector_labels_envelope
+                || card_baseline_envelope)
+                && workbook.has_rich_labels();
         if workbook.has_rich_labels() != rich_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
             ));
         }
         let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION
-            || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+            || (rich_labels_envelope
+                || rich_connector_labels_envelope
+                || rich_extra_connector_labels_envelope
+                || card_baseline_envelope)
                 && workbook.has_label_styles();
         if workbook.has_label_styles() != label_styles_envelope {
             return Err(IoError::NewerVersion(
@@ -1372,7 +1513,9 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         let version = if !label_styles_envelope
             && !rich_labels_envelope
+            && !rich_connector_labels_envelope
             && !rich_extra_connector_labels_envelope
+            && !card_baseline_envelope
         {
             version
         } else if workbook.has_shape_styles() {
@@ -1874,6 +2017,32 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_drawio_group_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io group source IDs require a group-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_drawio_topic_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io topic source IDs require a topic-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_drawio_zone_source_ids() {
+            return Err(IoError::NewerVersion(
+                "draw.io zone source IDs require a zone-ID-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.drawio.is_some() {
+            return Err(IoError::NewerVersion(
+                "draw.io document metadata requires a document-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_card_baseline_overrides() {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require a card-baseline-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
         if workbook.has_rich_labels() {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
@@ -3369,6 +3538,7 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                     sheets,
                     active_sheet: 0,
                     metadata: Default::default(),
+                    drawio: None,
                 },
                 warnings.into_iter().collect(),
             ));
@@ -4326,6 +4496,7 @@ fn import_legacy_xml_with_resources(
             sheets: imported_sheets,
             active_sheet: 0,
             metadata: Default::default(),
+            drawio: None,
         },
         warnings.into_iter().collect(),
     ))
@@ -4382,6 +4553,232 @@ mod tests {
         child_topic.image = Some(reference);
         child_topic.image_below = false;
         (Workbook::new(sheet), bytes)
+    }
+
+    #[test]
+    fn drawio_zone_ids_require_aware_private_snapshot() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        sheet
+            .create_board_frame(
+                "Lane",
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 200.0),
+                ),
+            )
+            .unwrap();
+        sheet.zones[0].drawio_source_id = Some("source-zone".into());
+        book.drawio = Some(std::sync::Arc::new(
+            thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+                attributes: vec![("owner".into(), "team".into())],
+            },
+        ));
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_ZONE_IDS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(DRAWIO_DOCUMENT_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_ZONE_IDS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
+    }
+
+    #[test]
+    fn drawio_topic_ids_require_aware_private_snapshot() {
+        let mut book = Workbook::default();
+        let root = book.active().root;
+        book.active_mut().topic_mut(root).unwrap().drawio_source_id = Some("source-topic".into());
+        book.active_mut()
+            .create_board_frame(
+                "Lane",
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 200.0),
+                ),
+            )
+            .unwrap();
+        book.active_mut().zones[0].drawio_source_id = Some("source-zone".into());
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(DRAWIO_ZONE_IDS_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
+    }
+
+    #[test]
+    fn drawio_group_ids_require_aware_private_snapshot() {
+        use thinoda_core::{Card, CardKind};
+
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let first = sheet
+            .add_card(
+                "A",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        let second = sheet
+            .add_card(
+                "B",
+                Vec2::new(150.0, 0.0),
+                Card::new(CardKind::Text, Vec2::new(120.0, 60.0)),
+            )
+            .unwrap();
+        sheet
+            .group_board_members(&[
+                thinoda_core::board::BoardMember::Card(first),
+                thinoda_core::board::BoardMember::Card(second),
+            ])
+            .unwrap();
+        sheet.canvas.groups[0].drawio_source_id = Some("source-group".into());
+        sheet.topic_mut(first).unwrap().drawio_source_id = Some("source-topic".into());
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_GROUP_IDS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(DRAWIO_TOPIC_IDS_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_GROUP_IDS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
+    }
+
+    #[test]
+    fn drawio_document_metadata_requires_aware_private_snapshot() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "Text",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("Text", 0..1, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+            })
+            .unwrap();
+        book.drawio = Some(std::sync::Arc::new(
+            thinoda_core::drawio_passthrough::DrawioDocumentPassthrough {
+                attributes: vec![("owner".into(), "team".into())],
+            },
+        ));
+        let plain = Workbook {
+            drawio: book.drawio.clone(),
+            ..Workbook::default()
+        };
+        assert_eq!(import(&export(&plain).unwrap()).unwrap(), plain);
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(DRAWIO_DOCUMENT_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        let old = serde_json::to_string(&(CARD_BASELINE_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&old).is_err());
+        let missing =
+            serde_json::to_string(&(DRAWIO_DOCUMENT_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap();
+        assert!(read_private_snapshot(&missing).is_err());
+    }
+
+    #[test]
+    fn card_baseline_requires_matching_private_snapshot_envelope() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "A🙂B",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("A🙂B", 1..2, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+            })
+            .unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(CARD_BASELINE_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        assert!(
+            read_private_snapshot(
+                &serde_json::to_string(&(RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION, &book))
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            read_private_snapshot(
+                &serde_json::to_string(&(CARD_BASELINE_SNAPSHOT_VERSION, &Workbook::default()))
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let mut connector = thinoda_core::board::CanvasConnector::new(
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::ZERO),
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("label", 0..5, |style| style.bold = Some(true))
+            .unwrap();
+        connector
+            .extra_labels
+            .push(thinoda_core::board::ConnectorLabel {
+                text: "label".into(),
+                rich_text: Some(std::sync::Arc::new(rich.clone())),
+                ..Default::default()
+            });
+        let mut object = thinoda_core::board::CanvasObject::connector(connector);
+        object.set_label("label").unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        assert_eq!(
+            read_private_snapshot(&private_snapshot(&book).unwrap()).unwrap(),
+            book
+        );
     }
 
     #[test]

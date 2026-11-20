@@ -19,6 +19,79 @@ pub const MAX_SHEET_PASSTHROUGH_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_SOURCE_ID_BYTES: usize = 256;
 /// Upper bound for remembered source cell ids of a page.
 pub const MAX_PAGE_CELL_IDS: usize = 100_000;
+/// Upper bound for unknown attributes on the source `<mxfile>` element.
+pub const MAX_DOCUMENT_PASSTHROUGH_BYTES: usize = 16 * 1024;
+/// Attributes managed by the draw.io adapter rather than document passthrough.
+pub const RESERVED_DOCUMENT_ATTRIBUTES: &[&str] = &[
+    "agent",
+    "compressed",
+    "etag",
+    "host",
+    "modified",
+    "pages",
+    "type",
+    "version",
+];
+/// Model attributes written by the draw.io adapter, not page passthrough.
+pub const RESERVED_MODEL_ATTRIBUTES: &[&str] = &[
+    "dx",
+    "dy",
+    "grid",
+    "gridSize",
+    "thinodaGrid",
+    "thinodaSnap",
+    "thinodaSankey",
+    "background",
+    "backgroundImage",
+    "guides",
+    "tooltips",
+    "connect",
+    "arrows",
+    "fold",
+    "page",
+    "pageScale",
+    "pageWidth",
+    "pageHeight",
+    "math",
+    "shadow",
+    "adaptiveColors",
+];
+
+/// Unknown attributes of the source `<mxfile>` element.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrawioDocumentPassthrough {
+    /// Attributes not represented by first-class workbook fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<(String, String)>,
+}
+
+impl DrawioDocumentPassthrough {
+    pub fn is_empty(&self) -> bool {
+        self.attributes.is_empty()
+    }
+
+    pub fn byte_len(&self) -> usize {
+        pairs_len(&self.attributes)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let mut names = HashSet::new();
+        for (name, value) in &self.attributes {
+            if !valid_attribute_name(name)
+                || RESERVED_DOCUMENT_ATTRIBUTES.contains(&name.as_str())
+                || !valid_text(value)
+                || !names.insert(name.as_str())
+            {
+                return Err(format!("invalid draw.io document attribute {name:?}"));
+            }
+        }
+        if self.byte_len() > MAX_DOCUMENT_PASSTHROUGH_BYTES {
+            return Err("draw.io document passthrough is too large".into());
+        }
+        Ok(())
+    }
+}
 
 /// Unknown draw.io data of one cell that became a canvas object.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,8 +173,9 @@ pub struct DrawioPagePassthrough {
     /// `mxGraphModel` attributes without a Thinoda field, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_attributes: Vec<(String, String)>,
-    /// Every cell id of the source page. New objects never reuse one, so external
-    /// references to deleted cells cannot silently retarget.
+    /// Retained source IDs for imported objects, scene containers and named layers. Generated
+    /// object, layer, zone, group, topic, map-decoration and auxiliary IDs avoid
+    /// these after deletion. Sankey IDs are remapped in their semantic extension.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cell_ids: Vec<String>,
 }
@@ -123,7 +197,11 @@ impl DrawioPagePassthrough {
         }
         let mut names = HashSet::new();
         for (name, value) in &self.model_attributes {
-            if !valid_attribute_name(name) || !valid_text(value) || !names.insert(name.as_str()) {
+            if !valid_attribute_name(name)
+                || RESERVED_MODEL_ATTRIBUTES.contains(&name.as_str())
+                || !valid_text(value)
+                || !names.insert(name.as_str())
+            {
                 return Err(format!("invalid draw.io page attribute {name:?}"));
             }
         }
@@ -132,6 +210,9 @@ impl DrawioPagePassthrough {
         }
         for id in &self.cell_ids {
             valid_id(id, "draw.io cell id")?;
+        }
+        if self.byte_len() > MAX_SHEET_PASSTHROUGH_BYTES {
+            return Err("draw.io passthrough of the sheet is too large".into());
         }
         Ok(())
     }
@@ -193,6 +274,26 @@ mod tests {
     }
 
     #[test]
+    fn document_attributes_are_bounded_and_validated() {
+        let document = DrawioDocumentPassthrough {
+            attributes: vec![("custom".into(), "value".into())],
+        };
+        document.validate().unwrap();
+        for attributes in [
+            vec![("xmlns:evil".into(), "x".into())],
+            vec![("host".into(), "spoofed".into())],
+            vec![("custom".into(), "bad\u{1}".into())],
+            vec![("custom".into(), "1".into()), ("custom".into(), "2".into())],
+        ] {
+            assert!(DrawioDocumentPassthrough { attributes }.validate().is_err());
+        }
+        let too_large = DrawioDocumentPassthrough {
+            attributes: vec![("custom".into(), "x".repeat(MAX_DOCUMENT_PASSTHROUGH_BYTES))],
+        };
+        assert!(too_large.validate().is_err());
+    }
+
+    #[test]
     fn validates_keys_values_and_budget() {
         cell().validate().unwrap();
         for bad in [
@@ -251,12 +352,19 @@ mod tests {
     fn page_validation() {
         let page = DrawioPagePassthrough {
             diagram_id: Some("page-1".into()),
-            model_attributes: vec![("math".into(), "1".into())],
+            model_attributes: vec![("future".into(), "1".into())],
             cell_ids: vec!["0".into(), "1".into()],
         };
         page.validate().unwrap();
         let mut bad = page.clone();
-        bad.model_attributes.push(("math".into(), "0".into()));
+        bad.model_attributes.push(("future".into(), "0".into()));
+        assert!(bad.validate().is_err());
+        bad = page.clone();
+        bad.model_attributes.push(("grid".into(), "0".into()));
+        assert!(bad.validate().is_err());
+        bad = page;
+        bad.model_attributes
+            .push(("large".into(), "x".repeat(MAX_SHEET_PASSTHROUGH_BYTES)));
         assert!(bad.validate().is_err());
     }
 }
