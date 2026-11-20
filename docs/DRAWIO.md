@@ -127,7 +127,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
    families are converted locally from a user-supplied draw.io stencil file or a
    user-triggered download pinned by SHA-256; they are stored as user libraries.
 5. **Thinoda UX first.** draw.io features appear through existing surfaces: the
-   library browser, contextual top strips, the inspector, the context menu and
+   library browser, unified nearby selection menu, the inspector, the context menu and
    command palette. No draw.io menu bar, Format panel or sidebar clone.
 6. **Version gating.** Every new persisted field raises the native format
    version and clipboard version, has a default that preserves older files, and
@@ -238,6 +238,15 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D9 — Style and text
 
+Selection-menu consolidation is tracked in
+[Nearby selection menu](CONTEXT-FORMATTING.md): the existing nearby node menu
+also owns card, shape, connector and stencil formatting, with capability-based
+Text/Style/Arrange/Actions sections instead of competing upper strips.
+
+- [x] Consolidate node, card, shape, connector and stencil formatting into one nearby selection menu; remove duplicated upper floating toolbars
+- [x] Expose only applicable Text/Style/Arrange/Actions controls and explicit selected-object, selected-text or new-text scope
+- [x] Preserve multi-selection common typography and card fill with undo; retain editor focus, IME and numeric/picker draft ownership
+- [x] Complete contextual-menu rubber-duck critique, compact rendered-control acceptance and label-outline regression checks (see linked design)
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)

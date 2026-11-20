@@ -1,7 +1,10 @@
 //! Board tools and accessible labels shared by native and web views.
 
 use egui::{Color32, Context, Rect, Ui, vec2};
-use thinoda_canvas::{Action, BoardTool, MapView};
+use thinoda_canvas::{
+    Action, BoardTool, MapView,
+    format_menu::{self, Section},
+};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
@@ -495,8 +498,6 @@ struct ShapeProperties {
     /// Outline drawn when no explicit stroke is set and the shape has no fill.
     auto_stroke: Color,
     stroke_width: f32,
-    text_color: Option<Color>,
-    auto_text_color: Color,
 }
 
 impl ShapeProperties {
@@ -538,7 +539,6 @@ enum ShapeChange {
     Fill(Option<Color>),
     Stroke(Option<Color>),
     StrokeWidth(f32),
-    TextColor(Option<Color>),
 }
 
 impl ShapeChange {
@@ -548,7 +548,6 @@ impl ShapeChange {
             Self::Fill(_) => "Fill color",
             Self::Stroke(_) => "Outline color",
             Self::StrokeWidth(_) => "Outline width",
-            Self::TextColor(_) => "Text Color",
         }
     }
 
@@ -572,7 +571,6 @@ impl ShapeChange {
                 // An automatic outline has a fixed width, so a chosen width pins its color.
                 object.style.stroke.get_or_insert(auto_stroke);
             }
-            Self::TextColor(color) => object.style.text_color = color,
         }
     }
 }
@@ -626,12 +624,6 @@ const SHAPE_OUTLINE_WIDTH: WidthControl = WidthControl {
     label: "Outline width",
     key: "shape_outline",
     salt: "shape-outline-width",
-};
-const SHAPE_TEXT_COLOR: ColorControl = ColorControl {
-    label: "Text Color",
-    none: "Auto",
-    key: "shape_text",
-    icon: icons::BOARD_TEXT,
 };
 
 #[derive(Clone, Copy)]
@@ -925,6 +917,9 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
         t("Clicking or tapping empty canvas also adds the armed shape.").into();
     labels.label_placeholder = t("Type a label").into();
     labels.label_formatting = t("Label formatting (F6)").into();
+    labels.format_sections =
+        ["Text", "Style", "Arrange", "Actions"].map(|label| t(label).to_owned());
+    labels.text_scopes = ["Selected text", "New text"].map(|label| t(label).to_owned());
     labels.label_bold = t("Bold").into();
     labels.label_italic = t("Italic").into();
     labels.label_underline = t("Underline").into();
@@ -1089,11 +1084,6 @@ impl ThinodaApp {
                 !matches!(&other.kind, CanvasObjectKind::Shape { shape: kind, .. } if kind == shape)
             })
         });
-        let mut auto_style = object.style;
-        auto_style.text_color = None;
-        let auto_text_color = crate::ui::to_color(
-            thinoda_canvas::board_label_colors(doc.doc.sheet(), &auto_style, view.dark).0,
-        );
         Some(ShapeContext {
             target,
             enabled,
@@ -1107,8 +1097,6 @@ impl ThinodaApp {
                     view.dark,
                 )),
                 stroke_width: object.style.stroke_width,
-                text_color: object.style.text_color,
-                auto_text_color,
             },
         })
     }
@@ -1228,6 +1216,11 @@ impl ThinodaApp {
         let toolbar_right = toolbar_left + toolbar_width + 16.0;
         let editing_toolbar = editing_toolbar
             .filter(|rect| rect.right() > toolbar_left && rect.left() < toolbar_right);
+        if editing_toolbar
+            .is_some_and(|rect| rect.bottom() + 8.0 + MIN_BOARD_TOOLBAR_HEIGHT > canvas.bottom())
+        {
+            return None;
+        }
         let top_inset = editing_toolbar
             .map_or(BOARD_TOOLBAR_TOP_INSET, |rect| {
                 (rect.bottom() - canvas.top() + 8.0).max(BOARD_TOOLBAR_TOP_INSET)
@@ -1414,7 +1407,7 @@ impl ThinodaApp {
         &mut self,
         ctx: &Context,
         canvas: Rect,
-        card_text_open: bool,
+        _card_text_open: bool,
     ) -> Option<Rect> {
         let viewport = self.current_viewport;
         let Some(context) = self.board_object_context() else {
@@ -1424,17 +1417,9 @@ impl ThinodaApp {
         let target = context.target().clone();
         let enabled = context.enabled();
         let selected = 1 + target.owner.others.len();
-        let (area_id, scroll_id, heading) = match &context {
-            BoardObjectContext::Connector(_) => (
-                "thinoda_connector_options",
-                "board_connector_options",
-                "Connector options",
-            ),
-            BoardObjectContext::Shape(_) => (
-                "thinoda_shape_options",
-                "board_shape_options",
-                "Shape options",
-            ),
+        let heading = match &context {
+            BoardObjectContext::Connector(_) => "Connector options",
+            BoardObjectContext::Shape(_) => "Shape options",
         };
         let popup_slot = connector_popup_slot(viewport);
         let previous = ctx.data(|data| data.get_temp::<ConnectorPopups>(popup_slot));
@@ -1446,74 +1431,140 @@ impl ThinodaApp {
         }
         let format_panel_open = self.settings.show_format_panel
             && self.sidebar_family == crate::app::SidebarFamily::Format;
-        let strip = context_strip_rects(canvas, card_text_open, true).1?;
+        let doc = self.doc_mut()?;
+        let owner = format_menu::owner(&doc.doc, &doc.view);
+        format_menu::prepare(ctx, owner);
+        let anchor = doc.view.selected_board_rect(&doc.doc)?;
+        if !anchor.intersects(canvas) {
+            Self::close_connector_popups(ctx, viewport);
+            return None;
+        }
+        let area_id = format_menu::area_id(ctx);
+        let size = format_menu::desired_size(
+            ctx,
+            owner,
+            format_menu::section(ctx, owner, Section::Style),
+            canvas.width(),
+        );
+        let toolbox = Rect::from_min_size(canvas.min, vec2(76.0, canvas.height()));
+        let strip = format_menu::place(canvas, anchor, size, &[toolbox]);
+        let mut section = format_menu::section(ctx, owner, Section::Style);
+        let mut sections = vec![(Section::Actions, t("Actions"))];
+        if enabled {
+            sections.splice(
+                0..0,
+                [(Section::Text, t("Text")), (Section::Style, t("Style"))],
+            );
+        }
+        if self.has_context_arrange_controls() {
+            sections.insert(sections.len() - 1, (Section::Arrange, t("Arrange")));
+        }
+        if !sections.iter().any(|(value, _)| *value == section) {
+            section = Section::Actions;
+        }
         let mut connector_change = None;
         let mut shape_change = None;
         let mut popups = Vec::new();
         let mut action = None;
-        let area = egui::Area::new(egui::Id::unique((area_id, viewport)))
-            .order(egui::Order::Middle)
+        let mut command = None;
+        if !format_menu::claim(ctx, format_menu::Producer::Selection) {
+            return ctx.memory(|memory| memory.area_rect(area_id));
+        }
+        let area = egui::Area::new(area_id)
+            .order(egui::Order::Foreground)
             .fixed_pos(strip.min)
-            .constrain_to(strip)
+            .constrain_to(canvas)
             .movable(false)
             .show(ctx, |ui| {
-                ui.set_min_size(strip.size());
                 ui.set_max_width(strip.width());
-                ui.shrink_clip_rect(strip);
-                egui::Frame::new()
-                    .fill(thinoda_ui::Palette::of_ui(ui).surface)
-                    .inner_margin(egui::Margin::symmetric(6, 3))
-                    .show(ui, |ui| {
-                        ui.set_width((strip.width() - 12.0).max(0.0));
-                        ui.set_min_height((strip.height() - 6.0).max(0.0));
-                        ui.push_id(&target.owner, |ui| {
-                            egui::ScrollArea::horizontal()
-                                .id_salt(scroll_id)
-                                .scroll_source(egui::scroll_area::ScrollSource::ALL)
-                                .scroll_bar_visibility(
-                                    egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
-                                )
-                                .max_width(ui.available_width())
-                                .min_scrolled_width(0.0)
-                                .max_height((strip.height() - 6.0).max(0.0))
-                                .min_scrolled_height(34.0)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.horizontal_centered(|ui| {
-                                        let heading = if selected > 1 {
-                                            format!("{} ({selected})", t(heading))
-                                        } else {
-                                            t(heading).to_owned()
-                                        };
-                                        ui.label(egui::RichText::new(heading).small());
-                                        ui.add_enabled_ui(enabled, |ui| match &context {
-                                            BoardObjectContext::Connector(connector) => {
-                                                (connector_change, popups) =
-                                                    connector_context_controls(
-                                                        ui, canvas, true, 34.0, connector,
-                                                    );
-                                            }
-                                            BoardObjectContext::Shape(shape) => {
-                                                (shape_change, popups) = shape_context_controls(
-                                                    ui, canvas, true, 34.0, shape,
-                                                );
-                                            }
-                                        });
-                                        action = context_action_controls(
-                                            ui,
-                                            true,
-                                            34.0,
-                                            enabled && selected == 1,
-                                            format_panel_open,
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width((strip.width() - 16.0).max(1.0));
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().button_padding.x = 4.0;
+                    ui.push_id(&target.owner, |ui| {
+                        let previous_section = section;
+                        format_menu::tabs(ui, &mut section, &sections, true);
+                        if section != previous_section {
+                            Self::close_connector_popups(ctx, viewport);
+                            format_menu::set_section(ctx, owner, section);
+                        }
+                        ui.add_enabled_ui(
+                            enabled || section == Section::Actions,
+                            |ui| match section {
+                                Section::Text => {
+                                    if canvas.height() > 220.0 {
+                                        ui.label(
+                                            egui::RichText::new(t(if selected > 1 {
+                                                "Selected objects"
+                                            } else {
+                                                "Selected object"
+                                            }))
+                                            .small(),
                                         );
+                                    }
+                                    popups = self.board_context_text_properties(ui);
+                                }
+                                Section::Arrange => command = self.context_arrange_controls(ui),
+                                Section::Actions => {
+                                    if enabled {
+                                        ui.horizontal_wrapped(|ui| {
+                                            action = context_action_controls(
+                                                ui,
+                                                true,
+                                                28.0,
+                                                selected == 1,
+                                                format_panel_open,
+                                            );
+                                        });
+                                    }
+                                    command = self.selection_context_actions(ui);
+                                }
+                                Section::Style => {
+                                    let heading = if selected > 1 {
+                                        format!("{} ({selected})", t(heading))
+                                    } else {
+                                        t(heading).to_owned()
+                                    };
+                                    ui.label(egui::RichText::new(heading).small());
+                                    ui.horizontal_wrapped(|ui| match &context {
+                                        BoardObjectContext::Connector(connector) => {
+                                            (connector_change, popups) = connector_context_controls(
+                                                ui, canvas, true, 34.0, connector,
+                                            );
+                                        }
+                                        BoardObjectContext::Shape(shape) => {
+                                            (shape_change, popups) = shape_context_controls(
+                                                ui, canvas, true, 34.0, shape,
+                                            );
+                                        }
                                     });
-                                    crate::ui::reveal_changed_focus(ui);
-                                });
-                        });
+                                    if matches!(context, BoardObjectContext::Shape(_)) {
+                                        ui.menu_button(t("More style options"), |ui| {
+                                            self.board_shape_style_properties(ui);
+                                        });
+                                    }
+                                }
+                            },
+                        );
+                        crate::ui::reveal_changed_focus(ui);
                     });
+                });
             });
+        format_menu::measured(
+            ctx,
+            owner,
+            section,
+            canvas.width(),
+            size.y,
+            area.response.rect,
+        );
         if enabled {
             let mut updated_target = target.clone();
+            if let Some(current) = self.board_object_context()
+                && current.target().owner == target.owner
+            {
+                updated_target = current.target().clone();
+            }
             let result = if let Some(change) = connector_change {
                 Some(self.apply_connector_change(&updated_target, change))
             } else {
@@ -1544,6 +1595,10 @@ impl ThinodaApp {
                 Self::close_connector_popups(ctx, viewport);
                 if let Err(error) = self.edit_board_label(&target) {
                     self.toasts.warning(error);
+                }
+                if let Some(command) = command {
+                    Self::close_connector_popups(ctx, viewport);
+                    self.exec(ctx, command);
                 }
             }
             Some(ContextAction::FormatPanel) => self.exec(ctx, Cmd::ToggleFormatPanel),
@@ -4103,6 +4158,14 @@ impl ThinodaApp {
     }
 
     pub(crate) fn board_card_properties(&mut self, ui: &mut Ui) {
+        self.board_card_properties_inner(ui, true);
+    }
+
+    pub(crate) fn board_card_geometry_properties(&mut self, ui: &mut Ui) {
+        self.board_card_properties_inner(ui, false);
+    }
+
+    fn board_card_properties_inner(&mut self, ui: &mut Ui, fill: bool) {
         let Some(doc) = self.doc() else { return };
         if doc.view.selection.len() != 1 || !doc.view.board_selection.is_empty() {
             return;
@@ -4125,7 +4188,7 @@ impl ThinodaApp {
                 widgets::caption(ui, t("Locked"));
             }
             ui.add_enabled_ui(!locked, |ui| {
-                optional_color(ui, "Fill", &mut edited.color, Color::WHITE);
+                if fill { optional_color(ui, "Fill", &mut edited.color, Color::WHITE); }
                 for (label, value) in [
                     ("Width", &mut edited.size.x),
                     ("Height", &mut edited.size.y),
@@ -4413,22 +4476,6 @@ fn shape_context_controls(
     if let Some(width) = picked {
         change = Some(ShapeChange::StrokeWidth(width));
     }
-    let effective_text = properties.text_color.unwrap_or(properties.auto_text_color);
-    let (text, picked) = color_popup(
-        ui,
-        canvas,
-        collapsed,
-        row_height,
-        SHAPE_TEXT_COLOR,
-        &context.target,
-        properties.text_color,
-        effective_text,
-        Some(effective_text),
-    );
-    popups.push(text);
-    if let Some(color) = picked {
-        change = Some(ShapeChange::TextColor(color));
-    }
     (change, popups)
 }
 
@@ -4472,13 +4519,40 @@ fn context_action_controls(
 
 /// Board-toolbar color menu: a "none" choice, swatches and a custom picker.
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn text_color_popup(
+    ui: &mut Ui,
+    canvas: Rect,
+    target: &(impl std::hash::Hash + std::fmt::Debug),
+    current: Option<Color>,
+    picker_start: Color,
+) -> (egui::Id, Option<Option<Color>>) {
+    let height = ui.spacing().interact_size.y;
+    color_popup(
+        ui,
+        canvas,
+        true,
+        height,
+        ColorControl {
+            key: "object-text-color",
+            icon: "A",
+            label: "Text Color",
+            none: "Auto",
+        },
+        target,
+        current,
+        picker_start,
+        current,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn color_popup(
     ui: &mut Ui,
     canvas: Rect,
     collapsed: bool,
     row_height: f32,
     control: ColorControl,
-    target: &ConnectorTarget,
+    target: &(impl std::hash::Hash + std::fmt::Debug),
     current: Option<Color>,
     picker_start: Color,
     swatch: Option<Color>,
@@ -4498,10 +4572,7 @@ fn color_popup(
                 let none = ui
                     .selectable_label(current.is_none(), t(control.none))
                     .accessible_name(format!("{} · {}", t(control.label), t(control.none)));
-                if none.clicked()
-                    && widgets::touch_activation_allowed(ui.ctx())
-                    && current.is_some()
-                {
+                if none.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
                     change = Some(None);
                 }
                 let selected = current.map(|color| Color32::from_rgb(color.r, color.g, color.b));
@@ -4797,10 +4868,10 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
     activated
 }
 
-fn custom_color_picker(
+pub(crate) fn custom_color_picker(
     ui: &mut Ui,
     key: &'static str,
-    target: &ConnectorTarget,
+    target: &(impl std::hash::Hash + std::fmt::Debug),
     start: Color,
 ) -> Option<Color> {
     let id = ui.make_persistent_id((key, "color_draft"));
@@ -6522,7 +6593,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_toolbar_yields_only_when_it_would_cover_a_board_label_editor() {
+    fn insert_toolbar_yields_to_the_unified_board_label_menu() {
         for size in [vec2(360.0, 240.0), vec2(1200.0, 700.0)] {
             for connector in [false, true] {
                 let mut sheet = thinoda_core::Sheet::new("Board", "");
@@ -6553,10 +6624,12 @@ mod tests {
                 }
                 harness.run_steps(3);
                 let toolbar_id = egui::Id::unique("thinoda_editing_toolbar");
-                let toolbar = harness
-                    .ctx
-                    .memory(|memory| memory.area_rect(toolbar_id))
-                    .unwrap();
+                assert!(
+                    harness
+                        .ctx
+                        .memory(|memory| memory.area_rect(toolbar_id))
+                        .is_none()
+                );
                 {
                     let doc = harness.state_mut().doc_mut().unwrap();
                     assert!(doc.view.begin_board_label(&doc.doc, id));
@@ -6570,12 +6643,18 @@ mod tests {
                         .iter()
                         .any(|layer| layer.id == toolbar_id)
                 });
-                let clearance = 2.0 / harness.ctx.pixels_per_point() + 1.0;
-                assert_eq!(
-                    visible,
-                    !toolbar.expand(clearance).intersects(editor),
-                    "{size:?}, connector={connector}, toolbar={toolbar:?}, editor={editor:?}"
+                assert!(
+                    !visible,
+                    "{size:?}, connector={connector}, editor={editor:?}"
                 );
+                let menu_id = format_menu::area_id(&harness.ctx);
+                assert!(harness.ctx.memory(|memory| {
+                    memory
+                        .areas()
+                        .visible_layer_ids()
+                        .iter()
+                        .any(|layer| layer.id == menu_id)
+                }));
             }
         }
     }
@@ -8130,10 +8209,15 @@ mod tests {
                 memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")),
             )
         });
-        let (board, editing) = (board.unwrap(), editing.unwrap());
+        assert!(editing.is_none(), "the legacy insert toolbar is removed");
         assert!(
-            !board.intersects(editing),
-            "board and editing toolbars must not overlap: board={board:?}, editing={editing:?}"
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .canvas_rect()
+                .contains_rect(board.unwrap())
         );
         harness.get_by_label("Sticky note").click();
         harness.run_steps(3);
@@ -8160,7 +8244,7 @@ mod tests {
             let (board, topic) = harness.ctx.memory(|memory| {
                 (
                     memory.area_rect(egui::Id::unique("thinoda_board_toolbar")),
-                    memory.area_rect(egui::Id::unique("thinoda_topic_toolbar")),
+                    memory.area_rect(format_menu::area_id(&harness.ctx)),
                 )
             });
             let (board, topic) = (board.unwrap(), topic.unwrap());
@@ -8187,7 +8271,7 @@ mod tests {
             .with_size(vec2(700.0, 500.0))
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         harness.run_steps(5);
-        let topic_id = egui::Id::unique("thinoda_topic_toolbar");
+        let topic_id = format_menu::area_id(&harness.ctx);
         let (board, topic, visible) = harness.ctx.memory(|memory| {
             (
                 memory.area_rect(egui::Id::unique("thinoda_board_toolbar")),
@@ -8220,7 +8304,7 @@ mod tests {
                 harness.run_steps(3);
             }
 
-            let topic_id = egui::Id::unique("thinoda_topic_toolbar");
+            let topic_id = format_menu::area_id(&harness.ctx);
             let (toolbar, visible) = harness.ctx.memory(|memory| {
                 (
                     memory.area_rect(topic_id),
@@ -8250,7 +8334,7 @@ mod tests {
     }
 
     fn visible_topic_toolbar(harness: &Harness<'_, ThinodaApp>) -> Option<Rect> {
-        let id = egui::Id::unique("thinoda_topic_toolbar");
+        let id = format_menu::area_id(&harness.ctx);
         harness.ctx.memory(|memory| {
             memory
                 .areas()
@@ -8355,13 +8439,12 @@ mod tests {
                 .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")))
                 .unwrap();
             assert!(!toolbar.intersects(board));
-            let editing = harness
-                .ctx
-                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
-                .unwrap();
             assert!(
-                !toolbar.intersects(editing),
-                "selected-topic actions must not cover the editing toolbar"
+                harness
+                    .ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
+                    .is_none(),
+                "selected-topic actions replace the legacy insert toolbar"
             );
             let heading = {
                 let doc = harness.state_mut().doc_mut().unwrap();
@@ -8840,7 +8923,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_board_toolbar_remeasures_when_actions_become_narrower() {
+    fn selection_menu_remeasures_when_section_height_changes() {
         let mut app = ThinodaApp::headless();
         app.settings.ai.enabled = true;
         app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
@@ -8871,64 +8954,21 @@ mod tests {
             doc.view.offset = egui::Vec2::ZERO;
         }
         harness.run_steps(5);
-        let wide = visible_topic_toolbar(&harness).unwrap().size();
-        harness.state_mut().settings.ai.enabled = false;
-        harness.run_steps(5);
-        let narrow = visible_topic_toolbar(&harness).unwrap().size();
-        assert!(wide.x > narrow.x + 8.0);
-        harness.state_mut().settings.ai.enabled = true;
-        harness.run_steps(5);
-
         let canvas = harness.state().doc().unwrap().view.canvas_rect();
-        let slot_size = vec2((wide.x + narrow.x) * 0.5, narrow.y + 8.0);
-        let slot = Rect::from_min_size(
-            egui::pos2(canvas.center().x - slot_size.x * 0.5, canvas.top() + 80.0),
-            slot_size,
-        );
-        let blockers = [
-            Rect::from_min_max(canvas.min, egui::pos2(canvas.right(), slot.top())),
-            Rect::from_min_max(egui::pos2(canvas.left(), slot.bottom()), canvas.max),
-            Rect::from_min_max(
-                egui::pos2(canvas.left(), slot.top()),
-                egui::pos2(slot.left(), slot.bottom()),
-            ),
-            Rect::from_min_max(
-                egui::pos2(slot.right(), slot.top()),
-                egui::pos2(canvas.right(), slot.bottom()),
-            ),
-        ];
-        let origin = canvas.center();
         harness
-            .state_mut()
-            .doc_mut()
-            .unwrap()
-            .doc
-            .edit_sheet("Leave a narrow slot", |sheet| {
-                for rect in blockers {
-                    let center = rect.center() - origin;
-                    let size = rect.size();
-                    sheet
-                        .add_card(
-                            "Obstacle",
-                            Vec2::new(center.x, center.y),
-                            Card::new(CardKind::Sticky, Vec2::new(size.x, size.y)),
-                        )
-                        .map_err(thinoda_core::EditError::Invalid)?;
-                }
-                Ok(())
-            })
-            .unwrap();
+            .get_by_role_and_label(egui::Role::Button, "Text")
+            .click();
         harness.run_steps(5);
-        assert!(visible_topic_toolbar(&harness).is_none());
-        assert_eq!(
-            harness.state().doc().unwrap().view.primary(),
-            Some(selected)
-        );
-
-        harness.state_mut().settings.ai.enabled = false;
+        let text = visible_topic_toolbar(&harness).unwrap();
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Style")
+            .click();
         harness.run_steps(5);
-        let toolbar = visible_topic_toolbar(&harness).expect("the narrower toolbar fits the slot");
-        assert!(slot.contains_rect(toolbar), "{slot:?}, {toolbar:?}");
+        let style = visible_topic_toolbar(&harness).unwrap();
+        assert!(style.height() < text.height(), "{style:?}, {text:?}");
+        assert!(canvas.contains_rect(text) && canvas.contains_rect(style));
+        let doc = harness.state().doc().unwrap();
+        assert!(!style.intersects(doc.view.selected_topic_rect(&doc.doc).unwrap()));
         assert_eq!(
             harness.state().doc().unwrap().view.primary(),
             Some(selected)
@@ -8936,7 +8976,7 @@ mod tests {
     }
 
     #[test]
-    fn board_toolbar_disables_an_unexpected_size_change_until_reflow() {
+    fn selection_menu_ignores_stale_area_size_and_keeps_safe_placement() {
         let mut app = ThinodaApp::headless();
         app.settings.ai.enabled = false;
         app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
@@ -8961,8 +9001,8 @@ mod tests {
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         harness.run_steps(5);
 
-        let id = egui::Id::unique("thinoda_topic_toolbar");
-        let layer = egui::LayerId::new(egui::Order::Middle, id);
+        let id = format_menu::area_id(&harness.ctx);
+        let layer = egui::LayerId::new(egui::Order::Foreground, id);
         let mut state = egui::containers::AreaState::load(&harness.ctx, id).unwrap();
         let size = state.size.unwrap();
         state.size = Some(vec2(size.x * 0.5, size.y));
@@ -8974,11 +9014,11 @@ mod tests {
             .ctx
             .options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
         harness.step();
-        assert!(
-            !egui::containers::AreaState::load(&harness.ctx, id)
+        assert_eq!(
+            egui::containers::AreaState::load(&harness.ctx, id)
                 .unwrap()
-                .interactable,
-            "a stale-sized area must not intercept clicks"
+                .size,
+            Some(size)
         );
 
         harness.run_steps(3);

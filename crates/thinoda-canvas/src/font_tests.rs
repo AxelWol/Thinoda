@@ -220,7 +220,7 @@ fn styled_card_editor_keeps_formatting_selection_clipping_and_undo() {
                 assert_eq!(shapes.len(), 2, "{kind:?} dark={dark} {align:?}");
                 let (clip, underlay) = shapes[0];
                 let (_, foreground) = shapes[1];
-                let format = &underlay.galley.job.sections[0].format;
+                let format = &foreground.galley.job.sections[0].format;
                 assert_eq!(format.font_id.family, egui::FontFamily::Monospace);
                 assert_eq!(format.font_id.size, 24.0 * zoom);
                 assert_eq!(format.color, egui::Color32::from_rgb(120, 45, 70));
@@ -367,7 +367,7 @@ fn styled_card_editor_respects_each_independent_text_style() {
                 })
                 .collect();
             assert_eq!(shapes.len(), if flags & 1 != 0 { 2 } else { 1 });
-            let format = &shapes[0].galley.job.sections[0].format;
+            let format = &shapes.last().unwrap().galley.job.sections[0].format;
             assert_eq!(format.italics, flags & 2 != 0);
             assert_eq!(format.underline != egui::Stroke::NONE, flags & 4 != 0);
             assert_eq!(format.strikethrough != egui::Stroke::NONE, flags & 8 != 0);
