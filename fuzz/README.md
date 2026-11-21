@@ -1,4 +1,4 @@
-_Last updated: 2026-11-09 08:39:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-21 14:09:40 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Parser fuzzing
 
