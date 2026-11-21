@@ -366,10 +366,23 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 
 ### D15 — Visual parity and hardening
 
-- [ ] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
+- [x] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
 - [ ] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
 - [ ] Fuzz and size budgets for the bundle decoder and catalog
+
+**Document-tab rubber-duck critique:** Putting New Tab inside the scrolling
+content made it unreachable until the last file was revealed, while the
+fixed-width strip wasted header space. New Tab is now outside the clipped names
+area, immediately after the final capsule when everything fits and fixed at the
+edge when it does not. The header reserves its actions before sizing the strip,
+and uses logical widths for breakpoints so zoom cannot make the actions overlap
+the tabs. Focus reveal, close confirmation and touch cancellation are retained;
+longer names still truncate when necessary and retain their full path in the
+tooltip. Scroll limits follow the final capsule rather than decorative padding,
+so short names do not enable a meaningless arrow and closing files restores the
+unscrolled position. Tests exercise the native Windows header and Quick Access,
+overflow, resizing, zoom, keyboard and rejected touch.
 
 Out of scope: cloud storage connectors, comments, shared cursors, AI generation
 (Thinoda has its own AI), plugins, revision history (Thinoda has its own
@@ -379,6 +392,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D15 document tabs | New Tab stays visible during overflow; measured file names use the available header space without overlapping actions, including after resize and zoom. |
 | 2026-11-21 | D8 Layers panel | The panel can be dragged, restores its last validated position within the window, and shows at least six layers when space permits. |
 | 2026-11-19 | D9 card font search (partial) | Inline font choices can be filtered without losing the title selection; candidate choices are disabled during search-field IME composition. Arbitrary card color entry remains open. |
 | 2026-11-19 | D9 card inline typography (partial) | Selection and caret controls set font family, numeric size and palette color; mixed values, inherited resets and same-frame size input with color clicks or save are covered. |

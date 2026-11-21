@@ -1525,12 +1525,41 @@ fn document_tabs(
     let active_changed = previous_active != active_key;
     let button_width = ui.spacing().interact_size.y;
     let arrow_slot = button_width + ui.spacing().item_spacing.x;
-    let names_width = (width - 2.0 * arrow_slot).max(0.0);
+    let add_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+    let available_names_width = (width - 2.0 * arrow_slot - add_slot).max(0.0);
+    let max_label_width =
+        (available_names_width - Tokens::ICON_BUTTON - 12.0 - 2.0 * Tokens::SPACE_XS).max(28.0);
+    let palette = Palette::of_ui(ui);
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let tabs: Vec<_> = visible_indices
+        .iter()
+        .filter_map(|&index| {
+            let doc = docs.get(index)?;
+            let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
+            let text_width = ui
+                .fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(label.clone(), font.clone(), palette.text)
+                        .size()
+                        .x
+                })
+                .min(max_label_width);
+            Some((index, label, text_width))
+        })
+        .collect();
+    let content_width = tabs
+        .iter()
+        .map(|(_, _, text_width)| text_width + Tokens::ICON_BUTTON + 12.0)
+        .sum::<f32>()
+        + tabs.len().saturating_sub(1) as f32 * ui.spacing().item_spacing.x
+        + 2.0 * Tokens::SPACE_XS;
+    let names_width = available_names_width.min(content_width);
     let step = (names_width * 0.8).max(1.0);
-    let mut offset = None;
+    let mut offset = (position > max_offset + 0.5).then_some(max_offset);
     let mut selected = None;
     let mut close_tab = None;
-    let mut new_tab = false;
+    let mut tab_center_y = None;
+    let mut last_tab_right = None;
     for (glyph, label, enabled, target) in [
         (
             "<",
@@ -1561,40 +1590,28 @@ fn document_tabs(
     let row_height = ui.spacing().interact_size.y.max(Tokens::ICON_BUTTON) + Tokens::SPACE_S;
     let output = scroll_row_offset(ui, "document_tabs", names_width, row_height, offset, |ui| {
         ui.horizontal(|ui| {
-            for &index in visible_indices {
-                let Some(doc) = docs.get(index) else {
-                    continue;
-                };
-                let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
+            for (index, label, text_width) in &tabs {
+                let doc = &docs[*index];
                 let (response, close) = ui
                     .push_id(&doc.key, |ui| {
                         let palette = Palette::of_ui(ui);
-                        let font = egui::TextStyle::Button.resolve(ui.style());
-                        let text_width = ui
-                            .fonts_mut(|fonts| {
-                                fonts
-                                    .layout_no_wrap(label.clone(), font, palette.text)
-                                    .size()
-                                    .x
-                            })
-                            .min(
-                                (names_width - 2.0 * Tokens::ICON_BUTTON - 20.0).clamp(28.0, 240.0),
-                            );
                         let (rect, _) = ui.allocate_exact_size(
                             vec2(text_width + Tokens::ICON_BUTTON + 12.0, Tokens::ICON_BUTTON),
                             Sense::hover(),
                         );
+                        tab_center_y = Some(rect.center().y);
+                        last_tab_right = Some(rect.right());
                         ui.painter().rect(
                             rect,
                             CornerRadius::same(Tokens::RADIUS_M),
-                            if index == active {
+                            if *index == active {
                                 palette.accent_soft
                             } else {
                                 palette.surface_alt
                             },
                             egui::Stroke::new(
                                 1.0,
-                                if index == active {
+                                if *index == active {
                                     palette.accent
                                 } else {
                                     palette.border
@@ -1604,7 +1621,7 @@ fn document_tabs(
                         );
                         let label_rect = egui::Rect::from_min_size(
                             rect.min + vec2(6.0, 0.0),
-                            vec2(text_width, rect.height()),
+                            vec2(*text_width, rect.height()),
                         );
                         let close_rect = egui::Rect::from_min_size(
                             label_rect.right_top(),
@@ -1612,7 +1629,7 @@ fn document_tabs(
                         );
                         let response = ui.put(
                             label_rect,
-                            egui::Button::new(RichText::new(&label).color(if index == active {
+                            egui::Button::new(RichText::new(label).color(if *index == active {
                                 palette.accent
                             } else {
                                 palette.text
@@ -1625,8 +1642,8 @@ fn document_tabs(
                             egui::WidgetInfo::selected(
                                 egui::Role::Button,
                                 ui.is_enabled(),
-                                index == active,
-                                &label,
+                                *index == active,
+                                label,
                             )
                         });
                         let close = ui
@@ -1645,34 +1662,46 @@ fn document_tabs(
                         .as_ref()
                         .map_or_else(|| label.clone(), |p| p.display().to_string()),
                 );
-                if (index == active && active_changed)
+                if (*index == active && active_changed)
                     || response.gained_focus()
                     || close.gained_focus()
                 {
                     ui.scroll_to_rect(response.rect.union(close.rect), None);
                 }
                 if response.clicked() && touch_allowed {
-                    selected = Some(index);
+                    selected = Some(*index);
                 }
                 if (response.middle_clicked() || close.clicked() || close.middle_clicked())
                     && touch_allowed
                 {
-                    close_tab = Some(index);
+                    close_tab = Some(*index);
                 }
             }
-            new_tab = widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked()
-                && touch_allowed;
         });
     });
+    let (add_slot_rect, _) =
+        ui.allocate_exact_size(vec2(Tokens::ICON_BUTTON, row_height), Sense::hover());
+    let add_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            add_slot_rect.center().x,
+            tab_center_y.unwrap_or(add_slot_rect.center().y),
+        ),
+        vec2(Tokens::ICON_BUTTON, Tokens::ICON_BUTTON),
+    );
+    let mut add_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("new_document")
+            .max_rect(add_rect)
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    let new_tab = widgets::icon_button(&mut add_ui, icons::ADD, t("New Tab"), false).clicked()
+        && touch_allowed;
+    let position = output.state.clamped_offset().x;
+    let max_offset = last_tab_right.map_or(0.0, |right| {
+        (right + Tokens::SPACE_XS - output.inner_rect.right() + position).max(0.0)
+    });
     ui.data_mut(|data| {
-        data.insert_temp(
-            state_id,
-            (
-                output.state.clamped_offset().x,
-                (output.content_size.x - output.inner_rect.width()).max(0.0),
-                active_key,
-            ),
-        );
+        data.insert_temp(state_id, (position, max_offset, active_key));
     });
     (selected, new_tab, close_tab)
 }
@@ -3058,7 +3087,7 @@ impl ThinodaApp {
                 .accessible_name(t("Main Menu"))
                 .on_hover_text(t("Main Menu"));
             }
-            let header_width = ctx.content_rect().width() * ctx.zoom_factor();
+            let header_width = ctx.content_rect().width();
             let compact_header = header_width < 640.0;
             let very_compact_header = header_width < 480.0;
             let (can_undo, can_redo) = self.doc().map_or((false, false), |d| {
@@ -3093,14 +3122,17 @@ impl ThinodaApp {
                 }
             }
             widgets::vdivider(ui);
-            let tabs_width = if header_width < 600.0 {
-                ui.available_width().max(0.0)
+            let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+            let actions_width = if header_width < 600.0 {
+                0.0
+            } else if compact_header {
+                3.0 * action_slot
             } else {
-                let arrow_slot = ui.spacing().interact_size.y + ui.spacing().item_spacing.x;
-                let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
-                let min_tabs_width = 2.0 * arrow_slot + 2.0 * action_slot;
-                (ui.available_width() * 0.4).max(min_tabs_width).min(560.0)
+                5.0 * action_slot
+                    + ui.spacing().interact_size.x.max(Tokens::ICON_BUTTON)
+                    + ui.spacing().item_spacing.x
             };
+            let tabs_width = (ui.available_width() - actions_width).max(0.0);
             let (selected, new_tab, close_tab) = document_tabs(
                 ui,
                 tabs_width,

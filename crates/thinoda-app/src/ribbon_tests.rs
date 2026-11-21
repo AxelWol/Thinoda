@@ -99,6 +99,67 @@ fn windows_desktop_uses_only_ribbon_with_compact_fallback_for_headless_hosts() {
     }
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn desktop_document_tabs_keep_new_tab_clear_of_quick_access_and_header_actions() {
+    let mut app = ThinodaApp::headless();
+    app.desktop_ribbon = true;
+    for index in 0..15 {
+        if index > 0 {
+            app.new_doc(thinoda_core::Workbook::default());
+        }
+        app.docs.last_mut().unwrap().path = Some(std::path::PathBuf::from(format!(
+            "Document {index} with a long title.thinoda"
+        )));
+    }
+    app.active = 0;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    for (width, scale) in [(720.0, 1.0), (640.0, 1.0), (360.0, 2.0), (1200.0, 1.0)] {
+        h.ctx.set_zoom_factor(scale);
+        h.set_size(egui::vec2(width, 480.0));
+        h.run_steps(4);
+        let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+        let quick_access = h
+            .get_by_role_and_label(Role::Button, t("Quick Access Toolbar"))
+            .rect();
+        assert!(
+            h.ctx.content_rect().contains_rect(add),
+            "{width}/{scale}: New Tab {add:?} outside {:?}",
+            h.ctx.content_rect()
+        );
+        assert!(
+            quick_access.right() <= add.left(),
+            "{width}/{scale}: Quick Access {quick_access:?}, New Tab {add:?}"
+        );
+        for label in [
+            "Format Panel",
+            "Symbols",
+            "Outliner",
+            "Export",
+            "Zen Mode",
+            "Find…",
+        ] {
+            if let Some(action) = h.query_by_role_and_label(Role::Button, t(label)) {
+                assert!(
+                    add.right() <= action.rect().left(),
+                    "{width}/{scale}: New Tab {add:?}, {label} {:?}",
+                    action.rect()
+                );
+            }
+        }
+        h.get_by_role_and_label(Role::Button, t("Scroll documents right"))
+            .click();
+        h.run_steps(3);
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, t("New Tab")).rect(),
+            add,
+            "{width}/{scale}: New Tab moved while scrolling"
+        );
+    }
+}
+
 #[test]
 fn explanatory_captions_are_tooltips_not_ribbon_controls() {
     let help = t("Copies explicit overrides; inherited theme styles stay automatic.");

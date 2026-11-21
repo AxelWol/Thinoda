@@ -95,7 +95,10 @@ fn document_tabs_scroll_without_switching_and_keep_actions_with_capsules() {
     assert!(last_rect.left() >= right_rect.right());
     assert!(last_rect.right() <= close_rect.left());
     assert!(close_rect.right() <= new_rect.left());
-    assert!(new_rect.left() - close_rect.right() <= 20.0);
+    assert!(
+        new_rect.left() - close_rect.right() <= 20.0,
+        "close {close_rect:?}, New Tab {new_rect:?}"
+    );
     for rect in [right_rect, close_rect, new_rect] {
         assert!(h.ctx.content_rect().contains_rect(rect));
     }
@@ -202,25 +205,131 @@ fn document_tabs_scroll_without_switching_and_keep_actions_with_capsules() {
 
 #[test]
 fn document_tabs_keep_navigation_controls_reachable_in_narrow_windows() {
-    let mut h = harness(egui::vec2(320.0, 240.0));
-    for label in [t("Scroll documents left"), t("Scroll documents right")] {
-        let rect = h.get_by_role_and_label(Role::Button, label).rect();
+    for width in [200.0, 240.0, 320.0] {
+        let h = harness(egui::vec2(width, 240.0));
+        for label in [t("Scroll documents left"), t("Scroll documents right")] {
+            let rect = h.get_by_role_and_label(Role::Button, label).rect();
+            assert!(
+                h.ctx.content_rect().contains_rect(rect),
+                "{width}: {label}: {rect:?} outside {:?}",
+                h.ctx.content_rect()
+            );
+        }
         assert!(
-            h.ctx.content_rect().contains_rect(rect),
-            "{label}: {rect:?} outside {:?}",
+            h.ctx
+                .content_rect()
+                .contains_rect(h.get_by_role_and_label(Role::Button, t("New Tab")).rect()),
+            "{width}: New Tab outside {:?}",
             h.ctx.content_rect()
         );
+        assert!(
+            h.get_by_role_and_label(Role::Button, t("Scroll documents right"))
+                .rect()
+                .right()
+                <= h.get_by_role_and_label(Role::Button, t("New Tab"))
+                    .rect()
+                    .left(),
+            "{width}: navigation overlaps New Tab"
+        );
+        assert_eq!(h.state().active, 0);
+        assert_eq!(h.state().docs.len(), 20);
     }
-    h.get_by_role_and_label(Role::Button, t("New Tab"))
-        .scroll_to_me();
+}
+
+#[test]
+fn new_tab_stays_visible_and_fixed_while_document_names_scroll() {
+    for width in [600.0, 639.0, 640.0, 720.0, 1200.0, 1600.0] {
+        let mut h = harness(egui::vec2(width, 600.0));
+        let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+        assert!(h.ctx.content_rect().contains_rect(add), "{width}: {add:?}");
+        for label in ["Format Panel", "Symbols", "Outliner"].into_iter().chain(
+            (width >= 640.0)
+                .then_some(["Export", "Zen Mode", "Find…"])
+                .into_iter()
+                .flatten(),
+        ) {
+            let action = h.get_by_role_and_label(Role::Button, t(label)).rect();
+            assert!(
+                add.right() <= action.left(),
+                "{width}: New Tab {add:?}, {label} {action:?}"
+            );
+        }
+        h.get_by_role_and_label(Role::Button, t("Scroll documents right"))
+            .click();
+        h.run_steps(4);
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, t("New Tab")).rect(),
+            add,
+            "{width}: New Tab moved with the names"
+        );
+        h.get_by_role_and_label(Role::Button, t("New Tab")).click();
+        h.run_steps(4);
+        assert_eq!(h.state().active, 20, "{width}: New Tab was not clickable");
+        assert_eq!(h.state().docs.len(), 20);
+    }
+}
+
+#[test]
+fn document_names_can_use_the_available_header_width() {
+    let mut h = harness(egui::vec2(1200.0, 600.0));
+    h.state_mut().docs.truncate(1);
+    let title = format!("{}Design", "Long document name ".repeat(5));
+    h.state_mut().docs[0].path = Some(PathBuf::from(format!("{title}.thinoda")));
     h.run_steps(4);
-    assert!(
-        h.ctx
-            .content_rect()
-            .contains_rect(h.get_by_role_and_label(Role::Button, t("New Tab")).rect())
-    );
+    let name = h.get_by_role_and_label(Role::Button, &title).rect();
+    let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+    let outliner = h.get_by_role_and_label(Role::Button, t("Outliner")).rect();
+    assert!(name.width() > 240.0, "title is needlessly capped: {name:?}");
+    assert!(name.right() < add.left());
+    assert!(add.right() <= outliner.left());
+}
+
+#[test]
+fn closing_overflowing_documents_restores_the_unscrolled_strip() {
+    let mut h = harness(egui::vec2(720.0, 480.0));
+    h.get_by_role_and_label(Role::Button, t("Scroll documents right"))
+        .click();
+    h.run_steps(4);
+    h.state_mut().docs.truncate(2);
+    h.state_mut().docs[0].path = Some(PathBuf::from("A.thinoda"));
+    h.state_mut().docs[1].path = Some(PathBuf::from("B.thinoda"));
+    h.run_steps(8);
+    for label in ["Scroll documents left", "Scroll documents right"] {
+        assert!(
+            h.get_by_role_and_label(Role::Button, t(label))
+                .accesskit_node()
+                .is_disabled(),
+            "{label} should be disabled when both names fit"
+        );
+    }
+    let first = h.get_by_role_and_label(Role::Button, "A").rect();
+    let last = h.get_by_role_and_label(Role::Button, "B").rect();
+    let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+    assert!(first.left() >= 0.0 && last.right() < add.left());
     assert_eq!(h.state().active, 0);
-    assert_eq!(h.state().docs.len(), 20);
+}
+
+#[test]
+fn new_tab_remains_reachable_after_resize_and_zoom() {
+    let mut h = harness(egui::vec2(1200.0, 600.0));
+    for (width, scale) in [(720.0, 1.0), (480.0, 1.5), (360.0, 2.0), (1200.0, 1.0)] {
+        h.ctx.set_zoom_factor(scale);
+        h.set_size(egui::vec2(width, 480.0));
+        h.run_steps(4);
+        let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+        assert!(
+            h.ctx.content_rect().contains_rect(add),
+            "{width}/{scale}: {add:?} outside {:?}",
+            h.ctx.content_rect()
+        );
+        if let Some(action) = h.query_by_role_and_label(Role::Button, t("Outliner")) {
+            assert!(
+                add.right() <= action.rect().left(),
+                "{width}/{scale}: New Tab {add:?}, Outliner {:?}",
+                action.rect()
+            );
+        }
+    }
 }
 
 #[test]
@@ -230,6 +339,12 @@ fn close_is_inside_each_capsule_and_add_follows_the_last_capsule() {
     h.state_mut().docs[0].path = Some(PathBuf::from("A.thinoda"));
     h.state_mut().docs[1].path = Some(PathBuf::from("B.thinoda"));
     h.run_steps(4);
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Scroll documents right"))
+            .accesskit_node()
+            .is_disabled(),
+        "short document names should not require scrolling"
+    );
     let mut final_capsule = egui::Rect::NOTHING;
     for title in ["A", "B"] {
         let label = h.get_by_role_and_label(Role::Button, title).rect();
@@ -272,8 +387,14 @@ fn close_is_inside_each_capsule_and_add_follows_the_last_capsule() {
         final_capsule = capsule;
     }
     let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
-    assert!((add.center().y - final_capsule.center().y).abs() < 0.1);
-    assert!((0.0..=12.0).contains(&(add.left() - final_capsule.right())));
+    assert!(
+        (add.center().y - final_capsule.center().y).abs() < 0.1,
+        "capsule {final_capsule:?}, New Tab {add:?}"
+    );
+    assert!(
+        (0.0..=12.0).contains(&(add.left() - final_capsule.right())),
+        "capsule {final_capsule:?}, New Tab {add:?}"
+    );
     h.get_by_role_and_label(Role::Button, &format!("{}: B", t("Close Tab")))
         .click();
     h.run_steps(4);
@@ -320,6 +441,26 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
         modifiers: Modifiers::NONE,
     });
     h.run_steps(4);
+}
+
+#[test]
+fn new_tab_rejects_canceled_touch_and_accepts_keyboard_activation() {
+    let mut h = harness(egui::vec2(720.0, 480.0));
+    let target = h
+        .get_by_role_and_label(Role::Button, t("New Tab"))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(&mut h, target, contacts, cancel);
+        assert_eq!(h.state().active, 0);
+        assert_eq!(h.state().docs.len(), 20);
+    }
+    h.get_by_role_and_label(Role::Button, t("New Tab")).focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().active, 20);
+    assert_eq!(h.state().docs.len(), 20);
 }
 
 #[test]

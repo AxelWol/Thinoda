@@ -549,8 +549,10 @@ graph TD
   controls and adapts between captioned tiles, labeled rows and compact icons;
   full accessible names, tooltips and all nine structural operations remain.
   Document tabs use a single rounded capsule around the name and its own close
-  button. New Tab follows the last capsule inside the same scroll viewport,
-  rather than being pinned across empty space. Navigation arrows stay fixed;
+  button. New Tab follows the last capsule when the names fit and stays outside
+  their scroll viewport when they overflow. The strip uses available header width
+  after reserving the visible actions; responsive breakpoints use logical points
+  so zoom cannot place actions over the tabs. Navigation arrows stay fixed;
   per-document keys, focus reveal and shared unsaved-close decisions are retained.
   Scroll rows reserve the full capsule height plus vertical breathing room so
   borders are not clipped by a shorter default interaction row.
