@@ -43,6 +43,7 @@ fn harness(app: ThinodaApp, size: egui::Vec2) -> Harness<'static, ThinodaApp> {
         })
         .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
     harness.run_steps(6);
+    open_compact_menu(&mut harness);
     harness
 }
 
@@ -63,6 +64,7 @@ fn connector(app: &ThinodaApp, id: CanvasObjectId) -> CanvasConnector {
 }
 
 fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
+    open_compact_menu(h);
     if matches!(label, "Edit label" | "More formatting options")
         && h.query_by_role_and_label(role, label).is_none()
     {
@@ -87,6 +89,34 @@ fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
     h.ctx.memory(|memory| memory.area_rect(id))
 }
 
+fn menu_content_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let slot = thinoda_canvas::format_menu::area_id(&h.ctx).with("compact_popup");
+    h.ctx
+        .data(|data| data.get_temp::<egui::Id>(slot))
+        .filter(|_| thinoda_canvas::format_menu::compact_open(&h.ctx))
+        .and_then(|id| h.ctx.memory(|memory| memory.area_rect(id)))
+        .or_else(|| menu_rect(h))
+}
+
+fn open_compact_menu(h: &mut Harness<'_, ThinodaApp>) {
+    if thinoda_canvas::format_menu::compact_open(&h.ctx) {
+        return;
+    }
+    let Some(rect) = menu_rect(h) else { return };
+    let opened = if let Some(button) = h
+        .query_all_by_role_and_label(Role::Button, "Format")
+        .find(|node| rect.contains_rect(node.rect()))
+    {
+        button.click();
+        true
+    } else {
+        false
+    };
+    if opened {
+        h.run_steps(5);
+    }
+}
+
 #[test]
 fn connector_section_handover_closes_route_popup_and_keeps_controls_bounded() {
     for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
@@ -108,6 +138,7 @@ fn connector_section_handover_closes_route_popup_and_keeps_controls_bounded() {
         );
         click(&mut h, Role::Button, "Style");
         let menu = menu_rect(&h).unwrap();
+        let content = menu_content_rect(&h).unwrap();
         assert!(
             h.state()
                 .doc()
@@ -126,8 +157,8 @@ fn connector_section_handover_closes_route_popup_and_keeps_controls_bounded() {
         ] {
             let rect = h.get_by_role_and_label(Role::Button, label).rect();
             assert!(
-                menu.contains_rect(rect),
-                "{size:?}: {label}: {rect:?} {menu:?}"
+                content.contains_rect(rect),
+                "{size:?}: {label}: {rect:?} {content:?}"
             );
         }
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
@@ -194,10 +225,12 @@ fn selected_connector_properties_overlay_above_stationary_toolbox() {
         if size.x > 320.0 {
             assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
         }
+        open_compact_menu(&mut h);
+        let content = menu_content_rect(&h).unwrap();
         let route = h
             .get_by_role_and_label(Role::Button, "Connector route")
             .rect();
-        assert!(strip.contains_rect(route), "{size:?}: {route:?}");
+        assert!(content.contains_rect(route), "{size:?}: {route:?}");
 
         click(&mut h, Role::Button, "Arrow at start");
         assert!(connector(h.state(), id).arrow_start);
@@ -205,7 +238,7 @@ fn selected_connector_properties_overlay_above_stationary_toolbox() {
         assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
 
         let before = h.state().doc().unwrap().doc.workbook().clone();
-        let blank = egui::pos2(strip.right() - 8.0, strip.top() + 5.0);
+        let blank = egui::pos2(strip.left() + 8.0, strip.top() + 5.0);
         h.event(egui::Event::PointerMoved(blank));
         h.run_steps(1);
         for pressed in [true, false] {
@@ -369,6 +402,7 @@ fn selected_connector_controls_change_only_existing_properties_and_round_trip() 
         {
             click(&mut h, Role::Button, "Expand board toolbar");
         }
+        open_compact_menu(&mut h);
         let canvas = h.state().doc().unwrap().view.canvas_rect();
         let original = h
             .state()
@@ -766,6 +800,7 @@ fn connector_controls_remain_reachable_in_compact_light_and_dark_windows() {
                 {
                     click(&mut h, Role::Button, "Expand board toolbar");
                 }
+                open_compact_menu(&mut h);
                 for (menu, choice) in [
                     ("Connector route", "Elbow"),
                     ("Connector width", "Connector width: 8"),

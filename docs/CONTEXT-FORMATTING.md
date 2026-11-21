@@ -46,7 +46,16 @@ The canvas does not move when the menu appears. Controls wrap inside a compact
 popup near the selection; the main formatting surface has no horizontal
 scrollbar. Long font lists, colour pickers and detailed option menus are
 separate popovers. Placement accounts for viewport edges, camera transforms,
-rotated objects and the creation toolbox.
+rotated objects and the creation toolbox. The closed menu also avoids the
+actual hit regions of visible quick-connect, add-topic, resize, rotate,
+relationship and image-resize handles.
+
+If the full surface cannot clear those handles, a compact **Format** button
+opens its controls on demand. The button itself stays clear of the handles.
+The explicitly opened popover may temporarily cover canvas content or the
+toolbox on a constrained viewport; dismiss it to use what is underneath.
+If there is not even room for the button without covering a handle, the nearby
+menu is hidden rather than blocking that handle.
 
 Cards default to Actions, with a compact Actions dropdown when the full action
 row cannot fit. Explicit formatting opens Text; editing opens Text automatically.
@@ -57,8 +66,8 @@ over ink-tool creation options, which return when formatting is dismissed.
 Placement prefers keeping the selected title/editor clear. On constrained
 canvases where no clear rectangle exists, explicitly requested formatting may
 overlap the object body rather than becoming unreachable; Escape dismisses it
-without discarding the draft. Default Actions still avoids other cards and frame
-titles, hiding rather than covering a completely obstructed board.
+without discarding the draft. Default Actions prefers avoiding other cards and
+frame titles while preserving handle access.
 Sections always appear in the same order: Actions, Text, Style, Arrange.
 Active shape/connector label editing uses the same placement algorithm, anchored
 to the object's visible bounds and avoiding the editor where space permits.
@@ -77,9 +86,8 @@ frame: like the former toolbars, the nearby menu is a Middle-order tool surface,
 so every Foreground popup and auxiliary window stays above it. While a mind-map title is being edited the menu
 stays visible and opens Text when editing starts; leaving the editor returns
 the topic to its default Actions section.
-Below the native 720 x 480 minimum, a menu may cover an entire small shape;
-bounded controls are guaranteed by compact acceptance, not unobstructed outlines
-at every unsupported window size.
+Below the native 720 x 480 minimum, the expanded popover may cover a small
+shape; the passive nearby menu still avoids its active handle hit regions.
 
 Card and shape/connector editors retain their own validated draft, IME and
 undo pipelines. Switching away from an active text editor commits through
@@ -119,6 +127,9 @@ actual rendered controls, not only a requested popup size.
 | A popup can physically cover a section tab. | Normal popup dismissal/keyboard focus is retained; no pointer click-through bypass is used. Section/owner changes close stale popups. |
 | Every kind does not support every property. | Stencils reuse native shape capabilities; generic/annotation selections expose supported actions and layering only. This does not invent new editable properties, card stacking, or multi-card geometry. |
 | Moving menus invalidate pixel comparisons beneath their shadows. | Outline acceptance excludes both actual popup shadows, requires at least two unchanged corners at normal size and actual visible stroke pixels at 640 x 360 and the native 720 x 480 minimum, across both themes. |
+| A visually clear outline can still hide a larger interactive handle. | Placement uses the actual handle hit rectangles, including rotated/zoomed shapes, topic additions, card transforms, relationships and images. A bounded sweep searches free space without evaluating every obstacle at every candidate. |
+| A full surface may not fit without covering a handle. | A compact button opens a temporary popover; if the button itself cannot fit, it is hidden. The expanded popover can cover handles until dismissed, and dense or extremely small canvases cannot guarantee a visible nearby button. |
+| A nested font or colour popup can replace egui's root popup and strand its parent. | The compact parent owns its open state separately, keeps nested controls usable, closes stale state when the selection disappears, and returns focus on Escape without clearing the selection. |
 
 The independent source review accepted the producer and generic capability
 gates and identified the missing multi-card fill path, now covered above.

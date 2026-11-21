@@ -68,27 +68,55 @@ fn compact_selection_controls_fit_without_scrolling_the_menu() {
                     }
                     h.run_steps(6);
                 }
+                let mut compact_popup = false;
                 if h.query_by_role_and_label(Role::Button, "Bold").is_none() {
                     let menu = h
                         .ctx
                         .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
                         .unwrap();
+                    let compact = !h
+                        .query_all_by_role_and_label(Role::Button, "Text")
+                        .any(|node| menu.contains_rect(node.rect()));
+                    compact_popup = compact;
+                    if compact {
+                        h.query_all_by_role_and_label(Role::Button, "Format")
+                            .find(|node| menu.contains_rect(node.rect()))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{size:?} {dark} {kind}: no compact Format button in {menu:?}"
+                                )
+                            })
+                            .click();
+                        h.run_steps(3);
+                    }
                     h.query_all_by_role_and_label(Role::Button, "Text")
-                        .find(|node| menu.contains_rect(node.rect()))
-                        .unwrap()
+                        .find(|node| compact || menu.contains_rect(node.rect()))
+                        .unwrap_or_else(|| {
+                            panic!("{size:?} {dark} {kind}: no Text tab in {menu:?}")
+                        })
                         .click();
                     h.run_steps(5);
                 }
                 let canvas = h.state().doc().unwrap().view.canvas_rect();
+                let control_bounds = if compact_popup {
+                    h.ctx.content_rect()
+                } else {
+                    canvas
+                };
                 for (role, label) in [
                     (Role::Button, "Bold"),
                     (Role::ComboBox, "Font Family"),
                     (Role::Button, "Text Color"),
                 ] {
-                    let control = h.get_by_role_and_label(role, label);
+                    let control = h.query_by_role_and_label(role, label).unwrap_or_else(|| {
+                        panic!(
+                            "{size:?} {dark} {kind}: missing {label}; popup open: {}",
+                            egui::Popup::is_any_open(&h.ctx)
+                        )
+                    });
                     assert!(
-                        canvas.contains_rect(control.rect()),
-                        "{size:?} {dark} {kind} {label}: {:?} {canvas:?}",
+                        control_bounds.contains_rect(control.rect()),
+                        "{size:?} {dark} {kind} {label}: {:?} {control_bounds:?}",
                         control.rect()
                     );
                 }
@@ -139,6 +167,461 @@ fn add_shape(h: &mut Harness<'_, ThinodaApp>, stencil: bool) -> thinoda_core::Ca
     doc.view.select_board_object(id);
     h.run_steps(6);
     id
+}
+
+#[test]
+fn shape_selection_menu_keeps_quick_connect_and_transform_handles_clickable() {
+    let mut h = harness_at("blank-canvas", vec2(900.0, 610.0), false);
+    let source = add_shape(&mut h, false);
+    h.state_mut().doc_mut().unwrap().view.offset = vec2(-180.0, 95.0);
+    h.run_steps(8);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    for label in [
+        "Add connected shape to the right",
+        "Add connected shape above",
+        "Add connected shape below",
+        "Add connected shape to the left",
+        "Resize board item",
+        "Rotate board item",
+    ] {
+        let handle = h.get_by_role_and_label(Role::Button, label).rect();
+        assert!(
+            !menu.intersects(handle),
+            "{label}: menu {menu:?} obscures handle {handle:?}"
+        );
+    }
+
+    h.get_by_role_and_label(Role::Button, "Add connected shape to the right")
+        .click();
+    h.run_steps(6);
+    let doc = h.state().doc().unwrap();
+    let [connected] = doc.view.board_selection[..] else {
+        panic!("expected the new shape to be selected");
+    };
+    assert_ne!(connected, source);
+    assert_eq!(doc.doc.sheet().canvas.objects.len(), 3);
+    assert_eq!(doc.doc.undo_label(), Some("Add connected shape"));
+}
+
+#[test]
+fn shape_selection_menu_clears_visible_handles_after_moving_zooming_and_switching_sections() {
+    for (window, offset, zoom, rotation) in [
+        (vec2(900.0, 610.0), vec2(-180.0, 95.0), 1.0, 0.0),
+        (vec2(1000.0, 700.0), vec2(160.0, -50.0), 1.5, 37.0),
+        (vec2(720.0, 480.0), vec2(180.0, 40.0), 0.8, 30.0),
+    ] {
+        let mut h = harness_at("blank-canvas", window, false);
+        let source = add_shape(&mut h, false);
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.doc.rotate_canvas_object(source, rotation).unwrap();
+        doc.view.offset = offset;
+        doc.view.set_zoom(zoom);
+        h.run_steps(8);
+        for section in ["Style", "Text", "Arrange", "Actions"] {
+            let menu = h
+                .ctx
+                .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+                .unwrap();
+            h.query_all_by_role_and_label(Role::Button, section)
+                .find(|node| menu.contains_rect(node.rect()))
+                .unwrap()
+                .click();
+            h.run_steps(6);
+            let menu = h
+                .ctx
+                .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+                .unwrap();
+            for label in [
+                "Add connected shape to the right",
+                "Add connected shape above",
+                "Add connected shape below",
+                "Add connected shape to the left",
+                "Resize board item",
+                "Rotate board item",
+            ] {
+                if let Some(handle) = h.query_by_role_and_label(Role::Button, label) {
+                    let rect = handle.rect();
+                    let canvas = h.state().doc().unwrap().view.canvas_rect();
+                    if canvas.intersects(rect) {
+                        assert!(
+                            !menu.intersects(rect),
+                            "{window:?} {offset:?} zoom {zoom} rotation {rotation} \
+                             {section} {label}: {menu:?} overlaps {rect:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_shape_menu_keeps_handles_clear_and_opens_formatting_on_demand() {
+    let mut h = harness_at("blank-canvas", vec2(320.0, 240.0), false);
+    let source = add_shape(&mut h, true);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    assert!(menu.width() < 60.0 && menu.height() < 60.0, "{menu:?}");
+    for label in [
+        "Add connected shape to the right",
+        "Add connected shape above",
+        "Add connected shape below",
+        "Add connected shape to the left",
+        "Resize board item",
+        "Rotate board item",
+    ] {
+        if let Some(handle) = h.query_by_role_and_label(Role::Button, label) {
+            let rect = handle.rect();
+            if h.state().doc().unwrap().view.canvas_rect().intersects(rect) {
+                assert!(
+                    !menu.intersects(rect),
+                    "{label}: {menu:?} overlaps {rect:?}"
+                );
+            }
+        }
+    }
+
+    h.query_all_by_role_and_label(Role::Button, "Format")
+        .find(|node| menu.contains_rect(node.rect()))
+        .unwrap()
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Text").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Bold").click();
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(source)
+            .unwrap()
+            .label_style
+            .as_ref()
+            .unwrap()
+            .bold
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert!(!format_menu::compact_open(&h.ctx));
+    assert_eq!(h.state().doc().unwrap().view.board_selection, [source]);
+    h.set_size(vec2(900.0, 610.0));
+    h.run_steps(8);
+    let expanded = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    assert!(expanded.width() > 200.0, "{expanded:?}");
+    let right = h
+        .get_by_role_and_label(Role::Button, "Add connected shape to the right")
+        .rect();
+    assert!(!expanded.intersects(right));
+    h.set_size(vec2(320.0, 240.0));
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Add connected shape to the right")
+        .click();
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().canvas.objects.len(), 3);
+}
+
+#[test]
+fn compact_menu_state_clears_when_its_selection_disappears() {
+    let mut h = harness_at("blank-canvas", vec2(320.0, 240.0), false);
+    add_shape(&mut h, true);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    h.query_all_by_role_and_label(Role::Button, "Format")
+        .find(|node| menu.contains_rect(node.rect()))
+        .unwrap()
+        .click();
+    h.run_steps(3);
+    assert!(format_menu::compact_open(&h.ctx));
+
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .board_selection
+        .clear();
+    h.run_steps(4);
+    assert!(!format_menu::compact_open(&h.ctx));
+}
+
+#[test]
+fn topic_and_card_menus_keep_add_resize_and_rotation_handles_clear() {
+    for kind in ["node", "card"] {
+        for offset in [vec2(-140.0, 60.0), vec2(80.0, -50.0), vec2(170.0, 50.0)] {
+            let mut h = harness_at(
+                if kind == "node" {
+                    "mind-map"
+                } else {
+                    "blank-canvas"
+                },
+                vec2(900.0, 610.0),
+                false,
+            );
+            if kind == "card" {
+                let doc = h.state_mut().doc_mut().unwrap();
+                let id = doc
+                    .doc
+                    .edit_sheet("Card", |sheet| {
+                        sheet
+                            .add_card(
+                                "Card",
+                                Vec2::ZERO,
+                                thinoda_core::Card::new(
+                                    thinoda_core::CardKind::Sticky,
+                                    Vec2::new(180.0, 100.0),
+                                ),
+                            )
+                            .map_err(thinoda_core::EditError::Invalid)
+                    })
+                    .unwrap();
+                doc.view.select_only(id);
+            }
+            h.state_mut().doc_mut().unwrap().view.offset = offset;
+            h.run_steps(8);
+            let menu = h
+                .ctx
+                .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+                .unwrap();
+            let mut checked = 0;
+            for label in [
+                "Add child topic",
+                "Add sibling topic",
+                "Resize board item",
+                "Rotate board item",
+            ] {
+                if let Some(handle) = h.query_by_role_and_label(Role::Button, label) {
+                    let rect = handle.rect();
+                    if h.state().doc().unwrap().view.canvas_rect().intersects(rect) {
+                        checked += 1;
+                        assert!(
+                            !menu.intersects(rect),
+                            "{kind} {offset:?} {label}: {menu:?} overlaps {rect:?}"
+                        );
+                    }
+                }
+            }
+            assert!(checked > 0, "{kind} {offset:?}: no visible handles");
+        }
+    }
+}
+
+#[test]
+fn compact_card_menu_preserves_handle_access_and_whole_card_formatting() {
+    let mut h = harness_at("blank-canvas", vec2(320.0, 240.0), false);
+    let id = {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let id = doc
+            .doc
+            .edit_sheet("Card", |sheet| {
+                sheet
+                    .add_card(
+                        "Card",
+                        Vec2::ZERO,
+                        thinoda_core::Card::new(
+                            thinoda_core::CardKind::Sticky,
+                            Vec2::new(180.0, 120.0),
+                        ),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        doc.view.select_only(id);
+        id
+    };
+    h.run_steps(8);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    assert!(menu.width() < 60.0 && menu.height() < 60.0, "{menu:?}");
+    for label in ["Resize board item", "Rotate board item", "Add child topic"] {
+        if let Some(handle) = h.query_by_role_and_label(Role::Button, label) {
+            let rect = handle.rect();
+            if h.state().doc().unwrap().view.canvas_rect().intersects(rect) {
+                assert!(
+                    !menu.intersects(rect),
+                    "{label}: {menu:?} overlaps {rect:?}"
+                );
+            }
+        }
+    }
+    h.query_all_by_role_and_label(Role::Button, "Format")
+        .find(|node| menu.contains_rect(node.rect()))
+        .unwrap()
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Text").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Bold").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .style
+            .bold,
+        Some(true)
+    );
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .style
+            .bold,
+        None
+    );
+}
+
+#[test]
+fn relationship_menu_keeps_curve_and_endpoint_handles_usable() {
+    let mut h = harness_at("blank-canvas", vec2(900.0, 610.0), false);
+    let id = {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let id = doc
+            .doc
+            .edit_sheet("Relationship", |sheet| {
+                let first = sheet.add_floating("First", Vec2::new(-200.0, 0.0));
+                let second = sheet.add_floating("Second", Vec2::new(200.0, 0.0));
+                sheet.add_relationship(first, second)
+            })
+            .unwrap();
+        doc.view.selection.clear();
+        doc.view.board_selection.clear();
+        doc.view.selected_object = Some(thinoda_canvas::ObjectSelection::Relationship(id));
+        id
+    };
+    h.run_steps(8);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    for label in [
+        "Relationship start",
+        "First curve control",
+        "Second curve control",
+        "Relationship end",
+    ] {
+        let handle = h.get_by_role_and_label(Role::Button, label).rect();
+        assert!(
+            !menu.intersects(handle),
+            "{label}: {menu:?} overlaps {handle:?}"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, "First curve control")
+        .click();
+    h.run_steps(2);
+    h.key_press(egui::Key::ArrowRight);
+    h.run_steps(2);
+    let relationship = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .relationships
+        .iter()
+        .find(|relationship| relationship.id == id)
+        .unwrap();
+    assert!(relationship.control_points.is_some());
+}
+
+#[test]
+fn topic_image_resize_handle_is_in_the_menu_clearance_geometry() {
+    let mut h = harness_at("mind-map", vec2(900.0, 610.0), false);
+    let root = {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(160, 80)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let resource =
+            thinoda_core::resources::Resource::new("test.png", "image/png", bytes.into_inner())
+                .unwrap();
+        doc.doc
+            .edit_sheet("Image", |sheet| {
+                thinoda_core::images::set_image(
+                    sheet,
+                    root,
+                    Some((resource, Vec2::new(160.0, 80.0))),
+                )
+                .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        doc.view.select_only(root);
+        root
+    };
+    h.run_steps(8);
+    let handle = h.get_by_role_and_label(Role::Button, "Resize image").rect();
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    let doc = h.state_mut().doc_mut().unwrap();
+    let controls = doc.view.selected_control_rects(&doc.doc);
+    assert!(controls.contains(&handle), "{handle:?}, {controls:?}");
+    assert!(!menu.intersects(handle), "{menu:?} overlaps {handle:?}");
+    let start = handle.center();
+    let end = start + vec2(30.0, 15.0);
+    h.hover_at(start);
+    h.drag_at(start);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(2);
+    h.drop_at(end);
+    h.run_steps(3);
+    assert_ne!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(root)
+            .unwrap()
+            .image_size,
+        Some(Vec2::new(160.0, 80.0))
+    );
+}
+
+#[test]
+fn compact_mind_map_menu_does_not_cover_the_add_handle() {
+    let mut h = harness_at("mind-map", vec2(320.0, 240.0), false);
+    let menu = h
+        .ctx
+        .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+        .unwrap();
+    let handle = h
+        .get_by_role_and_label(Role::Button, "Add child topic")
+        .rect();
+    assert!(!menu.intersects(handle), "{menu:?} overlaps {handle:?}");
+    let count = h.state().doc().unwrap().doc.sheet().topics.len();
+    h.get_by_role_and_label(Role::Button, "Add child topic")
+        .click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().topics.len(), count + 1);
 }
 
 #[test]

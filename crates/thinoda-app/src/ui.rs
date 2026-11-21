@@ -584,57 +584,68 @@ fn card_text_color_menu(
     owned: &mut Vec<egui::Id>,
 ) -> (egui::Response, Option<Option<Color>>) {
     let mut picked = None;
-    let menu = ui.menu_button(t("Text Color"), |ui| {
-        scroll_menu(ui, |ui| {
-            ui.set_width(232.0);
-            let auto = ui
-                .selectable_label(current == Some(None), t("Auto"))
-                .accessible_name(format!("{} · {}", t("Text Color"), t("Auto")));
-            owned.push(auto.id);
-            if auto.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
-                picked = Some(None);
-            }
-            ui.horizontal_wrapped(|ui| {
-                let custom = current
-                    .flatten()
-                    .filter(|color| !SWATCHES.contains(&from_color(*color)));
-                for color in custom
-                    .into_iter()
-                    .chain(SWATCHES.iter().copied().map(to_color))
-                {
-                    if card_text_swatch(
+    let (response, _) = egui::containers::menu::MenuButton::new(t("Text Color"))
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| {
+            scroll_menu(ui, |ui| {
+                ui.set_width(232.0);
+                let auto = ui
+                    .selectable_label(current == Some(None), t("Auto"))
+                    .accessible_name(format!("{} · {}", t("Text Color"), t("Auto")));
+                owned.push(auto.id);
+                if auto.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
+                    picked = Some(None);
+                    ui.close();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    let custom = current
+                        .flatten()
+                        .filter(|color| !SWATCHES.contains(&from_color(*color)));
+                    for color in custom
+                        .into_iter()
+                        .chain(SWATCHES.iter().copied().map(to_color))
+                    {
+                        if card_text_swatch(
+                            ui,
+                            color,
+                            current == Some(Some(color)),
+                            t("Text Color"),
+                            owned,
+                        ) {
+                            picked = Some(Some(color));
+                            ui.close();
+                        }
+                    }
+                });
+                let custom = ui.collapsing(t("Custom color"), |ui| {
+                    ui.spacing_mut().slider_width = ui.available_width().min(260.0);
+                    if let Some(color) = crate::board_ui::custom_color_picker(
                         ui,
-                        color,
-                        current == Some(Some(color)),
-                        t("Text Color"),
-                        owned,
+                        "card-text-color",
+                        target,
+                        current.flatten().unwrap_or(inherited),
                     ) {
                         picked = Some(Some(color));
                     }
+                });
+                if custom.header_response.clicked() && custom.body_response.is_some() {
+                    custom.header_response.scroll_to_me(Some(egui::Align::Min));
+                }
+                if let Some(focus) = ui.memory(|memory| memory.focused())
+                    && ui
+                        .ctx()
+                        .read_response(focus)
+                        .is_some_and(|response| response_is_within(ui, &response))
+                {
+                    owned.push(focus);
                 }
             });
-            ui.collapsing(t("Custom color"), |ui| {
-                if let Some(color) = crate::board_ui::custom_color_picker(
-                    ui,
-                    "card-text-color",
-                    target,
-                    current.flatten().unwrap_or(inherited),
-                ) {
-                    picked = Some(Some(color));
-                }
-            });
-            if let Some(focus) = ui.memory(|memory| memory.focused())
-                && ui
-                    .ctx()
-                    .read_response(focus)
-                    .is_some_and(|response| response_is_within(ui, &response))
-            {
-                owned.push(focus);
-            }
         });
-    });
-    owned.push(menu.response.id);
-    (menu.response, picked)
+    owned.push(response.id);
+    (response, picked)
 }
 
 fn fim_hierarchy_shortcut(action: &Action) -> bool {
@@ -1134,6 +1145,113 @@ pub(crate) fn nearest_clear_toolbar_rect(
         }
     }
     best.map(|(_, rect)| rect)
+}
+
+pub(crate) fn selection_menu_placement(
+    canvas: egui::Rect,
+    anchor: egui::Rect,
+    size: egui::Vec2,
+    avoid: &[egui::Rect],
+    controls: &[egui::Rect],
+) -> Option<egui::Rect> {
+    let mut obstacles = avoid.to_vec();
+    obstacles.extend_from_slice(controls);
+    let preferred = format_menu::place(canvas, anchor, size, avoid);
+    if controls.is_empty() {
+        return Some(preferred);
+    }
+    let mut all = obstacles.clone();
+    all.push(anchor);
+    let available = canvas.shrink(6.0);
+    nearest_clear_toolbar_rect(preferred, available, &all, 3.0)
+        .or_else(|| nearest_clear_toolbar_rect(preferred, available, &obstacles, 3.0))
+        .or_else(|| nearest_clear_toolbar_rect(preferred, available, controls, 3.0))
+}
+
+pub(crate) fn selection_menu_layout(
+    canvas: egui::Rect,
+    anchor: egui::Rect,
+    size: egui::Vec2,
+    avoid: &[egui::Rect],
+    controls: &[egui::Rect],
+    sizing_pass: bool,
+    compact_open: bool,
+) -> Option<(egui::Rect, bool)> {
+    let compact = || {
+        selection_menu_placement(canvas, anchor, vec2(48.0, 48.0), avoid, controls)
+            .map(|rect| (rect, true))
+    };
+    if compact_open {
+        return compact();
+    }
+    selection_menu_placement(canvas, anchor, size, avoid, controls)
+        .map(|rect| (rect, false))
+        .or_else(|| sizing_pass.then(|| (format_menu::place(canvas, anchor, size, avoid), false)))
+        .or_else(compact)
+}
+
+pub(crate) fn compact_selection_menu_open(ctx: &Context) -> bool {
+    format_menu::compact_open(ctx)
+}
+
+pub(crate) fn compact_selection_menu(
+    ui: &mut Ui,
+    request_focus: bool,
+    content: impl FnOnce(&mut Ui),
+) -> (egui::Id, egui::Id) {
+    let response = widgets::icon_button(ui, icons::FORMAT, t("Format"), false);
+    if request_focus {
+        response.request_focus();
+    }
+    let mut open = format_menu::compact_open(ui.ctx()) || request_focus;
+    let slot = format_menu::area_id(ui.ctx()).with("compact_popup");
+    let popup_id = ui.ctx().data(|data| data.get_temp::<egui::Id>(slot));
+    if open && ui.input(|input| input.pointer.secondary_pressed()) {
+        open = false;
+    }
+    if open
+        && let Some(pos) = ui.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        })
+        && !response.rect.contains(pos)
+    {
+        let inside_popup = ui.ctx().memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .filter(|layer| {
+                    layer.order == egui::Order::Foreground || Some(layer.id) == popup_id
+                })
+                .filter_map(|layer| memory.area_rect(layer.id))
+                .any(|rect| rect.contains(pos))
+        });
+        if !inside_popup {
+            open = false;
+        }
+    }
+    if response.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
+        open = !open;
+    }
+    let popup = egui::Popup::menu(&response)
+        .accessible_name(t("Format"))
+        .open_bool(&mut open)
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
+    let id = popup.get_id();
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(slot, id);
+        data.insert_temp(slot.with("button"), response.id);
+    });
+    popup.show(content);
+    format_menu::set_compact_open(ui.ctx(), open);
+    if request_focus {
+        ui.ctx().request_repaint();
+    }
+    (id, response.id)
 }
 
 fn board_screen_rect(rect: thinoda_core::Rect, origin: egui::Pos2, zoom: f32) -> egui::Rect {
@@ -1789,12 +1907,8 @@ fn font_choice_with_mixed(
 pub use thinoda_canvas::FORMAT_SWATCHES as SWATCHES;
 
 pub fn to_color(c: Color32) -> Color {
-    Color {
-        r: c.r(),
-        g: c.g(),
-        b: c.b(),
-        a: c.a(),
-    }
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    Color::rgba(r, g, b, a)
 }
 
 pub fn from_color(c: Color) -> Color32 {
@@ -2359,7 +2473,52 @@ impl ThinodaApp {
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
         self.poll_map_shot(&ctx);
-        let popup_was_open = egui::Popup::is_any_open(&ctx);
+        let popup_was_open = egui::Popup::is_any_open(&ctx) || compact_selection_menu_open(&ctx);
+        let card_popup_open = ctx
+            .data(|data| data.get_temp::<bool>(card_text_slot(viewport).with("font_popup")))
+            .unwrap_or(false);
+        if popup_was_open
+            && card_popup_open
+            && self.doc().is_some_and(|doc| {
+                doc.view.editing_topic().is_some() && !doc.view.title_ime_active(&ctx)
+            })
+            && ctx.memory(|memory| memory.has_focus(MapCanvas::title_editor_id()))
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            // The canvas runs before the companion popup; dismiss it before
+            // the title editor can interpret Escape as canceling the draft.
+            egui::Popup::close_all(&ctx);
+        }
+        let compact_slot = format_menu::area_id(&ctx).with("compact_popup");
+        if compact_selection_menu_open(&ctx)
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            let nested_popup = egui::Popup::is_any_open(&ctx);
+            egui::Popup::close_all(&ctx);
+            if !nested_popup {
+                format_menu::set_compact_open(&ctx, false);
+                let dismiss_card = self.card_text_target().is_some_and(|_| {
+                    self.doc()
+                        .is_some_and(|doc| doc.view.editing_topic().is_none())
+                });
+                let focus = if dismiss_card {
+                    if let Some(doc) = self.doc() {
+                        let owner = format_menu::owner(&doc.doc, &doc.view);
+                        let slot = card_text_slot(viewport);
+                        ctx.data_mut(|data| {
+                            data.remove::<CardTextTarget>(slot);
+                            data.insert_temp(slot.with("dismissed"), owner);
+                        });
+                    }
+                    Some(MapCanvas::id())
+                } else {
+                    ctx.data(|data| data.get_temp::<egui::Id>(compact_slot.with("button")))
+                };
+                if let Some(focus) = focus {
+                    ctx.memory_mut(|memory| memory.request_focus(focus));
+                }
+            }
+        }
         if !self.palette.open && !self.any_modal_open() && !popup_was_open {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
@@ -2653,6 +2812,9 @@ impl ThinodaApp {
             && !self.other_selection_menu(&ctx, center.response.rect)
         {
             self.topic_toolbar(&ctx, board_toolbar, editing_toolbar, None);
+        }
+        if compact_selection_menu_open(&ctx) && !format_menu::claimed(&ctx) {
+            format_menu::set_compact_open(&ctx, false);
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
@@ -3841,7 +4003,8 @@ impl ThinodaApp {
             .then(|| MapCanvas::title_inline_values(&ctx, &doc.doc, &doc.view))
             .flatten();
         let ime_active = title_active && doc.view.title_ime_active(&ctx);
-        enabled &= !ime_active && widgets::touch_activation_allowed(&ctx);
+        let touch_allowed = widgets::touch_activation_allowed(&ctx);
+        enabled &= !ime_active && touch_allowed;
         let size_was_editing = ctx
             .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
             .unwrap_or(false);
@@ -3953,12 +4116,14 @@ impl ThinodaApp {
             canvas.min,
             vec2(76.0, canvas.height()),
         )];
+        let mut controls = Vec::new();
         let mut protected_title = anchor;
         let board_id = egui::Id::unique("thinoda_board_toolbar");
         if let Some(board) = ctx.memory(|memory| memory.area_rect(board_id)) {
             avoid[0] = board.expand(4.0);
         }
         if let Some(doc) = self.doc_mut() {
+            controls = doc.view.selected_control_rects(&doc.doc);
             let origin = canvas.center() + doc.view.offset;
             let layout = doc.view.layout_for(&doc.doc);
             if let Some(topic) = layout.topics.get(&target.topic)
@@ -3999,13 +4164,14 @@ impl ThinodaApp {
                 ));
             }
         }
+        avoid.extend_from_slice(&controls);
         let mut measure_owner = context_owner;
         let mut expected_height = size.y;
         let mut measured =
             format_menu::has_measurement(&ctx, measure_owner, section, canvas.width());
         let preferred = format_menu::place(canvas, anchor, size, &avoid);
         let mut clear = nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &avoid, 3.0);
-        let compact_actions = clear.is_none() && measured && section == ContextSection::Actions;
+        let mut compact_actions = clear.is_none() && measured && section == ContextSection::Actions;
         if compact_actions {
             measure_owner = context_owner.with("compact_actions");
             measured = format_menu::has_measurement(&ctx, measure_owner, section, canvas.width());
@@ -4016,7 +4182,7 @@ impl ThinodaApp {
             };
             expected_height = height;
             let preferred = format_menu::place(canvas, anchor, vec2(size.x, height), &avoid);
-            let compact_avoid: Vec<_> = avoid
+            let mut compact_avoid: Vec<_> = avoid
                 .iter()
                 .enumerate()
                 .filter(|(index, obstacle)| {
@@ -4024,6 +4190,7 @@ impl ThinodaApp {
                 })
                 .map(|(_, rect)| *rect)
                 .collect();
+            compact_avoid.extend_from_slice(&controls);
             clear = nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &compact_avoid, 3.0);
         } else if clear.is_none() && section != ContextSection::Actions {
             let editor = title_active
@@ -4033,12 +4200,43 @@ impl ThinodaApp {
                 .filter(|rect| rect.intersects(anchor))
                 .unwrap_or(protected_title);
             let preferred = format_menu::place(canvas, editor, size, &[avoid[0]]);
-            clear =
-                nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &[editor, avoid[0]], 3.0)
-                    .or(Some(preferred));
+            let mut essential = vec![editor, avoid[0]];
+            essential.extend_from_slice(&controls);
+            clear = nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &essential, 3.0)
+                .or_else(|| {
+                    nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &controls, 3.0)
+                });
+        }
+        let mut compact_surface = false;
+        if !title_active
+            && !controls.is_empty()
+            && (compact_selection_menu_open(&ctx) || measured && clear.is_none())
+        {
+            let mut compact_avoid: Vec<_> = avoid
+                .iter()
+                .enumerate()
+                .filter(|(index, obstacle)| {
+                    *index == 0 || !anchor.expand(6.0).contains_rect(**obstacle)
+                })
+                .map(|(_, rect)| *rect)
+                .collect();
+            compact_avoid.extend_from_slice(&controls);
+            let preferred = format_menu::place(canvas, anchor, vec2(48.0, 48.0), &[avoid[0]]);
+            if let Some(position) =
+                nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &compact_avoid, 3.0)
+            {
+                clear = Some(position);
+                compact_actions = false;
+                compact_surface = true;
+                measured = true;
+            }
         }
         if measured && clear.is_none() {
             return false;
+        }
+        if request_focus && !measured {
+            ctx.data_mut(|data| data.insert_temp(slot.with("focus"), true));
+            ctx.request_repaint();
         }
         let strip = clear.unwrap_or(preferred);
         let mut requested_section = None;
@@ -4054,78 +4252,97 @@ impl ThinodaApp {
             .show(&ctx, |ui| {
                 ui.set_max_width(strip.width());
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.set_width((strip.width() - 16.0).max(1.0));
-                    ui.add_enabled_ui(enabled || section == ContextSection::Actions, |ui| {
-                        ui.push_id(
-                            (
-                                &target.document,
-                                target.instance,
-                                target.sheet,
-                                target.root,
-                                target.topic,
-                            ),
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    close = card_text_owned_icon(
-                                        ui,
-                                        icons::CLOSE,
-                                        t("Close"),
-                                        false,
-                                        false,
-                                        &mut owned_focus,
-                                    );
-                                    let mut next = section;
-                                    let sections: Vec<_> = sections
-                                        .iter()
-                                        .copied()
-                                        .filter(|(value, _)| {
-                                            !compact_actions || *value != ContextSection::Actions
-                                        })
-                                        .collect();
-                                    owned_focus.extend(
-                                        format_menu::tabs(ui, &mut next, &sections, enabled)
-                                            .into_iter()
-                                            .map(|response| response.id),
-                                    );
-                                    if next != section {
-                                        if title_active {
-                                            requested_section = Some(next);
-                                        } else {
-                                            section = next;
-                                            format_menu::set_section(&ctx, context_owner, next);
-                                        }
-                                    }
-                                    if compact_actions {
-                                        let actions = ui.menu_button(t("Actions"), |ui| {
-                                            command = self.selection_context_actions(ui)
-                                        });
-                                        owned_focus.push(actions.response.id);
-                                    }
-                                });
-                                if compact_actions && section == ContextSection::Actions {
-                                    return;
-                                }
-                                if section == ContextSection::Style {
-                                    self.context_card_style_properties(ui);
-                                } else if section == ContextSection::Arrange {
-                                    command = self.context_arrange_controls(ui);
-                                } else if section == ContextSection::Actions {
-                                    command = self.selection_context_actions(ui);
-                                } else {
-                                    ui.label(
-                                        RichText::new(t(if title_active {
-                                            if MapCanvas::title_has_selection(&ctx) {
-                                                "Selected text"
-                                            } else {
-                                                "New text"
+                    let mut content =
+                        |ui: &mut Ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            let width = if compact_surface {
+                                size.x.min((canvas.width() - 12.0).max(1.0))
+                            } else {
+                                strip.width()
+                            };
+                            ui.set_width((width - 16.0).max(1.0));
+                            ui.add_enabled_ui(
+                                enabled || section == ContextSection::Actions,
+                                |ui| {
+                                    ui.push_id(
+                                        (
+                                            &target.document,
+                                            target.instance,
+                                            target.sheet,
+                                            target.root,
+                                            target.topic,
+                                        ),
+                                        |ui| {
+                                            ui.horizontal(|ui| {
+                                                close = card_text_owned_icon(
+                                                    ui,
+                                                    icons::CLOSE,
+                                                    t("Close"),
+                                                    false,
+                                                    false,
+                                                    &mut owned_focus,
+                                                );
+                                                let mut next = section;
+                                                let sections: Vec<_> = sections
+                                                    .iter()
+                                                    .copied()
+                                                    .filter(|(value, _)| {
+                                                        !compact_actions
+                                                            || *value != ContextSection::Actions
+                                                    })
+                                                    .collect();
+                                                owned_focus.extend(
+                                                    format_menu::tabs(
+                                                        ui, &mut next, &sections, enabled,
+                                                    )
+                                                    .into_iter()
+                                                    .map(|response| response.id),
+                                                );
+                                                if next != section {
+                                                    if title_active {
+                                                        requested_section = Some(next);
+                                                    } else {
+                                                        section = next;
+                                                        format_menu::set_section(
+                                                            &ctx,
+                                                            context_owner,
+                                                            next,
+                                                        );
+                                                    }
+                                                }
+                                                if compact_actions {
+                                                    let actions =
+                                                        ui.menu_button(t("Actions"), |ui| {
+                                                            command =
+                                                                self.selection_context_actions(ui)
+                                                        });
+                                                    owned_focus.push(actions.response.id);
+                                                }
+                                            });
+                                            if compact_actions && section == ContextSection::Actions
+                                            {
+                                                return;
                                             }
-                                        } else {
-                                            "Selected object"
-                                        }))
-                                        .small(),
-                                    );
-                                    ui.horizontal_wrapped(|ui| {
+                                            if section == ContextSection::Style {
+                                                self.context_card_style_properties(ui);
+                                            } else if section == ContextSection::Arrange {
+                                                command = self.context_arrange_controls(ui);
+                                            } else if section == ContextSection::Actions {
+                                                command = self.selection_context_actions(ui);
+                                            } else {
+                                                ui.label(
+                                                    RichText::new(t(if title_active {
+                                                        if MapCanvas::title_has_selection(&ctx) {
+                                                            "Selected text"
+                                                        } else {
+                                                            "New text"
+                                                        }
+                                                    } else {
+                                                        "Selected object"
+                                                    }))
+                                                    .small(),
+                                                );
+                                                ui.horizontal_wrapped(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         if !title_active {
                                             for (icon, label, on, next, focus) in [
@@ -4465,21 +4682,31 @@ impl ThinodaApp {
                                             }
                                         }
                                     });
-                                    reveal_changed_focus(ui);
-                                }
-                            },
-                        );
-                    });
+                                                reveal_changed_focus(ui);
+                                            }
+                                        },
+                                    );
+                                },
+                            );
+                        };
+                    if compact_surface {
+                        let (_, button) = compact_selection_menu(ui, request_focus, content);
+                        owned_focus.push(button);
+                    } else {
+                        content(ui);
+                    }
                 });
             });
-        format_menu::measured(
-            &ctx,
-            measure_owner,
-            section,
-            canvas.width(),
-            expected_height,
-            panel.response.rect,
-        );
+        if !compact_surface {
+            format_menu::measured(
+                &ctx,
+                measure_owner,
+                section,
+                canvas.width(),
+                expected_height,
+                panel.response.rect,
+            );
+        }
         let popup_open = font_popups.iter().any(|(_, open)| *open);
         let popup_rects: Vec<_> = font_popups
             .iter()
@@ -4521,7 +4748,8 @@ impl ThinodaApp {
         let refocus = ime_active
             || keyboard_finish
             || (pointer_released
-                && (has_change
+                && (!touch_allowed
+                    || has_change
                     || close
                     || (!popup_open && !size_is_editing && !inline_size_is_editing)));
         if title_active
@@ -4867,28 +5095,12 @@ impl ThinodaApp {
         let Some(doc) = self.doc_mut() else {
             return true;
         };
-        let Some(anchor) = doc.view.selected_board_rect(&doc.doc) else {
+        let Some((anchor, controls)) = doc.view.selected_board_geometry(&doc.doc) else {
             return true;
         };
         if !anchor.intersects(canvas) {
             return true;
         }
-        let id = format_menu::area_id(ctx);
-        let size = format_menu::desired_size(
-            ctx,
-            owner,
-            format_menu::section(ctx, owner, ContextSection::Actions),
-            canvas.width(),
-        );
-        let rect = format_menu::place(
-            canvas,
-            anchor,
-            size,
-            &[egui::Rect::from_min_size(
-                canvas.min,
-                vec2(76.0, canvas.height()),
-            )],
-        );
         let mut sections = vec![(ContextSection::Actions, t("Actions"))];
         if text {
             sections.push((ContextSection::Text, t("Text")));
@@ -4903,6 +5115,26 @@ impl ThinodaApp {
         if !sections.iter().any(|(value, _)| *value == section) {
             section = ContextSection::Actions;
         }
+        let id = format_menu::area_id(ctx);
+        let size = format_menu::desired_size(ctx, owner, section, canvas.width());
+        let compact_open = compact_selection_menu_open(ctx);
+        let sizing_pass =
+            !compact_open && !format_menu::has_measurement(ctx, owner, section, canvas.width());
+        let avoid = [egui::Rect::from_min_size(
+            canvas.min,
+            vec2(76.0, canvas.height()),
+        )];
+        let Some((rect, compact)) = selection_menu_layout(
+            canvas,
+            anchor,
+            size,
+            &avoid,
+            &controls,
+            sizing_pass,
+            compact_open,
+        ) else {
+            return true;
+        };
         let mut command = None;
         if !format_menu::claim(ctx, format_menu::Producer::Selection) {
             return true;
@@ -4912,33 +5144,56 @@ impl ThinodaApp {
             .fixed_pos(rect.min)
             .constrain_to(canvas)
             .movable(false)
+            .sizing_pass(sizing_pass)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width((rect.width() - 16.0).max(1.0));
-                    format_menu::tabs(ui, &mut section, &sections, true);
-                    format_menu::set_section(ctx, owner, section);
-                    match section {
-                        ContextSection::Actions => command = self.selection_context_actions(ui),
-                        ContextSection::Text => self.context_topic_text_properties(ui),
-                        ContextSection::Style => {
-                            if cards {
-                                self.context_card_style_properties(ui)
-                            } else {
-                                self.context_topic_style_properties(ui)
-                            }
+                    let mut content = |ui: &mut Ui| {
+                        let width = if compact {
+                            size.x.min((canvas.width() - 12.0).max(1.0))
+                        } else {
+                            rect.width()
+                        };
+                        ui.set_width((width - 16.0).max(1.0));
+                        let previous_section = section;
+                        format_menu::tabs(ui, &mut section, &sections, true);
+                        if section != previous_section {
+                            format_menu::set_section(ctx, owner, section);
+                            section = previous_section;
+                            ctx.request_repaint();
                         }
-                        ContextSection::Arrange => command = self.context_arrange_controls(ui),
+                        match section {
+                            ContextSection::Actions => command = self.selection_context_actions(ui),
+                            ContextSection::Text => self.context_topic_text_properties(ui),
+                            ContextSection::Style => {
+                                if cards {
+                                    self.context_card_style_properties(ui)
+                                } else {
+                                    self.context_topic_style_properties(ui)
+                                }
+                            }
+                            ContextSection::Arrange => command = self.context_arrange_controls(ui),
+                        }
+                    };
+                    if compact {
+                        compact_selection_menu(ui, false, content);
+                    } else {
+                        content(ui);
                     }
                 });
             });
-        format_menu::measured(
-            ctx,
-            owner,
-            section,
-            canvas.width(),
-            size.y,
-            menu.response.rect,
-        );
+        if !compact {
+            format_menu::measured(
+                ctx,
+                owner,
+                section,
+                canvas.width(),
+                size.y,
+                menu.response.rect,
+            );
+        }
+        if sizing_pass {
+            ctx.request_repaint();
+        }
         if let Some(command) = command {
             self.exec(ctx, command);
         }
@@ -5300,6 +5555,7 @@ impl ThinodaApp {
         let is_board = d.doc.sheet().uses_board_semantics();
         let origin = canvas.center() + d.view.offset;
         let zoom = d.view.zoom;
+        let controls = d.view.selected_control_rects(&d.doc);
         let layout = is_board.then(|| d.view.layout_for(&d.doc));
         let rect = layout
             .as_ref()
@@ -5328,18 +5584,27 @@ impl ThinodaApp {
             available.min.y = available.min.y.max(strip.bottom() + 4.0);
         }
         let mut safe_clip = None;
-        if is_board && !available.is_positive() {
+        if !available.is_positive() {
             return;
         }
-        let previous_size = ctx
-            .memory(|memory| memory.area_rect(toolbar_id))
-            .map(|rect| rect.size());
         let measure_id = toolbar_id.with((
             "board_measure_key",
             ctx.viewport_id(),
             format!("{section:?}"),
         ));
-        let measure_key = is_board.then(|| {
+        let compact_slot = toolbar_id.with("topic_compact");
+        let size_slot = measure_id.with("expanded_size");
+        let was_compact = ctx
+            .data(|data| data.get_temp::<bool>(compact_slot))
+            .unwrap_or(false);
+        let previous_size = if was_compact {
+            ctx.data(|data| data.get_temp::<egui::Vec2>(size_slot))
+        } else {
+            ctx.memory(|memory| memory.area_rect(toolbar_id))
+                .map(|rect| rect.size())
+        };
+        let compact_open = compact_selection_menu_open(ctx);
+        let measure_key = (is_board || !controls.is_empty()).then(|| {
             topic_toolbar_measure_key(
                 ctx,
                 available,
@@ -5350,10 +5615,11 @@ impl ThinodaApp {
                 text_target.is_some(),
             )
         });
-        if !is_board {
+        if measure_key.is_none() {
             ctx.data_mut(|data| data.remove::<TopicToolbarMeasureKey>(measure_id));
         }
-        let sizing_pass = is_board
+        let sizing_pass = measure_key.is_some()
+            && !compact_open
             && (previous_size.is_none()
                 || ctx
                     .data(|data| data.get_temp::<TopicToolbarMeasureKey>(measure_id))
@@ -5362,7 +5628,25 @@ impl ThinodaApp {
         if board_toolbar.is_some() && previous_size.is_none() {
             ctx.request_repaint();
         }
-        if is_board && !sizing_pass {
+        let mut compact_surface = false;
+        if (compact_open
+            || (is_board
+                && !sizing_pass
+                && previous_size
+                    .is_some_and(|size| size.x > available.width() || size.y > available.height())))
+            && !controls.is_empty()
+        {
+            let Some(clear) =
+                selection_menu_placement(available, rect, vec2(48.0, 48.0), &[], &controls)
+            else {
+                return;
+            };
+            position = egui::pos2(
+                clear.center().x,
+                if below { clear.top() } else { clear.bottom() },
+            );
+            compact_surface = true;
+        } else if is_board && !sizing_pass {
             let Some(size) = previous_size else { return };
             if size.x > available.width() || size.y > available.height() {
                 return;
@@ -5381,6 +5665,7 @@ impl ThinodaApp {
             };
             let sheet = d.doc.sheet();
             let mut obstacles = board_card_obstacles(sheet, layout, origin, zoom, canvas);
+            obstacles.extend_from_slice(&controls);
             if card.is_none() {
                 let mut visible = rect;
                 if let Some(clip) = thinoda_core::scene::topic_clip_rect(sheet, selected) {
@@ -5434,7 +5719,20 @@ impl ThinodaApp {
                 return;
             }
             let clear = nearest_clear_toolbar_rect(desired, available, &obstacles, clearance)
-                .unwrap_or_else(|| format_menu::place(available, rect, size, &obstacles));
+                .or_else(|| nearest_clear_toolbar_rect(desired, available, &controls, clearance));
+            let clear = if let Some(clear) = clear {
+                clear
+            } else if !controls.is_empty() {
+                let Some(clear) =
+                    selection_menu_placement(available, rect, vec2(48.0, 48.0), &[], &controls)
+                else {
+                    return;
+                };
+                compact_surface = true;
+                clear
+            } else {
+                format_menu::place(available, rect, size, &obstacles)
+            };
             // Preserve the card frame's shadow where it fits; do not move the
             // toolbar farther away merely to make room for the shadow.
             let shadow_clip = clear.expand(8.0 + clearance * 0.5);
@@ -5450,6 +5748,46 @@ impl ThinodaApp {
                     clear.expand(clearance * 0.5)
                 },
             );
+            position = egui::pos2(
+                clear.center().x,
+                if below { clear.top() } else { clear.bottom() },
+            );
+        } else if !is_board
+            && !sizing_pass
+            && !controls.is_empty()
+            && let Some(size) = previous_size
+        {
+            let desired = egui::Rect::from_min_size(
+                egui::pos2(
+                    (position.x - size.x * 0.5).clamp(
+                        available.left(),
+                        (available.right() - size.x).max(available.left()),
+                    ),
+                    (if below {
+                        position.y
+                    } else {
+                        position.y - size.y
+                    })
+                    .clamp(
+                        available.top(),
+                        (available.bottom() - size.y).max(available.top()),
+                    ),
+                ),
+                size,
+            );
+            let clear = if let Some(clear) =
+                nearest_clear_toolbar_rect(desired, available, &controls, 3.0)
+            {
+                clear
+            } else {
+                let Some(clear) =
+                    selection_menu_placement(available, rect, vec2(48.0, 48.0), &[], &controls)
+                else {
+                    return;
+                };
+                compact_surface = true;
+                clear
+            };
             position = egui::pos2(
                 clear.center().x,
                 if below { clear.top() } else { clear.bottom() },
@@ -5503,49 +5841,64 @@ impl ThinodaApp {
                     ui.shrink_clip_rect(clip);
                 }
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width(308.0_f32.min(available.width() - 16.0).max(1.0));
-                    let mut sections = vec![(ContextSection::Actions, t("Actions"))];
-                    let image =
-                        card.is_some_and(|card| card.kind == thinoda_core::board::CardKind::Image);
-                    if !image && enabled {
-                        sections.push((ContextSection::Text, t("Text")));
-                    }
-                    if enabled {
-                        sections.push((ContextSection::Style, t("Style")));
-                    }
-                    if can_arrange {
-                        sections.push((ContextSection::Arrange, t("Arrange")));
-                    }
-                    if !sections.iter().any(|(value, _)| *value == section) {
-                        section = ContextSection::Actions;
-                    }
-                    let before = section;
-                    format_menu::tabs(ui, &mut section, &sections, true);
-                    if section != before {
-                        format_menu::set_section(ctx, section_owner, section);
-                    }
-                    match section {
-                        ContextSection::Actions => cmd = self.selection_context_actions(ui),
-                        ContextSection::Text => {
-                            ui.add_enabled_ui(enabled, |ui| self.context_topic_text_properties(ui));
+                    let mut content = |ui: &mut Ui| {
+                        ui.set_width(308.0_f32.min(available.width() - 16.0).max(1.0));
+                        let mut sections = vec![(ContextSection::Actions, t("Actions"))];
+                        let image = card
+                            .is_some_and(|card| card.kind == thinoda_core::board::CardKind::Image);
+                        if !image && enabled {
+                            sections.push((ContextSection::Text, t("Text")));
                         }
-                        ContextSection::Style => {
-                            ui.add_enabled_ui(enabled, |ui| {
-                                if card.is_some() {
-                                    self.board_card_properties(ui);
-                                    if image {
-                                        self.image_properties(ui);
+                        if enabled {
+                            sections.push((ContextSection::Style, t("Style")));
+                        }
+                        if can_arrange {
+                            sections.push((ContextSection::Arrange, t("Arrange")));
+                        }
+                        if !sections.iter().any(|(value, _)| *value == section) {
+                            section = ContextSection::Actions;
+                        }
+                        let before = section;
+                        format_menu::tabs(ui, &mut section, &sections, true);
+                        if section != before {
+                            format_menu::set_section(ctx, section_owner, section);
+                        }
+                        match section {
+                            ContextSection::Actions => cmd = self.selection_context_actions(ui),
+                            ContextSection::Text => {
+                                ui.add_enabled_ui(enabled, |ui| {
+                                    self.context_topic_text_properties(ui)
+                                });
+                            }
+                            ContextSection::Style => {
+                                ui.add_enabled_ui(enabled, |ui| {
+                                    if card.is_some() {
+                                        self.board_card_properties(ui);
+                                        if image {
+                                            self.image_properties(ui);
+                                        }
+                                    } else {
+                                        self.context_topic_style_properties(ui);
                                     }
-                                } else {
-                                    self.context_topic_style_properties(ui);
-                                }
-                            });
+                                });
+                            }
+                            ContextSection::Arrange => cmd = self.context_arrange_controls(ui),
                         }
-                        ContextSection::Arrange => cmd = self.context_arrange_controls(ui),
+                    };
+                    if compact_surface {
+                        compact_selection_menu(ui, false, content);
+                    } else {
+                        content(ui);
                     }
                 });
             });
-        if let Some(measure_key) = measure_key {
+        ctx.data_mut(|data| {
+            data.insert_temp(compact_slot, compact_surface);
+            if !compact_surface {
+                data.insert_temp(size_slot, shown.response.rect.size());
+            }
+        });
+        if let Some(measure_key) = measure_key.filter(|_| !compact_surface) {
             ctx.data_mut(|data| data.insert_temp(measure_id, measure_key));
             if !sizing_pass
                 && previous_size.is_some_and(|size| {

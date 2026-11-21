@@ -2217,6 +2217,20 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
     list
 }
 
+pub(super) fn selected_control_rects(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) -> Vec<Rect> {
+    controls(view, sheet, layout, scene)
+        .into_iter()
+        .filter(|control| !control.hover)
+        .map(|control| arrow_rect(view, control.point))
+        .filter(|rect| view.canvas_rect.intersects(*rect))
+        .collect()
+}
+
 fn selection_controls(
     view: &MapView,
     sheet: &Sheet,

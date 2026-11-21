@@ -1434,20 +1434,12 @@ impl ThinodaApp {
         let doc = self.doc_mut()?;
         let owner = format_menu::owner(&doc.doc, &doc.view);
         format_menu::prepare(ctx, owner);
-        let anchor = doc.view.selected_board_rect(&doc.doc)?;
+        let (anchor, controls) = doc.view.selected_board_geometry(&doc.doc)?;
         if !anchor.intersects(canvas) {
             Self::close_connector_popups(ctx, viewport);
             return None;
         }
         let area_id = format_menu::area_id(ctx);
-        let size = format_menu::desired_size(
-            ctx,
-            owner,
-            format_menu::section(ctx, owner, Section::Style),
-            canvas.width(),
-        );
-        let toolbox = Rect::from_min_size(canvas.min, vec2(76.0, canvas.height()));
-        let strip = format_menu::place(canvas, anchor, size, &[toolbox]);
         let mut section = format_menu::section(ctx, owner, Section::Style);
         let mut sections = vec![(Section::Actions, t("Actions"))];
         if enabled {
@@ -1462,6 +1454,24 @@ impl ThinodaApp {
         if !sections.iter().any(|(value, _)| *value == section) {
             section = Section::Actions;
         }
+        let size = format_menu::desired_size(ctx, owner, section, canvas.width());
+        let compact_open = crate::ui::compact_selection_menu_open(ctx);
+        let sizing_pass =
+            !compact_open && !format_menu::has_measurement(ctx, owner, section, canvas.width());
+        let toolbox = Rect::from_min_size(canvas.min, vec2(76.0, canvas.height()));
+        let layout = crate::ui::selection_menu_layout(
+            canvas,
+            anchor,
+            size,
+            &[toolbox],
+            &controls,
+            sizing_pass,
+            compact_open,
+        );
+        let Some((strip, compact)) = layout else {
+            Self::close_connector_popups(ctx, viewport);
+            return None;
+        };
         let mut connector_change = None;
         let mut shape_change = None;
         let mut popups = Vec::new();
@@ -1475,89 +1485,109 @@ impl ThinodaApp {
             .fixed_pos(strip.min)
             .constrain_to(canvas)
             .movable(false)
+            .sizing_pass(sizing_pass)
             .show(ctx, |ui| {
                 ui.set_max_width(strip.width());
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width((strip.width() - 16.0).max(1.0));
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.spacing_mut().button_padding.x = 4.0;
-                    ui.push_id(&target.owner, |ui| {
-                        let previous_section = section;
-                        format_menu::tabs(ui, &mut section, &sections, true);
-                        if section != previous_section {
-                            Self::close_connector_popups(ctx, viewport);
-                            format_menu::set_section(ctx, owner, section);
-                        }
-                        ui.add_enabled_ui(
-                            enabled || section == Section::Actions,
-                            |ui| match section {
-                                Section::Text => {
-                                    if canvas.height() > 220.0 {
-                                        ui.label(
-                                            egui::RichText::new(t(if selected > 1 {
-                                                "Selected objects"
-                                            } else {
-                                                "Selected object"
-                                            }))
-                                            .small(),
-                                        );
-                                    }
-                                    popups = self.board_context_text_properties(ui);
-                                }
-                                Section::Arrange => command = self.context_arrange_controls(ui),
-                                Section::Actions => {
-                                    if enabled {
-                                        ui.horizontal_wrapped(|ui| {
-                                            action = context_action_controls(
-                                                ui,
-                                                true,
-                                                28.0,
-                                                selected == 1,
-                                                format_panel_open,
-                                            );
-                                        });
-                                    }
-                                    command = self.selection_context_actions(ui);
-                                }
-                                Section::Style => {
-                                    let heading = if selected > 1 {
-                                        format!("{} ({selected})", t(heading))
-                                    } else {
-                                        t(heading).to_owned()
-                                    };
-                                    ui.label(egui::RichText::new(heading).small());
-                                    ui.horizontal_wrapped(|ui| match &context {
-                                        BoardObjectContext::Connector(connector) => {
-                                            (connector_change, popups) = connector_context_controls(
-                                                ui, canvas, true, 34.0, connector,
+                    let mut content = |ui: &mut egui::Ui| {
+                        let width = if compact {
+                            size.x.min((canvas.width() - 12.0).max(1.0))
+                        } else {
+                            strip.width()
+                        };
+                        ui.set_width((width - 16.0).max(1.0));
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.spacing_mut().button_padding.x = 4.0;
+                        ui.push_id(&target.owner, |ui| {
+                            let previous_section = section;
+                            format_menu::tabs(ui, &mut section, &sections, true);
+                            if section != previous_section {
+                                Self::close_connector_popups(ctx, viewport);
+                                format_menu::set_section(ctx, owner, section);
+                                section = previous_section;
+                                ctx.request_repaint();
+                            }
+                            ui.add_enabled_ui(enabled || section == Section::Actions, |ui| {
+                                match section {
+                                    Section::Text => {
+                                        if canvas.height() > 220.0 {
+                                            ui.label(
+                                                egui::RichText::new(t(if selected > 1 {
+                                                    "Selected objects"
+                                                } else {
+                                                    "Selected object"
+                                                }))
+                                                .small(),
                                             );
                                         }
-                                        BoardObjectContext::Shape(shape) => {
-                                            (shape_change, popups) = shape_context_controls(
-                                                ui, canvas, true, 34.0, shape,
-                                            );
+                                        popups = self.board_context_text_properties(ui);
+                                    }
+                                    Section::Arrange => command = self.context_arrange_controls(ui),
+                                    Section::Actions => {
+                                        if enabled {
+                                            ui.horizontal_wrapped(|ui| {
+                                                action = context_action_controls(
+                                                    ui,
+                                                    true,
+                                                    28.0,
+                                                    selected == 1,
+                                                    format_panel_open,
+                                                );
+                                            });
                                         }
-                                    });
-                                    if matches!(context, BoardObjectContext::Shape(_)) {
-                                        ui.menu_button(t("More style options"), |ui| {
-                                            self.board_shape_style_properties(ui);
+                                        command = self.selection_context_actions(ui);
+                                    }
+                                    Section::Style => {
+                                        let heading = if selected > 1 {
+                                            format!("{} ({selected})", t(heading))
+                                        } else {
+                                            t(heading).to_owned()
+                                        };
+                                        ui.label(egui::RichText::new(heading).small());
+                                        ui.horizontal_wrapped(|ui| match &context {
+                                            BoardObjectContext::Connector(connector) => {
+                                                (connector_change, popups) =
+                                                    connector_context_controls(
+                                                        ui, canvas, true, 34.0, connector,
+                                                    );
+                                            }
+                                            BoardObjectContext::Shape(shape) => {
+                                                (shape_change, popups) = shape_context_controls(
+                                                    ui, canvas, true, 34.0, shape,
+                                                );
+                                            }
                                         });
+                                        if matches!(context, BoardObjectContext::Shape(_)) {
+                                            ui.menu_button(t("More style options"), |ui| {
+                                                self.board_shape_style_properties(ui);
+                                            });
+                                        }
                                     }
                                 }
-                            },
-                        );
-                        crate::ui::reveal_changed_focus(ui);
-                    });
+                            });
+                            crate::ui::reveal_changed_focus(ui);
+                        });
+                    };
+                    if compact {
+                        crate::ui::compact_selection_menu(ui, false, content);
+                    } else {
+                        content(ui);
+                    }
                 });
             });
-        format_menu::measured(
-            ctx,
-            owner,
-            section,
-            canvas.width(),
-            size.y,
-            area.response.rect,
-        );
+        if !compact {
+            format_menu::measured(
+                ctx,
+                owner,
+                section,
+                canvas.width(),
+                size.y,
+                area.response.rect,
+            );
+        }
+        if sizing_pass {
+            ctx.request_repaint();
+        }
         if enabled {
             let mut updated_target = target.clone();
             if let Some(current) = self.board_object_context()

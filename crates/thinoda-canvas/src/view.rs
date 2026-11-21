@@ -1134,6 +1134,11 @@ impl MapView {
 
     /// Bounds of selected scene objects, including routed connectors and rotation.
     pub fn selected_board_rect(&mut self, doc: &Document) -> Option<Rect> {
+        self.selected_board_geometry(doc).map(|(rect, _)| rect)
+    }
+
+    /// Bounds and visible screen-space hit targets belonging to the selection.
+    pub fn selected_board_geometry(&mut self, doc: &Document) -> Option<(Rect, Vec<Rect>)> {
         if self.has_active_canvas_gesture() {
             return None;
         }
@@ -1173,10 +1178,49 @@ impl MapView {
                     thinoda_core::board::points_bounds(&[item.start, item.c1, item.c2, item.end])
                 }),
         });
-        members
+        let rect = members
             .chain(annotation)
             .map(|rect| self.xf().rect(rect))
-            .reduce(|a, b| a.union(b))
+            .reduce(|a, b| a.union(b))?;
+        let controls = self.selection_control_rects(doc.sheet(), &layout, Some(&scene));
+        Some((rect, controls))
+    }
+
+    fn selection_control_rects(
+        &self,
+        sheet: &Sheet,
+        layout: &Layout,
+        scene: Option<&Scene>,
+    ) -> Vec<Rect> {
+        let mut controls = scene.map_or_else(Vec::new, |scene| {
+            board_input::selected_control_rects(self, sheet, layout, scene)
+        });
+        controls.extend(
+            add_handles(self, sheet, layout)
+                .into_iter()
+                .map(|handle| handle.rect()),
+        );
+        controls.extend(image_resize::selected_control_rect(self, sheet, layout));
+        controls.extend(crate::relationship_editing::selected_control_rects(
+            self, layout,
+        ));
+        controls
+    }
+
+    /// Visible screen-space hit targets belonging to the current selection.
+    pub fn selected_control_rects(&mut self, doc: &Document) -> Vec<Rect> {
+        if self.has_active_canvas_gesture() {
+            return Vec::new();
+        }
+        let layout = self.layout_for(doc);
+        let sheet = doc.sheet();
+        let needs_scene = !self.board_selection.is_empty()
+            || self
+                .selection
+                .iter()
+                .any(|id| sheet.topic(*id).is_some_and(|topic| topic.card.is_some()));
+        let scene = needs_scene.then(|| build_scene(sheet, &layout));
+        self.selection_control_rects(sheet, &layout, scene.as_ref())
     }
 
     /// Laid-out bounds of the supplied topics and their visible descendants.
@@ -3246,6 +3290,7 @@ impl MapCanvas {
             && !minimap_blocks_keyboard
             && view.image_resize.is_none()
             && !egui::Popup::is_any_open(&ctx)
+            && !crate::format_menu::compact_open(&ctx)
             && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && !view.board_input.is_active()
             && (response.has_focus()

@@ -33,6 +33,13 @@ pub fn claim(ctx: &Context, producer: Producer) -> bool {
     })
 }
 
+pub fn claimed(ctx: &Context) -> bool {
+    let id = area_id(ctx).with("producer");
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data(|data| data.get_temp::<(u64, Producer)>(id))
+        .is_some_and(|(previous, _)| previous == pass)
+}
+
 /// Whether this pass right-clicked the nearby selection menu.
 ///
 /// The menu may cover part of a small selection; right-clicking it then opens
@@ -92,13 +99,26 @@ pub fn area_id(ctx: &Context) -> Id {
     Id::unique(("thinoda_selection_menu", ctx.viewport_id()))
 }
 
+pub fn compact_open(ctx: &Context) -> bool {
+    let id = area_id(ctx).with("compact_popup").with("open");
+    ctx.data(|data| data.get_temp::<bool>(id)).unwrap_or(false)
+}
+
+pub fn set_compact_open(ctx: &Context, open: bool) {
+    let id = area_id(ctx).with("compact_popup").with("open");
+    ctx.data_mut(|data| data.insert_temp(id, open));
+}
+
 pub fn prepare(ctx: &Context, owner: Id) {
     let id = area_id(ctx).with("owner");
     let previous = ctx.data(|data| data.get_temp::<Id>(id));
     // A right-click both selects and opens the canvas context menu; keep it.
     let canvas_menu = egui::Popup::is_id_open(ctx, crate::MapCanvas::id().with("popup"));
-    if previous.is_some_and(|previous| previous != owner) && !canvas_menu {
-        egui::Popup::close_all(ctx);
+    if previous.is_some_and(|previous| previous != owner) {
+        set_compact_open(ctx, false);
+        if !canvas_menu {
+            egui::Popup::close_all(ctx);
+        }
     }
     ctx.data_mut(|data| data.insert_temp(id, owner));
 }
