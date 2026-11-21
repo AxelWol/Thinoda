@@ -22,8 +22,12 @@ sections, not the location of formatting in the application.
   detailed label layout is under **More text options**. Card-only multi-selection
   exposes common fill, preserving each card's kind and geometry in one undo step.
   Single-card geometry is not offered as a misleading multi-card operation.
-- **Arrange** contains only available stacking commands, including front/back
-  and above/below the map. It is omitted when none apply.
+- **Arrange** contains the available stacking commands, including front/back
+  and above/below the map. For one ungrouped, unlocked canvas object it also
+  shows exact Left, Top, Width, Height and (except containers) Rotation, like
+  draw.io's Arrange geometry: values are the unrotated frame, each completed
+  field edit is one undo step, and a rejected value stays as a draft with
+  Apply/Cancel. The section is omitted when none apply.
 
 All draw.io stencil instances use the shape capabilities; there is no
 per-library formatting menu. Image cards do not show text controls. Locked

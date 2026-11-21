@@ -1608,3 +1608,89 @@ fn rich_shape_label_visual_previews() {
         }
     }
 }
+
+fn open_arrange(h: &mut Harness<'_, ThinodaApp>) {
+    open_compact_menu(h);
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run_steps(4);
+}
+
+#[test]
+fn arrange_geometry_sets_exact_position_size_and_rotation_with_one_undo_each() {
+    let (app, id) = app_with_shape();
+    let mut h = harness(app);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    open_arrange(&mut h);
+    let original = object(h.state(), id).rect;
+    let set = |h: &mut Harness<'_, ThinodaApp>, label: &str, value: f64| {
+        h.get_by_role_and_label(Role::SpinButton, label)
+            .set_value_accesskit(value);
+        h.run_steps(3);
+    };
+    set(&mut h, "Left", 100.0);
+    assert_eq!(
+        object(h.state(), id).rect.min,
+        Vec2::new(100.0, original.min.y)
+    );
+    assert_eq!(object(h.state(), id).rect.size, original.size);
+    assert_eq!(h.state().doc().unwrap().doc.undo_label(), Some("Geometry"));
+    set(&mut h, "Width", 240.0);
+    assert_eq!(object(h.state(), id).rect.size.x, 240.0);
+    set(&mut h, "Rotation", 30.0);
+    assert_eq!(object(h.state(), id).rotation, 30.0);
+
+    // Typing only commits when the edit completes.
+    h.get_by_role_and_label(Role::SpinButton, "Top").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.event(egui::Event::Text("-50".into()));
+    h.run_steps(3);
+    assert_eq!(object(h.state(), id).rect.min.y, original.min.y);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(object(h.state(), id).rect.min.y, -50.0);
+
+    for _ in 0..4 {
+        undo(&mut h);
+    }
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(h.state().toasts.is_empty());
+}
+
+#[test]
+fn arrange_geometry_is_not_offered_for_grouped_or_multiple_objects() {
+    let (mut app, id) = app_with_shape();
+    let other = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(80.0, 60.0)),
+        ))
+        .unwrap();
+    let doc = app.doc_mut().unwrap();
+    doc.view.board_selection = vec![id, other];
+    let mut h = harness(app);
+    open_arrange(&mut h);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.doc
+            .group_board_members(&[
+                thinoda_core::board::BoardMember::Object(id),
+                thinoda_core::board::BoardMember::Object(other),
+            ])
+            .unwrap();
+        doc.view.select_board_object(id);
+    }
+    h.run_steps(6);
+    open_arrange(&mut h);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+}

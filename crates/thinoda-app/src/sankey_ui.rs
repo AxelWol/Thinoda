@@ -19,7 +19,31 @@ struct NumberDraft {
     error: Option<String>,
 }
 
-fn number_edit(
+/// Discards committed number drafts, or keeps them with the commit error so
+/// the user can correct, retry or cancel the value.
+pub(crate) fn settle_number_drafts(
+    ctx: &egui::Context,
+    commits: Vec<egui::Id>,
+    error: Option<&str>,
+) {
+    for key in commits {
+        ctx.data_mut(|d| {
+            if let Some(mut draft) = d.get_temp::<NumberDraft>(key) {
+                if let Some(error) = error {
+                    draft.error = Some(error.to_owned());
+                    d.insert_temp(key, draft);
+                } else {
+                    d.remove::<NumberDraft>(key);
+                }
+            }
+        });
+    }
+}
+
+/// A numeric field that edits a local draft and returns a value only when the
+/// edit is complete (drag released, focus left or a discrete step), so each
+/// change becomes one undo step.
+pub(crate) fn number_edit(
     ui: &mut Ui,
     key: egui::Id,
     label: egui::Id,
@@ -636,18 +660,7 @@ impl ThinodaApp {
                 error = Some(e);
             }
         }
-        for key in commits {
-            ui.ctx().data_mut(|d| {
-                if let Some(mut draft) = d.get_temp::<NumberDraft>(key) {
-                    if let Some(e) = &error {
-                        draft.error = Some(e.clone());
-                        d.insert_temp(key, draft);
-                    } else {
-                        d.remove::<NumberDraft>(key);
-                    }
-                }
-            });
-        }
+        settle_number_drafts(ui.ctx(), commits, error.as_deref());
         if error.is_none()
             && let Some(id) = focus_node
             && let Some(doc) = self.doc_mut()

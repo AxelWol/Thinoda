@@ -5095,7 +5095,122 @@ impl ThinodaApp {
                 }
             }
         });
+        self.context_geometry_controls(ui);
         picked
+    }
+
+    /// Exact position, size and angle of one selected canvas object, like
+    /// draw.io's Arrange geometry. Each completed field edit is one undo step.
+    fn context_geometry_controls(&mut self, ui: &mut Ui) {
+        use thinoda_core::board::{BoardMember, MAX_BOARD_COORDINATE};
+        use thinoda_core::{Rect, Vec2};
+        let Some(doc) = self.doc() else { return };
+        if !doc.view.selection.is_empty() || doc.view.board_selection.len() != 1 {
+            return;
+        }
+        let id = doc.view.board_selection[0];
+        let sheet = doc.doc.sheet();
+        let Some(object) = sheet.canvas.object(id) else {
+            return;
+        };
+        // A grouped member would drag its group along; connectors follow ends.
+        if object.is_connector()
+            || object.group.is_some()
+            || sheet.is_board_member_locked(BoardMember::Object(id))
+            || (sheet.canvas.scene.contains(id)
+                && thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)
+                    .is_ok_and(|hierarchy| hierarchy.is_locked(id)))
+        {
+            return;
+        }
+        let rect = object.rect;
+        let rotation = object.rotation;
+        // Object ids are per sheet, so drafts are scoped to this document sheet.
+        let owner = egui::Id::unique((&doc.key, doc.doc.active_index()));
+        let rotatable = !sheet.canvas.scene.containers.contains(&id);
+        let max = f64::from(MAX_BOARD_COORDINATE);
+        let mut commits = Vec::new();
+        let mut changed = None;
+        ui.separator();
+        egui::Grid::new(("geometry", id.0))
+            .num_columns(4)
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                let fields = [
+                    ("Left", f64::from(rect.min.x), -max..=max),
+                    ("Top", f64::from(rect.min.y), -max..=max),
+                    ("Width", f64::from(rect.size.x), 1.0..=max),
+                    ("Height", f64::from(rect.size.y), 1.0..=max),
+                    ("Rotation", f64::from(rotation), 0.0..=359.9),
+                ];
+                for (index, (label, stored, range)) in fields.into_iter().enumerate() {
+                    if index == 4 && !rotatable {
+                        continue;
+                    }
+                    let label = ui.label(t(label));
+                    let key = egui::Id::unique(("board-geometry", owner, id.0, index));
+                    if let Some(value) = crate::sankey_ui::number_edit(
+                        ui,
+                        key,
+                        label.id,
+                        stored,
+                        range,
+                        1,
+                        &mut commits,
+                    ) {
+                        changed = Some((index, value as f32));
+                    }
+                    if index % 2 == 1 {
+                        ui.end_row();
+                    }
+                }
+            });
+        let mut error = None;
+        if let Some((index, value)) = changed {
+            let result = (|| {
+                let doc = self
+                    .doc_mut()
+                    .ok_or_else(|| t("Not possible here").to_owned())?;
+                doc.commit_canvas_drafts()?;
+                doc.doc
+                    .edit_sheet("Geometry", |sheet| {
+                        let invalid = thinoda_core::EditError::Invalid;
+                        match index {
+                            0 | 1 => {
+                                let target = if index == 0 {
+                                    Vec2::new(value, rect.min.y)
+                                } else {
+                                    Vec2::new(rect.min.x, value)
+                                };
+                                sheet
+                                    .move_board_members(
+                                        &[BoardMember::Object(id)],
+                                        target - rect.min,
+                                    )
+                                    .map_err(invalid)
+                            }
+                            2 | 3 => {
+                                let mut size = rect.size;
+                                if index == 2 {
+                                    size.x = value;
+                                } else {
+                                    size.y = value;
+                                }
+                                sheet
+                                    .resize_canvas_object(id, Rect::from_min_size(rect.min, size))
+                                    .map_err(invalid)
+                            }
+                            _ => sheet.rotate_canvas_object(id, value).map_err(invalid),
+                        }
+                    })
+                    .map_err(|error| error.to_string())
+            })();
+            error = result.err();
+        }
+        crate::sankey_ui::settle_number_drafts(ui.ctx(), commits, error.as_deref());
+        if let Some(error) = error {
+            self.toasts.error(error);
+        }
     }
 
     pub(crate) fn has_context_arrange_controls(&self) -> bool {

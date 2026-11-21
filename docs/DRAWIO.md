@@ -100,7 +100,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Layout | ELK flow/tree/radial/organic, circle, org chart | Native selection layouts: tree, layered flow, radial, circle and organic (org chart = vertical tree); no edge routing or ELK options | D11 |
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
-| Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Missing | D12 |
+| Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Partial (exact geometry in the nearby Arrange section; raw style and XML missing) | D12 |
 | Editing | Copy/paste style, set default style, style rules | Partial (format painter) | D9 |
 | Views | Find/replace on board, tags, outline window | Partial (mind-map find; minimap) | D12 |
 | Views | Ruler, units, page view, print layout | Missing | D12 |
@@ -381,6 +381,21 @@ options, org-chart variants and edge routing are out of scope.
 - [ ] Mermaid, PlantUML (text subset), CSV, SQL and text import to board objects
 - [ ] draw.io templates in the template gallery (CC BY 4.0 attribution)
 - [ ] Edit style (raw key/value), edit geometry, raw diagram XML import/export dialog
+  - [x] Exact geometry (left, top, width, height, rotation) for one canvas object in the nearby menu's Arrange section
+  - [ ] Raw style key/value editor and raw diagram XML dialog
+
+**D12 geometry rubber-duck critique.** A separate dialog would contradict the
+nearby-menu concept, so the fields join the existing Arrange section, which
+already holds layering. Values are committed through the existing numeric
+draft (drag release, focus loss or a discrete step), so a drag is one undo
+step, not dozens. Edits use the existing lock- and hierarchy-aware move,
+resize and rotate operations; fields are hidden for connectors, grouped
+members (editing one would move its group), multi-selections, and directly
+or inherited locked objects, and Rotation is hidden for containers, which
+cannot rotate. Left/Top describe the unrotated frame as in draw.io. Duck
+check: cards still edit size and rotation under More style options without
+position fields; stack-managed children and table cells can reject a value,
+which is then reported and kept as a correctable draft rather than hidden.
 - [ ] Find/replace and tags on boards, ruler, units and page view
   - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
   - [ ] Tag browser/filter, ruler, units and page view
@@ -489,6 +504,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |
 | 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |
 | 2026-11-21 | D9 toolbar input ordering (partial) | Text or IME input that follows F6, Enter or Space toolbar activation in the same frame is no longer lost or applied before the formatting; a submitted toolbar size field routes later text back to the label, and composition keeps the field focused. Real-platform input and pointer batches remain open. |
 | 2026-11-21 | D12 board replace (partial) | Locked tag-only hits no longer block replacement elsewhere; the dialog discloses replaced and search-only fields in every shipped locale. |
