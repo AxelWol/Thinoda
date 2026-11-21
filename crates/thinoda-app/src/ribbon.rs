@@ -198,6 +198,12 @@ fn command_groups<'a>(
 }
 
 impl ThinodaApp {
+    pub(crate) fn toggle_ribbon_collapse(&mut self) {
+        self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
+        self.ribbon.temporary = false;
+        self.save_settings();
+    }
+
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn quick_access_toolbar(&mut self, ui: &mut Ui) {
         let snapshot = self
@@ -208,6 +214,8 @@ impl ThinodaApp {
         let preferences = self.settings.quick_access;
         let response = ui.horizontal_centered(|ui| {
             let narrow = ui.ctx().content_rect().width() < 640.0;
+            let very_narrow = ui.ctx().content_rect().width() < 400.0
+                && (cfg!(target_os = "macos") || self.mode == crate::app::CenterMode::Outliner);
             for (visible, command, label) in [
                 (preferences.save, Cmd::Save, t("Save")),
                 (
@@ -228,6 +236,7 @@ impl ThinodaApp {
                             command,
                             Cmd::Print | Cmd::Canvas(thinoda_canvas::Action::Redo)
                         ))
+                    || (very_narrow && matches!(command, Cmd::Canvas(thinoda_canvas::Action::Undo)))
                 {
                     continue;
                 }
@@ -454,24 +463,13 @@ impl ThinodaApp {
         });
     }
 
-    pub fn show_ribbon(&mut self, ui: &mut Ui) {
-        let ctx = ui.ctx().clone();
+    fn prepare_ribbon(&mut self, ctx: &egui::Context) -> crate::native_menus::MenuSnapshot {
         if !ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released())
             && let Some((snapshot, command)) = self.ribbon.pending.take()
         {
-            self.dispatch_ribbon_command(&ctx, &snapshot, &command);
+            self.dispatch_ribbon_command(ctx, &snapshot, &command);
         }
-        let mut groups = self.main_menu_entries();
-        for group in &mut groups {
-            if let MenuEntry::Submenu { label, .. } = group {
-                if label == t("Edit") {
-                    *label = t("Home").into();
-                } else if label == t("Tools") {
-                    *label = t("Capture").into();
-                }
-            }
-        }
-        let mut snapshot = self.native_menu_snapshot(&ctx);
+        let mut snapshot = self.native_menu_snapshot(ctx);
         // egui clears text focus on pointer press before the ribbon is drawn.
         // Keep the producing text owner through this ribbon pointer sequence.
         if !snapshot.has_text_focus()
@@ -491,6 +489,67 @@ impl ThinodaApp {
             snapshot = previous.clone();
         }
         self.ribbon.snapshot = Some(snapshot.clone());
+        snapshot
+    }
+
+    pub(crate) fn show_outliner_ribbon(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.prepare_ribbon(&ctx);
+        let blocked = self.any_modal_open()
+            || self.dialogs.settings
+            || self.dialogs.about
+            || self.palette.open
+            || self.launch.is_some();
+        if !blocked
+            && !ctx.text_edit_focused()
+            && ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::F1))
+        {
+            self.toggle_ribbon_collapse();
+        }
+        let height = if self.settings.ribbon_collapsed {
+            if self.settings.compact_ribbon {
+                46.0
+            } else {
+                56.0
+            }
+        } else {
+            crate::ui::outliner_ribbon_height(
+                (ui.available_width() - 16.0).max(0.0),
+                self.settings.compact_ribbon,
+                ui.spacing().item_spacing.y,
+            )
+            .min(ctx.content_rect().height().max(0.0) * 0.4)
+        };
+        let panel = egui::Panel::top("thinoda_outline_ribbon")
+            .exact_size(height)
+            .frame(
+                egui::Frame::new()
+                    .fill(Palette::of(&ctx).surface)
+                    .inner_margin(egui::Margin::symmetric(8, 6)),
+            )
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!blocked, |ui| self.outliner(ui, true))
+                    .inner
+            });
+        self.ribbon.rect = Some(panel.response.rect);
+        if panel.inner {
+            self.toggle_ribbon_collapse();
+        }
+    }
+
+    pub fn show_ribbon(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let snapshot = self.prepare_ribbon(&ctx);
+        let mut groups = self.main_menu_entries();
+        for group in &mut groups {
+            if let MenuEntry::Submenu { label, .. } = group {
+                if label == t("Edit") {
+                    *label = t("Home").into();
+                } else if label == t("Tools") {
+                    *label = t("Capture").into();
+                }
+            }
+        }
         let blocked = self.any_modal_open()
             || self.dialogs.settings
             || self.dialogs.about
@@ -499,9 +558,7 @@ impl ThinodaApp {
         let mut selected = None;
         if !blocked && !ctx.text_edit_focused() {
             if ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::F1)) {
-                self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
-                self.ribbon.temporary = false;
-                self.save_settings();
+                self.toggle_ribbon_collapse();
             }
 
             for (index, key) in [
@@ -592,9 +649,7 @@ impl ThinodaApp {
                             None,
                         );
                         if toggle {
-                            self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
-                            self.ribbon.temporary = false;
-                            self.save_settings();
+                            self.toggle_ribbon_collapse();
                         }
                         egui::ScrollArea::horizontal()
                             .id_salt("ribbon_tabs")

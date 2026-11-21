@@ -367,7 +367,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 ### D15 — Visual parity and hardening
 
 - [x] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
-- [ ] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
+- [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
 - [ ] Fuzz and size budgets for the bundle decoder and catalog
 
@@ -384,6 +384,30 @@ so short names do not enable a meaningless arrow and closing files restores the
 unscrolled position. Tests exercise the native Windows header and Quick Access,
 overflow, resizing, zoom, keyboard and rejected touch.
 
+**Outliner-ribbon rubber-duck critique:** Keeping both ribbons wastes vertical
+space and separates structural actions from their selected topic, so native
+Outliner mode replaces the main ribbon rather than stacking a second toolbar.
+The heading has ribbon-title typography, spacing and a full-title tooltip; the
+same nine undoable actions remain available. A bounded panel and focus-driven
+scrolling protect the outline and inspector on small screens. Hiding the normal
+ribbon initially broke pending Quick Access dispatch and text-focus snapshots;
+both ribbons now share that preparation. The Outliner preserves the saved
+collapse setting and Ctrl+F1, while Main Menu retains the full command tree;
+Alt+1–8 opens the corresponding command category in a keyboard-navigable Main
+Menu popup instead of replacing the Outliner ribbon. Changing categories resets
+the popup scroll position; Escape closes it. Zen and non-native hosts retain
+their inline controls. The nearby More actions popup is height-bounded and
+scrollable: at high scale its former full-height menu covered the Outliner switch.
+Scrolled-out submenu rows cannot open over the remaining commands, which keeps
+the last actions clickable even in narrow windows. The extra Main Menu button
+also reduced the tab budget:
+header actions now collapse first, and very narrow native headers with Main Menu
+hide Quick Access Undo while keeping its menu/shortcut and New Tab available.
+Native layout, mode transitions, collapse, Quick Access, category shortcuts,
+modal and text-editor blocking, including the PowerPoint export dialog,
+localized controls, FIM, zoom and narrow-screen reachability have regression
+coverage.
+
 Out of scope: cloud storage connectors, comments, shared cursors, AI generation
 (Thinoda has its own AI), plugins, revision history (Thinoda has its own
 recovery) and binary `.vsd`.
@@ -392,6 +416,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D15 Outliner ribbon | Native Outliner replaces the main ribbon with contextual actions, a larger selected-topic heading and shared collapse/Quick Access behavior; the nearby actions popup no longer covers the mode switch in the tested high-scale layout. |
 | 2026-11-21 | D15 document tabs | New Tab stays visible during overflow; measured file names use the available header space without overlapping actions, including after resize and zoom. |
 | 2026-11-21 | D8 Layers panel | The panel can be dragged, restores its last validated position within the window, and shows at least six layers when space permits. |
 | 2026-11-19 | D9 card font search (partial) | Inline font choices can be filtered without losing the title selection; candidate choices are disabled during search-field IME composition. Arbitrary card color entry remains open. |

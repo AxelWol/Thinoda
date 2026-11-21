@@ -875,8 +875,14 @@ fn card_inline_size_control(
 }
 
 pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+    scroll_menu_with_max_height(ui, f32::INFINITY, content);
+}
+
+fn scroll_menu_with_max_height(ui: &mut Ui, max_height: f32, content: impl FnOnce(&mut Ui)) {
     let margin = egui::Frame::menu(ui.style()).total_margin().sum().y;
-    let height = (ui.ctx().content_rect().height() - margin).max(0.0);
+    let height = (ui.ctx().content_rect().height() - margin)
+        .max(0.0)
+        .min(max_height.max(0.0));
     // A popup's initial sizing height must not become the permanent scroll limit.
     ui.set_max_height(height);
     egui::ScrollArea::vertical()
@@ -1357,7 +1363,36 @@ fn menu_button(
     label: impl Into<egui::WidgetText>,
     content: impl FnOnce(&mut Ui),
 ) -> egui::InnerResponse<Option<()>> {
-    ui.menu_button(label, |ui| scroll_menu(ui, content))
+    use egui::containers::menu::{MenuState, SubMenu, SubMenuButton};
+
+    if !egui::containers::menu::is_in_menu(ui) {
+        return ui.menu_button(label, |ui| scroll_menu(ui, content));
+    }
+
+    let button = SubMenuButton::new(label.into());
+    let submenu_id = SubMenu::id_from_widget_id(ui.next_auto_id());
+    let open = MenuState::from_ui(ui, |state, _| state.open_item == Some(submenu_id));
+    let inactive = ui.style().visuals.widgets.inactive;
+    if open {
+        ui.style_mut().visuals.widgets.inactive = ui.style().visuals.widgets.open;
+    }
+    let response = ui.add(button.button);
+    ui.style_mut().visuals.widgets.inactive = inactive;
+    let mut clipped = response.clone();
+    // SubMenu uses rect for hover; a scrolled-out row must not cover visible items.
+    clipped.rect = response.interact_rect;
+    if !clipped.rect.is_positive() {
+        MenuState::from_ui(ui, |state, _| {
+            if state.open_item == Some(submenu_id) {
+                state.open_item = None;
+            }
+        });
+    }
+    let inner = button
+        .sub_menu
+        .show(ui, &clipped, |ui| scroll_menu(ui, content))
+        .map(|inner| inner.inner);
+    egui::InnerResponse::new(inner, response)
 }
 
 fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
@@ -1704,6 +1739,45 @@ fn document_tabs(
         data.insert_temp(state_id, (position, max_offset, active_key));
     });
     (selected, new_tab, close_tab)
+}
+
+fn outliner_toolbar_layout(width: f32, compact: bool) -> (thinoda_ui::ribbon::Detail, usize) {
+    let detail = if width >= 1160.0 {
+        thinoda_ui::ribbon::Detail::Large
+    } else if width >= 880.0 {
+        thinoda_ui::ribbon::Detail::Labeled
+    } else {
+        thinoda_ui::ribbon::Detail::Icon
+    };
+    let columns = if width >= 500.0 {
+        4
+    } else if width >= 220.0 {
+        2
+    } else {
+        1
+    };
+    (if compact { detail.compact() } else { detail }, columns)
+}
+
+fn outliner_group_height(detail: thinoda_ui::ribbon::Detail, columns: usize, spacing: f32) -> f32 {
+    match detail {
+        thinoda_ui::ribbon::Detail::Large => 96.0,
+        thinoda_ui::ribbon::Detail::Labeled => 176.0 + spacing * 3.0,
+        thinoda_ui::ribbon::Detail::Icon if columns == 4 => 44.0,
+        thinoda_ui::ribbon::Detail::Icon => 96.0,
+        thinoda_ui::ribbon::Detail::CompactLarge => 72.0,
+        thinoda_ui::ribbon::Detail::CompactLabeled => 136.0 + spacing * 3.0,
+        thinoda_ui::ribbon::Detail::CompactIcon if columns == 4 => 34.0,
+        thinoda_ui::ribbon::Detail::CompactIcon => 72.0,
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn outliner_ribbon_height(width: f32, compact: bool, spacing: f32) -> f32 {
+    let (detail, columns) = outliner_toolbar_layout(width, compact);
+    let rows = 4_usize.div_ceil(columns);
+    80.0 + rows as f32 * (outliner_group_height(detail, columns, spacing) + 16.0 + spacing)
+        + rows.saturating_sub(1) as f32 * 8.0
 }
 
 pub(crate) fn font_selector(
@@ -2592,7 +2666,11 @@ impl ThinodaApp {
                 });
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             if self.ribbon_active() {
-                self.show_ribbon(ui);
+                if show_doc && self.mode == CenterMode::Outliner {
+                    self.show_outliner_ribbon(ui);
+                } else {
+                    self.show_ribbon(ui);
+                }
             }
             if show_doc {
                 egui::Panel::bottom("thinoda_statusbar")
@@ -2761,7 +2839,7 @@ impl ThinodaApp {
                 if !show_doc {
                     self.home(ui);
                 } else if self.mode == CenterMode::Outliner {
-                    self.outliner(ui);
+                    self.outliner(ui, false);
                 } else if self.task_table_visible() {
                     self.tree_table_ui(ui);
                 } else {
@@ -3056,6 +3134,7 @@ impl ThinodaApp {
         d.close.is_some()
             || d.mindmanager_save.is_some()
             || d.mindmanager_export
+            || d.powerpoint_export
             || !d.imports.is_empty()
             || d.conflict.is_some()
             || d.rename_sheet.is_some()
@@ -3071,21 +3150,68 @@ impl ThinodaApp {
         let mut cmd: Option<Cmd> = None;
         let touch_allowed = widgets::touch_activation_allowed(&ctx);
         let visible_documents = self.visible_document_indices(self.current_viewport);
+        let outline_category = if self.ribbon_active()
+            && self.mode == CenterMode::Outliner
+            && visible_documents.contains(&self.active)
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+            && !self.dialogs.about
+            && !self.palette.open
+            && self.launch.is_none()
+            && !ctx.text_edit_focused()
+        {
+            [
+                Key::Num1,
+                Key::Num2,
+                Key::Num3,
+                Key::Num4,
+                Key::Num5,
+                Key::Num6,
+                Key::Num7,
+                Key::Num8,
+            ]
+            .into_iter()
+            .position(|key| ctx.input_mut(|input| input.consume_key(Modifiers::ALT, key)))
+        } else {
+            None
+        };
+        let category_request = egui::Id::unique(("outline_menu_category", self.current_viewport));
+        if let Some(category) = outline_category {
+            ctx.data_mut(|data| {
+                data.insert_temp(category_request, category);
+                data.insert_temp(category_request.with("reset_scroll"), true);
+            });
+        }
         let inline_menu_bar = !cfg!(target_arch = "wasm32")
             && ctx.os() == egui::os::OperatingSystem::Nix
             && ctx.content_rect().width() >= 1400.0 * self.settings.ui_scale.clamp(0.5, 3.0);
         ui.horizontal_centered(|ui| {
             if inline_menu_bar {
                 self.main_menu_bar(ui, &mut cmd);
-            } else if !cfg!(target_os = "windows") || !self.ribbon_active() {
-                guarded_menu_button(
+            } else if !cfg!(target_os = "windows")
+                || !self.ribbon_active()
+                || (self.mode == CenterMode::Outliner && visible_documents.contains(&self.active))
+            {
+                let menu = guarded_menu_button(
                     ui,
                     RichText::new(icons::MENU).size(icons::SIZE_TOOLBAR),
                     |ui| self.main_menu(ui, &mut cmd),
-                )
-                .response
-                .accessible_name(t("Main Menu"))
-                .on_hover_text(t("Main Menu"));
+                );
+                let response = menu
+                    .response
+                    .accessible_name(t("Main Menu"))
+                    .on_hover_text(t("Main Menu"));
+                let popup_id = egui::Popup::menu(&response).get_id();
+                if outline_category.is_some() {
+                    response.request_focus();
+                    egui::Popup::open_id(&ctx, popup_id);
+                    ctx.request_repaint();
+                } else if response.clicked() || !egui::Popup::is_id_open(&ctx, popup_id) {
+                    ctx.data_mut(|data| {
+                        data.remove_temp::<usize>(category_request);
+                        data.remove_temp::<bool>(category_request.with("reset_scroll"));
+                    });
+                }
             }
             let header_width = ctx.content_rect().width();
             let compact_header = header_width < 640.0;
@@ -3123,14 +3249,22 @@ impl ThinodaApp {
             }
             widgets::vdivider(ui);
             let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
-            let actions_width = if header_width < 600.0 {
-                0.0
-            } else if compact_header {
+            let min_tabs_width =
+                2.0 * (ui.spacing().interact_size.y + ui.spacing().item_spacing.x) + action_slot;
+            let full_actions_width = 5.0 * action_slot
+                + ui.spacing().interact_size.x.max(Tokens::ICON_BUTTON)
+                + ui.spacing().item_spacing.x;
+            let show_actions =
+                header_width >= 600.0 && ui.available_width() >= min_tabs_width + 3.0 * action_slot;
+            let show_extra_actions = show_actions
+                && !compact_header
+                && ui.available_width() >= min_tabs_width + full_actions_width;
+            let actions_width = if show_extra_actions {
+                full_actions_width
+            } else if show_actions {
                 3.0 * action_slot
             } else {
-                5.0 * action_slot
-                    + ui.spacing().interact_size.x.max(Tokens::ICON_BUTTON)
-                    + ui.spacing().item_spacing.x
+                0.0
             };
             let tabs_width = (ui.available_width() - actions_width).max(0.0);
             let (selected, new_tab, close_tab) = document_tabs(
@@ -3153,7 +3287,7 @@ impl ThinodaApp {
                 }
             }
 
-            if header_width >= 600.0 {
+            if show_actions {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let format = widgets::icon_button(
                         ui,
@@ -3177,7 +3311,7 @@ impl ThinodaApp {
                     if symbols.clicked() {
                         cmd = Some(Cmd::ToggleSymbolsPanel);
                     }
-                    if !compact_header {
+                    if show_extra_actions {
                         ui.add_enabled_ui(
                             EXPORT_MENU
                                 .iter()
@@ -3211,7 +3345,7 @@ impl ThinodaApp {
                     if outliner.clicked() {
                         cmd = Some(Cmd::ToggleOutliner);
                     }
-                    if !compact_header
+                    if show_extra_actions
                         && widgets::icon_button(ui, icons::SEARCH, t("Find…"), self.search.open)
                             .clicked()
                     {
@@ -3226,7 +3360,26 @@ impl ThinodaApp {
     }
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
-        self.render_menu_entries(ui, &self.main_menu_entries(), cmd);
+        use crate::menus::MenuEntry;
+
+        let request = egui::Id::unique(("outline_menu_category", self.current_viewport));
+        let category = ui.data(|data| data.get_temp::<usize>(request));
+        let entries = self.main_menu_entries();
+        if let Some(MenuEntry::Submenu { label, entries }) =
+            category.and_then(|category| entries.get(category))
+        {
+            let heading = ui.label(RichText::new(label).strong());
+            if ui
+                .data_mut(|data| data.remove_temp::<bool>(request.with("reset_scroll")))
+                .unwrap_or(false)
+            {
+                heading.scroll_to_me(Some(Align::Min));
+            }
+            ui.separator();
+            self.render_menu_entries(ui, entries, cmd);
+        } else {
+            self.render_menu_entries(ui, &entries, cmd);
+        }
     }
 
     fn main_menu_bar(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
@@ -5040,16 +5193,15 @@ impl ThinodaApp {
             }
             if !entries.is_empty() {
                 ui.menu_button(t("More actions"), |ui| {
-                    scroll_menu(ui, |ui| {
+                    let max_height = ui.ctx().content_rect().height() * 0.5;
+                    scroll_menu_with_max_height(ui, max_height, |ui| {
                         let mut card_text = false;
                         if topics
                             && self.command_available(&Cmd::Canvas(Action::ToggleMarker(
                                 "priority-1".into(),
                             )))
                         {
-                            ui.menu_button(t("Marker"), |ui| {
-                                scroll_menu(ui, |ui| self.marker_menu(ui, &mut picked));
-                            });
+                            menu_button(ui, t("Marker"), |ui| self.marker_menu(ui, &mut picked));
                         }
                         if self.command_available(&Cmd::FindReplace)
                             && ui.button(t("Find and Replace…")).clicked()
@@ -6342,15 +6494,17 @@ impl ThinodaApp {
         }
     }
 
-    fn outliner(&mut self, ui: &mut Ui) {
+    pub(crate) fn outliner(&mut self, ui: &mut Ui, ribbon_only: bool) -> bool {
         let ctx = ui.ctx().clone();
         let mut fim_record = None;
         let mut fim_node_request = None;
-        if let Some((record, can_insert)) = self.doc().and_then(|doc| {
-            let source = doc.doc.sheet().fim.as_ref()?;
-            let record = source.record_for_topic(doc.view.primary()?)?;
-            Some((record, source.node_parent(record).is_some()))
-        }) {
+        if !ribbon_only
+            && let Some((record, can_insert)) = self.doc().and_then(|doc| {
+                let source = doc.doc.sheet().fim.as_ref()?;
+                let record = source.record_for_topic(doc.view.primary()?)?;
+                Some((record, source.node_parent(record).is_some()))
+            })
+        {
             ui.horizontal_wrapped(|ui| {
                 if ui.button(t("Edit FIM node")).clicked() {
                     fim_node_request = Some((record, None));
@@ -6369,8 +6523,9 @@ impl ThinodaApp {
         let shortcuts = self.active_canvas_bindings(ctx.os());
         let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
+        let show_toolbar = ribbon_only || self.zen || !self.ribbon_active();
         let Some(d) = self.docs.get_mut(self.active) else {
-            return;
+            return false;
         };
         let outline_id = egui::Id::unique((
             "outline_topics",
@@ -6378,6 +6533,223 @@ impl ThinodaApp {
             d.doc.workbook().active_sheet,
             d.doc.sheet().root,
         ));
+        let mut action: Option<Action> = None;
+        let mut toggle_ribbon = false;
+        if show_toolbar {
+            let selected_title = d
+                .view
+                .primary()
+                .and_then(|id| d.doc.sheet().topic(id))
+                .map(|topic| topic.title.clone());
+            let (detail, group_columns) =
+                outliner_toolbar_layout(ui.available_width(), self.settings.compact_ribbon);
+            let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
+                for (label, command) in buttons {
+                    let enabled = command.available(&d.doc, &d.view);
+                    let (response, activated) = ui
+                        .add_enabled_ui(enabled, |ui| {
+                            thinoda_ui::ribbon::command_button(
+                                ui,
+                                crate::command_icons::command_glyph(&Cmd::Canvas(command.clone())),
+                                t(label),
+                                detail,
+                                false,
+                                None,
+                            )
+                        })
+                        .inner;
+                    if response.gained_focus() {
+                        response.scroll_to_me(None);
+                    }
+                    if touch_actions_allowed && activated {
+                        response.request_focus();
+                        action = Some(command.clone());
+                    }
+                }
+            };
+            let header_height = if ribbon_only {
+                ui.available_height().max(0.0)
+            } else {
+                ui.available_height().max(0.0) * 0.4
+            };
+            egui::ScrollArea::vertical()
+                .id_salt(outline_id.with("actions"))
+                .min_scrolled_height(0.0)
+                .max_height(header_height)
+                .show(ui, |ui| {
+                    let summary = selected_title.as_ref().map_or_else(
+                        || t("Select a topic to edit").to_owned(),
+                        |title| format!("{}: {title}", t("Selected Topic")),
+                    );
+                    let heading = |ui: &mut Ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&summary).size(Tokens::FONT_HEADING).strong(),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&summary);
+                    };
+                    if ribbon_only {
+                        let detail = if self.settings.compact_ribbon {
+                            thinoda_ui::ribbon::Detail::CompactIcon
+                        } else {
+                            thinoda_ui::ribbon::Detail::Icon
+                        };
+                        let label = if self.settings.ribbon_collapsed {
+                            t("Expand Ribbon")
+                        } else {
+                            t("Collapse Ribbon")
+                        };
+                        let height = if self.settings.compact_ribbon {
+                            34.0
+                        } else {
+                            44.0
+                        };
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), height),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                let (_, activated) = thinoda_ui::ribbon::command_button(
+                                    ui,
+                                    icons::CHEVRON_DOWN,
+                                    label,
+                                    detail,
+                                    !self.settings.ribbon_collapsed,
+                                    None,
+                                );
+                                toggle_ribbon = touch_actions_allowed && activated;
+                                heading(ui);
+                            },
+                        );
+                    } else {
+                        heading(ui);
+                    }
+                    if ribbon_only && self.settings.ribbon_collapsed {
+                        return;
+                    }
+                    ui.add_space(Tokens::SPACE_S);
+                    egui::Frame::new()
+                        .fill(p.surface)
+                        .inner_margin(Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            egui::Grid::new(outline_id.with("ribbon_groups"))
+                                .num_columns(group_columns)
+                                .min_col_width(0.0)
+                                .spacing(egui::vec2(16.0, 8.0))
+                                .show(ui, |ui| {
+                                    for (index, (caption, buttons)) in [
+                                        (
+                                            "Insert",
+                                            &[
+                                                ("Add Sibling", Action::InsertSibling),
+                                                ("Add Child", Action::InsertChild),
+                                            ][..],
+                                        ),
+                                        ("Edit", &[("Edit Topic", Action::StartEdit)][..]),
+                                        (
+                                            "Arrange",
+                                            &[
+                                                ("Move Up", Action::MoveUp),
+                                                ("Move Down", Action::MoveDown),
+                                                ("Indent", Action::Indent),
+                                                ("Outdent", Action::Outdent),
+                                            ][..],
+                                        ),
+                                        (
+                                            "Delete",
+                                            &[
+                                                ("Delete Topic", Action::Delete),
+                                                ("Delete Topic Only", Action::DeleteKeepChildren),
+                                            ][..],
+                                        ),
+                                    ]
+                                    .into_iter()
+                                    .enumerate()
+                                    {
+                                        ui.vertical(|ui| {
+                                            let width = match detail {
+                                                thinoda_ui::ribbon::Detail::Large => {
+                                                    buttons.len() as f32 * 120.0 - 8.0
+                                                }
+                                                thinoda_ui::ribbon::Detail::Labeled => 204.0,
+                                                thinoda_ui::ribbon::Detail::Icon => {
+                                                    let count = if group_columns == 4 {
+                                                        buttons.len()
+                                                    } else {
+                                                        buttons.len().min(2)
+                                                    };
+                                                    count as f32 * 52.0 - 8.0
+                                                }
+                                                thinoda_ui::ribbon::Detail::CompactLarge => {
+                                                    buttons.len() as f32 * 108.0 - 4.0
+                                                }
+                                                thinoda_ui::ribbon::Detail::CompactLabeled => 184.0,
+                                                thinoda_ui::ribbon::Detail::CompactIcon => {
+                                                    let count = if group_columns == 4 {
+                                                        buttons.len()
+                                                    } else {
+                                                        buttons.len().min(2)
+                                                    };
+                                                    count as f32 * 38.0 - 4.0
+                                                }
+                                            };
+                                            let height = outliner_group_height(
+                                                detail,
+                                                group_columns,
+                                                ui.spacing().item_spacing.y,
+                                            );
+                                            let labeled = matches!(
+                                                detail,
+                                                thinoda_ui::ribbon::Detail::Labeled
+                                                    | thinoda_ui::ribbon::Detail::CompactLabeled
+                                            );
+                                            let icon = matches!(
+                                                detail,
+                                                thinoda_ui::ribbon::Detail::Icon
+                                                    | thinoda_ui::ribbon::Detail::CompactIcon
+                                            );
+                                            ui.set_width(width);
+                                            ui.allocate_ui(egui::vec2(width, height), |ui| {
+                                                ui.set_min_height(height);
+                                                if labeled {
+                                                    ui.vertical(|ui| action_buttons(ui, buttons));
+                                                } else if icon && group_columns < 4 {
+                                                    ui.vertical(|ui| {
+                                                        for chunk in buttons.chunks(2) {
+                                                            ui.horizontal(|ui| {
+                                                                action_buttons(ui, chunk)
+                                                            });
+                                                        }
+                                                    });
+                                                } else {
+                                                    ui.horizontal(|ui| action_buttons(ui, buttons));
+                                                }
+                                            });
+                                            ui.add_sized(
+                                                [width, 16.0],
+                                                egui::Label::new(
+                                                    egui::RichText::new(t(caption))
+                                                        .size(10.0)
+                                                        .color(p.text_muted),
+                                                )
+                                                .truncate(),
+                                            );
+                                        });
+                                        if (index + 1) % group_columns == 0 {
+                                            ui.end_row();
+                                        }
+                                    }
+                                })
+                        });
+                });
+        }
+        if ribbon_only {
+            if let Some(a) = action {
+                self.canvas_action(&ctx, a);
+            }
+            return toggle_ribbon;
+        }
         let focused = ctx.memory(|memory| memory.focused());
         let mut topic_focus = false;
         let frame = ctx.cumulative_frame_nr();
@@ -6398,178 +6770,6 @@ impl ThinodaApp {
             data.insert_temp(outline_id.with("primary"), primary);
             previous.is_some_and(|previous| previous != primary)
         });
-        let mut action: Option<Action> = None;
-        let selected_title = d
-            .view
-            .primary()
-            .and_then(|id| d.doc.sheet().topic(id))
-            .map(|topic| topic.title.clone());
-        let detail = if ui.available_width() >= 1160.0 {
-            thinoda_ui::ribbon::Detail::Large
-        } else if ui.available_width() >= 880.0 {
-            thinoda_ui::ribbon::Detail::Labeled
-        } else {
-            thinoda_ui::ribbon::Detail::Icon
-        };
-        let detail = if self.settings.compact_ribbon {
-            detail.compact()
-        } else {
-            detail
-        };
-        let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
-            for (label, command) in buttons {
-                let enabled = command.available(&d.doc, &d.view);
-                let (response, activated) = ui
-                    .add_enabled_ui(enabled, |ui| {
-                        thinoda_ui::ribbon::command_button(
-                            ui,
-                            crate::command_icons::command_glyph(&Cmd::Canvas(command.clone())),
-                            t(label),
-                            detail,
-                            false,
-                            None,
-                        )
-                    })
-                    .inner;
-                if response.gained_focus() {
-                    response.scroll_to_me(None);
-                }
-                if touch_actions_allowed && activated {
-                    response.request_focus();
-                    action = Some(command.clone());
-                }
-            }
-        };
-        let header_height = ui.available_height().max(0.0) * 0.4;
-        let group_columns = if ui.available_width() >= 500.0 {
-            4
-        } else if ui.available_width() >= 220.0 {
-            2
-        } else {
-            1
-        };
-        egui::ScrollArea::vertical()
-            .id_salt(outline_id.with("actions"))
-            .min_scrolled_height(0.0)
-            .max_height(header_height)
-            .show(ui, |ui| {
-                let summary = selected_title.as_ref().map_or_else(
-                    || t("Select a topic to edit").to_owned(),
-                    |title| format!("{}: {title}", t("Selected Topic")),
-                );
-                ui.add(egui::Label::new(&summary).truncate())
-                    .on_hover_text(&summary);
-                egui::Frame::new()
-                    .fill(p.surface)
-                    .inner_margin(Margin::symmetric(6, 4))
-                    .show(ui, |ui| {
-                        egui::Grid::new(outline_id.with("ribbon_groups"))
-                            .num_columns(group_columns)
-                            .min_col_width(0.0)
-                            .spacing(egui::vec2(16.0, 8.0))
-                            .show(ui, |ui| {
-                                for (index, (caption, buttons)) in [
-                                    (
-                                        "Insert",
-                                        &[
-                                            ("Add Sibling", Action::InsertSibling),
-                                            ("Add Child", Action::InsertChild),
-                                        ][..],
-                                    ),
-                                    ("Edit", &[("Edit Topic", Action::StartEdit)][..]),
-                                    (
-                                        "Arrange",
-                                        &[
-                                            ("Move Up", Action::MoveUp),
-                                            ("Move Down", Action::MoveDown),
-                                            ("Indent", Action::Indent),
-                                            ("Outdent", Action::Outdent),
-                                        ][..],
-                                    ),
-                                    (
-                                        "Delete",
-                                        &[
-                                            ("Delete Topic", Action::Delete),
-                                            ("Delete Topic Only", Action::DeleteKeepChildren),
-                                        ][..],
-                                    ),
-                                ]
-                                .into_iter()
-                                .enumerate()
-                                {
-                                    ui.vertical(|ui| {
-                                        let (width, height) = match detail {
-                                            thinoda_ui::ribbon::Detail::Large => {
-                                                (buttons.len() as f32 * 120.0 - 8.0, 96.0)
-                                            }
-                                            thinoda_ui::ribbon::Detail::Labeled => {
-                                                (204.0, 176.0 + ui.spacing().item_spacing.y * 3.0)
-                                            }
-                                            thinoda_ui::ribbon::Detail::Icon => {
-                                                if group_columns == 4 {
-                                                    (buttons.len() as f32 * 52.0 - 8.0, 44.0)
-                                                } else {
-                                                    (buttons.len().min(2) as f32 * 52.0 - 8.0, 96.0)
-                                                }
-                                            }
-                                            thinoda_ui::ribbon::Detail::CompactLarge => {
-                                                (buttons.len() as f32 * 108.0 - 4.0, 72.0)
-                                            }
-                                            thinoda_ui::ribbon::Detail::CompactLabeled => {
-                                                (184.0, 136.0 + ui.spacing().item_spacing.y * 3.0)
-                                            }
-                                            thinoda_ui::ribbon::Detail::CompactIcon => {
-                                                if group_columns == 4 {
-                                                    (buttons.len() as f32 * 38.0 - 4.0, 34.0)
-                                                } else {
-                                                    (buttons.len().min(2) as f32 * 38.0 - 4.0, 72.0)
-                                                }
-                                            }
-                                        };
-                                        let labeled = matches!(
-                                            detail,
-                                            thinoda_ui::ribbon::Detail::Labeled
-                                                | thinoda_ui::ribbon::Detail::CompactLabeled
-                                        );
-                                        let icon = matches!(
-                                            detail,
-                                            thinoda_ui::ribbon::Detail::Icon
-                                                | thinoda_ui::ribbon::Detail::CompactIcon
-                                        );
-                                        ui.set_width(width);
-                                        ui.allocate_ui(egui::vec2(width, height), |ui| {
-                                            ui.set_min_height(height);
-                                            if labeled {
-                                                ui.vertical(|ui| action_buttons(ui, buttons));
-                                            } else if icon && group_columns < 4 {
-                                                ui.vertical(|ui| {
-                                                    for chunk in buttons.chunks(2) {
-                                                        ui.horizontal(|ui| {
-                                                            action_buttons(ui, chunk)
-                                                        });
-                                                    }
-                                                });
-                                            } else {
-                                                ui.horizontal(|ui| action_buttons(ui, buttons));
-                                            }
-                                        });
-                                        ui.add_sized(
-                                            [width, 16.0],
-                                            egui::Label::new(
-                                                egui::RichText::new(t(caption))
-                                                    .size(10.0)
-                                                    .color(p.text_muted),
-                                            )
-                                            .truncate(),
-                                        );
-                                    });
-                                    if (index + 1) % group_columns == 0 {
-                                        ui.end_row();
-                                    }
-                                }
-                            })
-                    });
-            });
         let margin = Margin::symmetric(
             (ui.available_width().max(0.0) * 0.08).min(48.0) as i8,
             (ui.available_height().max(0.0) * 0.1).min(24.0) as i8,
@@ -6965,6 +7165,7 @@ impl ThinodaApp {
         if let Some((record, position)) = fim_node_request {
             self.begin_fim_node(&ctx, Some(record), position);
         }
+        false
     }
 
     // ----- bottom bar ---------------------------------------------------------------------------

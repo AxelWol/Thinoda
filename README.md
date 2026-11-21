@@ -431,9 +431,13 @@ those system-owned controls. WinGet publishing remains paused.
   under its previous sibling or after its parent while retaining its annotations.
   The Outliner also exposes sibling/child insertion, topic editing, move/reparent,
   and both subtree or topic-only deletion controls; these use the same undoable
-  canvas actions as the map view. Its action rows replace the floating Map
-  insertion toolbox, so the two toolbars do not overlap. Format and Symbols remain
-  available from the top bar; the Notes/Hyperlink shortcuts open their Map inspector.
+  canvas actions as the map view. On Windows and macOS its contextual ribbon
+  replaces the main ribbon, with a larger selected-topic heading and the shared
+  Ctrl+F1 collapse preference; the full menu and Quick Access remain available.
+  Alt+1 through Alt+8 opens the matching command category without leaving Outliner.
+  Web, non-native and Zen views keep the inline outline controls. Format and
+  Symbols remain available from the top bar; the Notes/Hyperlink shortcuts open
+  their Map inspector.
 - Insert > Notes / Hyperlink opens the selected topic's inspector field using the
   existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
   topic; they commit an in-progress topic-title edit before switching views.
