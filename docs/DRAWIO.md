@@ -311,6 +311,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Add card-title inline font family, numeric size and palette color controls for selections and caret typing styles; show mixed and inherited values
   - [x] Add searchable card-title font selection
   - [x] Add arbitrary RGBA color entry for card titles
+  - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -454,6 +455,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D9 toolbar input ordering (partial) | Text or IME input that follows F6, Enter or Space toolbar activation in the same frame is no longer lost or applied before the formatting; a submitted toolbar size field routes later text back to the label, and composition keeps the field focused. Real-platform input and pointer batches remain open. |
 | 2026-11-21 | D12 board replace (partial) | Locked tag-only hits no longer block replacement elsewhere; the dialog discloses replaced and search-only fields in every shipped locale. |
 | 2026-11-21 | D15 bundle fuzzing (partial) | Added a production-path catalog/decoder target, real bundled seed, corruption tests, release-size and inflation budgets, and CI smoke and acceptance jobs. The sanitized acceptance campaign remains open. |
 | 2026-11-21 | D13 JPEG audit | Corrected the gap analysis: JPEG visual export already exists; transparency, editability and remaining format gaps are explicit. |
@@ -1051,6 +1053,18 @@ the pending style. A text/run limit failure leaves the draft in the editor and
 blocks commit, save and recovery snapshots until the edit is corrected or
 undone; the unrepresentable draft cannot itself be persisted. Typing style is
 transient and is not saved until text is entered.
+
+**D9 toolbar input ordering (partial).** Text that arrived in the same frame
+as a toolbar activation was either lost or inserted before the formatting it
+followed, because focus was forced back to the label before the activation was
+handled. Eligible batches containing F6, Enter or Space are now processed in
+order, so the activation completes before later text is applied. IME candidate
+keys are protected only while composing; a toolbar size field keeps focus during
+composition and returns later text to the label after submission. Tests cover
+shapes, primary and extra connector labels, plain text and IME. Duck check:
+these are synthetic egui event batches, not real Windows, macOS or browser IMEs,
+and pointer batches still use final-string reconciliation, so the parent items
+remain open.
 
 **D9 inline typography (partial).** The label toolbar adjusts selection and
 caret font size in one-unit steps and provides the shared 12-colour palette.

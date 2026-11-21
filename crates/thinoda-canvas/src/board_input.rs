@@ -7465,8 +7465,21 @@ pub(super) fn show_label_editor(
                 .is_some_and(|id| edit.toolbar_buttons.contains(&id))
         })
     });
+    let toolbar_ordered_input = toolbar_has_focus
+        && view.board_input.label.as_ref().is_some_and(|edit| {
+            !edit.ime_composing && !edit.family_filter_composing && !edit.toolbar_value_composing
+        });
+    let toolbar_focus_transition = toolbar_ordered_input
+        && ui.input(|input| {
+            input.events.iter().any(|event| {
+                [Key::F6, Key::Enter, Key::Space]
+                    .into_iter()
+                    .any(|key| plain_key_press(event, key))
+            })
+        });
     let split_shortcuts = !minimap_blocks_keyboard
         && (ui.memory(|memory| memory.has_focus(edit_id))
+            || toolbar_ordered_input
             || (toolbar_has_focus
                 && ui.input(|input| {
                     input
@@ -7489,10 +7502,11 @@ pub(super) fn show_label_editor(
                     edit.typing_style.is_some()
                         || edit.rich_text.is_some()
                         || edit.history.is_some()
-                }) || input
-                    .events
-                    .iter()
-                    .any(|event| label_format_shortcut(event).is_some()))
+                }) || toolbar_ordered_input
+                    || input
+                        .events
+                        .iter()
+                        .any(|event| label_format_shortcut(event).is_some()))
                 && input
                     .events
                     .iter()
@@ -7514,7 +7528,7 @@ pub(super) fn show_label_editor(
                 })
         });
     let split_ime = !minimap_blocks_keyboard
-        && ui.memory(|memory| memory.has_focus(edit_id))
+        && (ui.memory(|memory| memory.has_focus(edit_id)) || toolbar_focus_transition)
         && view.board_input.label.is_some()
         && ui.input(|input| {
             let keyboard: Vec<_> = input
@@ -7545,6 +7559,7 @@ pub(super) fn show_label_editor(
     if split_shortcuts || split_ime {
         #[allow(deprecated)]
         if split_ime
+            && !toolbar_has_focus
             && (view
                 .board_input
                 .label

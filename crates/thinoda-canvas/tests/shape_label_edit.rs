@@ -2085,6 +2085,324 @@ fn formatting_focus_routes_same_frame_toolbar_activation_before_text() {
 }
 
 #[test]
+fn toolbar_focus_orders_same_frame_return_to_label_and_text() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.input_mut().events.extend([
+        egui::Event::Text("ignored".into()),
+        egui::Event::Key {
+            key: Key::F6,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(3);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    let changed = changed.unwrap();
+    assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+    assert_eq!(changed.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(changed, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_focus_orders_same_frame_return_to_label_and_ime() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        key(Key::F6),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "x".into(),
+            active_range_chars: None,
+        }),
+        key(Key::Enter),
+        egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+        egui::Event::Text("y".into()),
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().view.editing_board_object(), Some(shape));
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axyaa");
+    let changed = changed.unwrap();
+    assert_eq!((changed.runs[0].start, changed.runs[0].end), (3, 4));
+    assert_eq!(changed.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_rich_label_draft().unwrap().2, "axaa");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(changed, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_activation_precedes_same_frame_label_typing() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(3);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_transition_orders_text_for_both_connector_label_kinds() {
+    for extra in [false, true] {
+        let mut h = harness("Shape");
+        let id = if extra {
+            let id = add_positioned_connector(&mut h);
+            h.state_mut()
+                .doc
+                .update_canvas_object("Set extra label", id, |object| {
+                    let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                        panic!("expected connector");
+                    };
+                    connector.extra_labels[0].text = "aaa".into();
+                })
+                .unwrap();
+            let state = h.state_mut();
+            assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+            h.run_steps(3);
+            id
+        } else {
+            begin_connector_label(&mut h, "aaa")
+        };
+        set_label_selection(&mut h, 1, 2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        set_label_cursor(&mut h, 1);
+        h.key_press(Key::F6);
+        h.run_steps(2);
+        assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+        h.input_mut().events.extend([
+            egui::Event::Key {
+                key: Key::F6,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("x".into()),
+        ]);
+        h.run_steps(3);
+        let (target, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.object, id);
+        assert_eq!(text, "axaa");
+        let rich = rich.unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn toolbar_activation_precedes_same_frame_ime_composition() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        key(Key::Enter),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "ni".into(),
+            active_range_chars: None,
+        }),
+        key(Key::Enter),
+        egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+    ]);
+    h.run_steps(3);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_value_submit_routes_later_same_frame_text_to_label() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    click_toolbar_button(&mut h, "Font Size");
+    let field = h.get_by_label("Font Size · Value").rect().center();
+    click(&mut h, field);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    h.input_mut().events.extend([
+        egui::Event::Text("24".into()),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(3);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.font_size, Some(24.0));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_value_ime_keeps_focus_when_f6_arrives_during_composition() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    click_toolbar_button(&mut h, "Font Size");
+    let field = h.get_by_label("Font Size · Value").rect().center();
+    click(&mut h, field);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "2".into(),
+            active_range_chars: None,
+        }),
+        key(Key::F6),
+        key(Key::Enter),
+        egui::Event::Ime(egui::ImeEvent::Commit("24".into())),
+    ]);
+    h.run_steps(3);
+    assert!(h.get_by_label("Font Size · Value").is_focused());
+    assert_eq!(h.state().view.board_rich_label_draft().unwrap().2, "aaa");
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axaa");
+    assert_eq!(rich.unwrap().runs[0].style.font_size, Some(24.0));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn outside_click_commits_preceding_rich_ime_input_in_order() {
     let mut h = harness("aaa");
     let shape = h.state().shape;
