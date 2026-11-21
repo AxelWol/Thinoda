@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-thinoda-io = { path = "../crates/thinoda-io" }
+thinoda-io = { path = "../crates/thinoda-io", features = ["fuzzing"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [[bin]]
@@ -38,6 +38,13 @@ bench = false
 [[bin]]
 name = "drawio_import"
 path = "fuzz_targets/drawio_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "drawio_bundle"
+path = "fuzz_targets/drawio_bundle.rs"
 test = false
 doc = false
 bench = false

@@ -43,6 +43,7 @@ fn harness_with_size(app: ThinodaApp, size: egui::Vec2) -> Harness<'static, Thin
         })
         .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
     harness.run_steps(6);
+    open_compact_menu(&mut harness);
     harness
 }
 
@@ -69,6 +70,34 @@ fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
     h.ctx.memory(|memory| memory.area_rect(id))
 }
 
+fn menu_content_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let slot = thinoda_canvas::format_menu::area_id(&h.ctx).with("compact_popup");
+    h.ctx
+        .data(|data| data.get_temp::<egui::Id>(slot))
+        .filter(|_| thinoda_canvas::format_menu::compact_open(&h.ctx))
+        .and_then(|id| h.ctx.memory(|memory| memory.area_rect(id)))
+        .or_else(|| menu_rect(h))
+}
+
+fn open_compact_menu(h: &mut Harness<'_, ThinodaApp>) {
+    if thinoda_canvas::format_menu::compact_open(&h.ctx) {
+        return;
+    }
+    let Some(rect) = menu_rect(h) else { return };
+    let opened = if let Some(button) = h
+        .query_all_by_role_and_label(Role::Button, "Format")
+        .find(|node| rect.contains_rect(node.rect()))
+    {
+        button.click();
+        true
+    } else {
+        false
+    };
+    if opened {
+        h.run_steps(5);
+    }
+}
+
 fn popup_containing(h: &Harness<'_, ThinodaApp>, rect: egui::Rect) -> (egui::Id, egui::Rect) {
     let menu = thinoda_canvas::format_menu::area_id(&h.ctx);
     h.ctx.memory(|memory| {
@@ -85,6 +114,7 @@ fn popup_containing(h: &Harness<'_, ThinodaApp>, rect: egui::Rect) -> (egui::Id,
 }
 
 fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
+    open_compact_menu(h);
     if h.query_by_role_and_label(role, label).is_none() {
         let section = if matches!(label, "Edit label" | "More formatting options") {
             "Actions"
@@ -154,6 +184,7 @@ fn shape_sections_are_bounded_and_reset_for_a_new_selection_owner() {
                 .is_none()
         );
         let menu = menu_rect(&h).unwrap();
+        let content = menu_content_rect(&h).unwrap();
         assert!(
             h.state()
                 .doc()
@@ -174,8 +205,8 @@ fn shape_sections_are_bounded_and_reset_for_a_new_selection_owner() {
         ] {
             let rect = h.get_by_role_and_label(role, label).rect();
             assert!(
-                menu.contains_rect(rect),
-                "{size:?}: {label}: {rect:?} {menu:?}"
+                content.contains_rect(rect),
+                "{size:?}: {label}: {rect:?} {content:?}"
             );
         }
         click(&mut h, Role::Button, "Text Color");
@@ -185,6 +216,7 @@ fn shape_sections_are_bounded_and_reset_for_a_new_selection_owner() {
             .view
             .select_board_object(second);
         h.run_steps(6);
+        open_compact_menu(&mut h);
         assert!(
             h.query_by_role_and_label(Role::Button, "Text Color · Auto")
                 .is_none()
@@ -276,14 +308,16 @@ fn selected_shape_options_overlay_a_stationary_canvas_and_toolbox() {
         if size.x > 320.0 {
             assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
         }
+        open_compact_menu(&mut h);
+        let content = menu_content_rect(&h).unwrap();
         let shape_button = h.get_by_role_and_label(Role::Button, "Change shape").rect();
         assert!(
-            strip.contains_rect(shape_button),
+            content.contains_rect(shape_button),
             "{size:?}: {shape_button:?}"
         );
 
         let before = h.state().doc().unwrap().doc.workbook().clone();
-        let blank = egui::pos2(strip.right() - 8.0, strip.top() + 5.0);
+        let blank = egui::pos2(strip.left() + 8.0, strip.top() + 5.0);
         h.event(egui::Event::PointerMoved(blank));
         h.run_steps(1);
         for pressed in [true, false] {
@@ -328,7 +362,7 @@ fn armed_shape_tool_keeps_contextual_actions_and_repeat_placement() {
 
     let strip = menu_rect(&h).unwrap();
     for (point, expected_objects) in [
-        (egui::pos2(strip.right() - 8.0, strip.top() + 5.0), 1),
+        (egui::pos2(strip.left() + 8.0, strip.top() + 5.0), 1),
         (egui::pos2(canvas.right() - 60.0, canvas.bottom() - 60.0), 2),
     ] {
         h.event(egui::Event::PointerMoved(point));
@@ -933,7 +967,12 @@ fn shape_text_color_is_keyboard_reachable_in_compact_light_and_dark_windows() {
             h.get_by_role_and_label(Role::Button, "Text Color").focus();
             h.run_steps(6);
             let rect = h.get_by_role_and_label(Role::Button, "Text Color").rect();
-            assert!(canvas.contains_rect(rect), "{size:?}: {rect:?}");
+            let bounds = if thinoda_canvas::format_menu::compact_open(&h.ctx) {
+                h.ctx.content_rect()
+            } else {
+                canvas
+            };
+            assert!(bounds.contains_rect(rect), "{size:?}: {rect:?}");
             h.key_press(Key::Enter);
             h.run_steps(4);
             h.get_by_role_and_label(Role::ColorWell, "#2E7CF6").focus();
@@ -1568,4 +1607,90 @@ fn rich_shape_label_visual_previews() {
                 .unwrap();
         }
     }
+}
+
+fn open_arrange(h: &mut Harness<'_, ThinodaApp>) {
+    open_compact_menu(h);
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run_steps(4);
+}
+
+#[test]
+fn arrange_geometry_sets_exact_position_size_and_rotation_with_one_undo_each() {
+    let (app, id) = app_with_shape();
+    let mut h = harness(app);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    open_arrange(&mut h);
+    let original = object(h.state(), id).rect;
+    let set = |h: &mut Harness<'_, ThinodaApp>, label: &str, value: f64| {
+        h.get_by_role_and_label(Role::SpinButton, label)
+            .set_value_accesskit(value);
+        h.run_steps(3);
+    };
+    set(&mut h, "Left", 100.0);
+    assert_eq!(
+        object(h.state(), id).rect.min,
+        Vec2::new(100.0, original.min.y)
+    );
+    assert_eq!(object(h.state(), id).rect.size, original.size);
+    assert_eq!(h.state().doc().unwrap().doc.undo_label(), Some("Geometry"));
+    set(&mut h, "Width", 240.0);
+    assert_eq!(object(h.state(), id).rect.size.x, 240.0);
+    set(&mut h, "Rotation", 30.0);
+    assert_eq!(object(h.state(), id).rotation, 30.0);
+
+    // Typing only commits when the edit completes.
+    h.get_by_role_and_label(Role::SpinButton, "Top").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.event(egui::Event::Text("-50".into()));
+    h.run_steps(3);
+    assert_eq!(object(h.state(), id).rect.min.y, original.min.y);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(object(h.state(), id).rect.min.y, -50.0);
+
+    for _ in 0..4 {
+        undo(&mut h);
+    }
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(h.state().toasts.is_empty());
+}
+
+#[test]
+fn arrange_geometry_is_not_offered_for_grouped_or_multiple_objects() {
+    let (mut app, id) = app_with_shape();
+    let other = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(80.0, 60.0)),
+        ))
+        .unwrap();
+    let doc = app.doc_mut().unwrap();
+    doc.view.board_selection = vec![id, other];
+    let mut h = harness(app);
+    open_arrange(&mut h);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.doc
+            .group_board_members(&[
+                thinoda_core::board::BoardMember::Object(id),
+                thinoda_core::board::BoardMember::Object(other),
+            ])
+            .unwrap();
+        doc.view.select_board_object(id);
+    }
+    h.run_steps(6);
+    open_arrange(&mut h);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
 }

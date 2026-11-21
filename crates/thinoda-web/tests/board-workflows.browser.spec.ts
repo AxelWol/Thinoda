@@ -788,7 +788,10 @@ test("keyboard creation, labeling and movement work on a rootless board", async 
     await input.pressSequentially("Keyboard idea");
     await page.keyboard.press("Enter");
     await frames(page);
-    // The first Escape leaves the sticky tool; the second clears its selection.
+    // The first Escape dismisses the nearby formatting menu, the second leaves
+    // the sticky tool and the third clears its selection.
+    await page.keyboard.press("Escape");
+    await frames(page);
     await page.keyboard.press("Escape");
     await frames(page);
     await page.keyboard.press("Escape");

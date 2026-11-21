@@ -38,6 +38,7 @@ pub const FAMILIES: [&str; 17] = [
 
 const CATALOG: &str = include_str!("../stencils/drawio/catalog.json");
 const PACKAGES: &[u8] = include_bytes!("../stencils/drawio/packages.bin");
+const MAX_INDEXED_ALIAS_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,7 +59,7 @@ pub struct Upstream {
     pub path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BundledPackage {
     pub id: String,
@@ -76,7 +77,7 @@ pub struct BundledPackage {
 }
 
 /// One renderable shape, stored as `[name, definition, title]`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BundledShape {
     /// Alias suffix after the namespace: draw.io's lowercase name with `_`.
     pub name: String,
@@ -101,9 +102,26 @@ pub struct Bundle {
 
 impl Bundle {
     fn new() -> Self {
-        let catalog: Catalog =
-            serde_json::from_str(CATALOG).expect("bundled draw.io catalog is valid");
+        let catalog = parse_catalog(CATALOG.as_bytes()).expect("bundled draw.io catalog is valid");
         assert_eq!(catalog.format, BUNDLE_FORMAT, "bundled catalog format");
+        Self::from_catalog(catalog).expect("bundled draw.io catalog index is within limits")
+    }
+
+    fn from_catalog(catalog: Catalog) -> Option<Self> {
+        let mut alias_bytes = 0usize;
+        for package in &catalog.packages {
+            for shape in &package.shapes {
+                let next = alias_bytes
+                    .checked_add(package.namespace.len())
+                    .and_then(|bytes| bytes.checked_add(1))
+                    .and_then(|bytes| bytes.checked_add(shape.name.len()));
+                let Some(next) = next.filter(|&bytes| bytes <= MAX_INDEXED_ALIAS_BYTES) else {
+                    log::error!("bundled draw.io catalog alias index exceeds its byte limit");
+                    return None;
+                };
+                alias_bytes = next;
+            }
+        }
         let mut aliases = HashMap::new();
         let mut ids = HashMap::new();
         for (index, package) in catalog.packages.iter().enumerate() {
@@ -115,12 +133,12 @@ impl Bundle {
             }
         }
         let packages = catalog.packages.iter().map(|_| OnceLock::new()).collect();
-        Self {
+        Some(Self {
             catalog,
             aliases,
             ids,
             packages,
-        }
+        })
     }
 
     pub fn catalog(&self) -> &Catalog {
@@ -147,7 +165,7 @@ impl Bundle {
     pub fn package(&self, index: usize) -> Option<Arc<StencilPackage>> {
         self.packages
             .get(index)?
-            .get_or_init(|| decode(&self.catalog.packages[index]).map(Arc::new))
+            .get_or_init(|| decode(&self.catalog.packages[index], PACKAGES).map(Arc::new))
             .clone()
     }
 
@@ -160,9 +178,22 @@ impl Bundle {
     }
 }
 
-fn decode(entry: &BundledPackage) -> Option<StencilPackage> {
-    let end = entry.offset.checked_add(entry.length)?;
-    let bytes = PACKAGES.get(entry.offset..end)?;
+fn parse_catalog(bytes: &[u8]) -> Result<Catalog, serde_json::Error> {
+    serde_json::from_slice(bytes)
+}
+
+fn decode(entry: &BundledPackage, blob: &[u8]) -> Option<StencilPackage> {
+    let Some(end) = entry.offset.checked_add(entry.length) else {
+        log::error!(
+            "bundled draw.io package {} has an overflowing range",
+            entry.id
+        );
+        return None;
+    };
+    let Some(bytes) = blob.get(entry.offset..end) else {
+        log::error!("bundled draw.io package {} is outside the blob", entry.id);
+        return None;
+    };
     let limit = entry.inflated.min(Limits::DEFAULT.max_package_bytes);
     let json = match miniz_oxide::inflate::decompress_to_vec_with_limit(bytes, limit) {
         Ok(json) if json.len() == entry.inflated => json,
@@ -171,7 +202,10 @@ fn decode(entry: &BundledPackage) -> Option<StencilPackage> {
             return None;
         }
     };
-    let text = std::str::from_utf8(&json).ok()?;
+    let Ok(text) = std::str::from_utf8(&json) else {
+        log::error!("bundled draw.io package {} is not UTF-8", entry.id);
+        return None;
+    };
     match StencilPackage::from_json(text) {
         Ok(package) if package.id == entry.id => Some(package),
         Ok(_) => {
@@ -183,6 +217,23 @@ fn decode(entry: &BundledPackage) -> Option<StencilPackage> {
             None
         }
     }
+}
+
+/// Internal entry points for the separate fuzzing workspace.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub fn fuzzing_catalog(bytes: &[u8]) -> Option<Bundle> {
+    let catalog = parse_catalog(bytes).ok()?;
+    if catalog.format != BUNDLE_FORMAT {
+        return None;
+    }
+    Bundle::from_catalog(catalog)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub fn fuzzing_decode(entry: &BundledPackage, blob: &[u8]) -> Option<StencilPackage> {
+    decode(entry, blob)
 }
 
 /// The process-wide bundle.

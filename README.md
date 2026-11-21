@@ -382,6 +382,10 @@ those system-owned controls. WinGet publishing remains paused.
   titles and toolbars. If they cannot fit, use the main menu or the topic's
   context menu instead. **Board** is a first-level main-menu category. Board
   commands provide grid, snapping, grouping, locking, arrangement and a minimap.
+- Open **Layers** from the View or Board menu or the board toolbar. Drag the
+  panel's title or empty background to move it; its last position is remembered.
+  At least six layer rows fit when the window has room, with scrolling in
+  smaller windows.
 - The canvas context menu adapts to what you right-click. Topics show
   Topic/Subtopic/Parent Topic, the clipboard and Collapse/Expand first, then the
   Add, Structure, Format, Arrange, Select, Zones, AI and View submenus,
@@ -427,9 +431,13 @@ those system-owned controls. WinGet publishing remains paused.
   under its previous sibling or after its parent while retaining its annotations.
   The Outliner also exposes sibling/child insertion, topic editing, move/reparent,
   and both subtree or topic-only deletion controls; these use the same undoable
-  canvas actions as the map view. Its action rows replace the floating Map
-  insertion toolbox, so the two toolbars do not overlap. Format and Symbols remain
-  available from the top bar; the Notes/Hyperlink shortcuts open their Map inspector.
+  canvas actions as the map view. On Windows and macOS its contextual ribbon
+  replaces the main ribbon, with a larger selected-topic heading and the shared
+  Ctrl+F1 collapse preference; the full menu and Quick Access remain available.
+  Alt+1 through Alt+8 opens the matching command category without leaving Outliner.
+  Web, non-native and Zen views keep the inline outline controls. Format and
+  Symbols remain available from the top bar; the Notes/Hyperlink shortcuts open
+  their Map inspector.
 - Insert > Notes / Hyperlink opens the selected topic's inspector field using the
   existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
   topic; they commit an in-progress topic-title edit before switching views.
@@ -699,10 +707,10 @@ those system-owned controls. WinGet publishing remains paused.
   keyboard focus keep the actions reachable; focused or newly active sheets reveal
   themselves without pinning manual browsing. On small screens the status controls
   also scroll independently, rather than covering sheet names.
-  Open-document tabs now use the same fixed-arrow, clipped-name pattern at the top;
-  Close Tab and New Tab stay pinned while file names scroll. Browsing does not
-  switch documents, and the narrow header prioritizes tabs over quick-action icons
-  that remain available in the main menu.
+  Open-document tabs use fixed arrows and a pinned New Tab button; each Close Tab
+  button scrolls with its file name. Names use the available header width, with
+  full paths in tooltips. Browsing does not switch documents, and the narrow header
+  prioritizes tabs over quick-action icons that remain available in the main menu.
   Canceled or multitouch releases cannot switch/create sheets, trigger rename,
   scroll arrows or sheet context actions. Single-finger holds still open the
   sheet menu; ordinary taps and keyboard navigation remain available.

@@ -4,7 +4,10 @@
 
 use crate::app::{Cmd, FocusField, ThinodaApp};
 use thinoda_canvas::{Action, BoardAction, BoardTool, FloatingArrangement};
-use thinoda_core::{Band, GridKind, ShapeKind, SheetRootMode, Vec2, ZOrder, navigation::Direction};
+use thinoda_core::{
+    Band, GridKind, ShapeKind, SheetRootMode, Vec2, ZOrder, graph_layout::GraphLayout,
+    navigation::Direction,
+};
 use thinoda_io::Format;
 use thinoda_platform::settings::ThemeMode;
 
@@ -126,6 +129,15 @@ impl Cmd {
                     FloatingArrangement::Bottom => "board.align-bottom",
                     FloatingArrangement::DistributeHorizontal => "board.distribute-horizontal",
                     FloatingArrangement::DistributeVertical => "board.distribute-vertical",
+                },
+                BoardAction::Layout(kind) => match kind {
+                    GraphLayout::TreeDown => "board.layout.vertical-tree",
+                    GraphLayout::TreeRight => "board.layout.horizontal-tree",
+                    GraphLayout::FlowDown => "board.layout.vertical-flow",
+                    GraphLayout::FlowRight => "board.layout.horizontal-flow",
+                    GraphLayout::Radial => "board.layout.radial-tree",
+                    GraphLayout::Circle => "board.layout.circle",
+                    GraphLayout::Organic => "board.layout.organic",
                 },
                 BoardAction::Rotate(degrees) if *degrees == 15.0 => "board.rotate-clockwise",
                 BoardAction::Rotate(degrees) if *degrees == -15.0 => {
@@ -251,6 +263,7 @@ impl Cmd {
             },
             Self::NewFromTemplate(_)
             | Self::OpenPath(_)
+            | Self::SelectTag(_)
             | Self::ApplyQuickStyle(_)
             | Self::ApplyCustomTheme(_) => return None,
         })

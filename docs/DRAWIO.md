@@ -2,8 +2,8 @@ _Last updated: 2026-11-20 11:47:26 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
-Status: 🟡 in progress. D0–D3 and D6–D8 are complete; D4 and D5 have
-deferred work, and D9 is partially complete. D10–D15 remain open. Binding
+Status: 🟡 in progress. D0–D3, D6–D8 and D11 are complete; D4 and D5 have
+deferred work, and D9 is partially complete. D10 and D12–D15 remain open. Binding
 contracts that shipped code already follows (user decisions,
 ownership/passthrough, JSON stencil DSL, model, UX, security, guardrails,
 licensing) are in
@@ -70,7 +70,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | Save back in place to `.drawio` | Missing (Save As/export only) | D10 |
 | Files | PDF with embedded diagram | Missing | D13 |
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
-| Files | VSDX, JPEG/WebP/GIF export | Missing (SVG/PNG/PDF exist) | D13 |
+| Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over black, with no editable diagram data | — |
+| Files | VSDX, WebP/GIF export | Missing (SVG/PNG/PDF/JPEG exist) | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
@@ -92,14 +93,14 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards support run-level styling and render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists. Card colors lack arbitrary entry. One rotated fixture opens, edits and saves in Windows PowerPoint; visual parity and other Office hosts remain unverified. Zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards support run-level styling, arbitrary RGBA colors and render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists. One rotated fixture opens, edits and saves in Windows PowerPoint; visual parity and other Office hosts remain unverified. Zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
-| Layout | ELK flow/tree/radial/organic, circle, org chart | Missing for boards (mind-map layout is native) | D11 |
+| Layout | ELK flow/tree/radial/organic, circle, org chart | Native selection layouts: tree, layered flow, radial, circle and organic (org chart = vertical tree); no edge routing or ELK options | D11 |
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
-| Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Missing | D12 |
+| Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Partial (exact geometry in the nearby Arrange section; raw style and XML missing) | D12 |
 | Editing | Copy/paste style, set default style, style rules | Partial (format painter) | D9 |
 | Views | Find/replace on board, tags, outline window | Partial (mind-map find; minimap) | D12 |
 | Views | Ruler, units, page view, print layout | Missing | D12 |
@@ -235,6 +236,17 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
+- [x] Show at least six layers in a movable Layers dialog and remember its last position
+
+**Rubber-duck critique:** Constraining the panel to the drawing canvas left too
+little room for six rows beneath the ribbon at the minimum native window size,
+so it uses the app viewport instead and scrolls if even that viewport is too
+small. Dragging the title or empty background moves the panel without stealing
+the layer controls' interactions; position is saved only after dragging,
+validated before restoration and clamped again when the window shrinks. Tests
+cover six actionable rows at multiple interface scales, drag/reopen/restart,
+scrolling and smaller-window restoration. Keyboard repositioning is not
+implemented.
 
 ### D9 — Style and text
 
@@ -247,6 +259,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Expose only applicable Text/Style/Arrange/Actions controls and explicit selected-object, selected-text or new-text scope
 - [x] Preserve multi-selection common typography and card fill with undo; retain editor focus, IME and numeric/picker draft ownership
 - [x] Complete contextual-menu rubber-duck critique, compact rendered-control acceptance and label-outline regression checks (see linked design)
+- [x] Keep the passive nearby menu clear of selected-object connection, extend, resize and rotation handles, including the right-hand quick-connect action
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
@@ -297,7 +310,8 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Apply card-title inline formatting at the caret for subsequent typing, including toolbar and keyboard shortcuts, ordered IME input, cursor changes and accessibility whole-value replacement
   - [x] Add card-title inline font family, numeric size and palette color controls for selections and caret typing styles; show mixed and inherited values
   - [x] Add searchable card-title font selection
-  - [ ] Add arbitrary RGBA color entry for card titles
+  - [x] Add arbitrary RGBA color entry for card titles
+  - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -332,21 +346,94 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
-### D11 — Automatic layouts
+### D11 — Automatic layouts ✅
 
-- [ ] Tree, flow, radial, circle and organic layouts for selected board objects
+- [x] Tree, flow, radial, circle and organic layouts for selected board objects
+  - [x] Pure, deterministic, bounded core algorithms (≤ 500 items, ≤ 5,000 connections) with a guaranteed non-overlap pass and a fixed top-left anchor
+  - [x] One undoable board command per layout in the Board menu, context-menu Layout submenu and command palette, translated in all locales
+  - [x] Groups, selected containers with their descendants and floating mind-map branches move rigidly; locked items are skipped as Align does
+  - [x] Bends of unlocked connectors between items that moved apart are reset; locked connectors keep theirs
+
+**D11 rubber-duck critique.** A pre-implementation review found five
+blocking traps, all addressed: a container and its selected child were
+separate units and would have moved the child twice (a shared resolver now
+merges descendants into their container, and endpoints map through the
+hierarchy); floating topics were measured without their branch (the unit now
+uses the visible subtree footprint); clearing all bends could edit locked or
+internal connectors (only unlocked, ungrouped connectors whose ends receive
+different translations are reset); the algorithm returned no errors and had
+no complete bound (input is validated, every pass is bounded and failure is
+an error, not a partial edit); and size-unaware radial and organic placement
+could overlap (ring radii use node diagonals, coincident nodes get a
+deterministic direction, and a final uniform scaling about the centroid
+provably removes any remaining overlap). Availability and execution use the
+same resolver, so a container selected with its own child is one item and the
+command is disabled. Tree and flow follow connector direction (`from → to`),
+not arrowheads; cycles are broken only for placement. Duck check: layouts
+place items, not edges, so routes and fixed ports are unchanged and long
+flow edges are not given virtual bends; exactly coincident items fall back
+to selection order; each moved item is applied with one sheet move, so very
+large selections may be slow even within the 500-item bound. draw.io's ELK
+options, org-chart variants and edge routing are out of scope.
 
 ### D12 — Insert tools and editors
 
 - [ ] Mermaid, PlantUML (text subset), CSV, SQL and text import to board objects
 - [ ] draw.io templates in the template gallery (CC BY 4.0 attribution)
 - [ ] Edit style (raw key/value), edit geometry, raw diagram XML import/export dialog
+  - [x] Exact geometry (left, top, width, height, rotation) for one canvas object in the nearby menu's Arrange section
+  - [ ] Raw style key/value editor and raw diagram XML dialog
+
+**D12 geometry rubber-duck critique.** A separate dialog would contradict the
+nearby-menu concept, so the fields join the existing Arrange section, which
+already holds layering. Values are committed through the existing numeric
+draft (drag release, focus loss or a discrete step), so a drag is one undo
+step, not dozens. Edits use the existing lock- and hierarchy-aware move,
+resize and rotate operations; fields are hidden for connectors, grouped
+members (editing one would move its group), multi-selections, and directly
+or inherited locked objects, and Rotation is hidden for containers, which
+cannot rotate. Left/Top describe the unrotated frame as in draw.io. Duck
+check: cards still edit size and rotation under More style options without
+position fields; stack-managed children and table cells can reject a value,
+which is then reported and kept as a correctable draft rather than hidden.
 - [ ] Find/replace and tags on boards, ruler, units and page view
+  - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
+  - [x] Select board objects by exact tag from Edit › Select › Select by Tag, limited to visible objects
+  - [ ] Ruler, units and page view
 - [ ] Stencil editor for JSON definitions; draw.io stencil XML is converted on import, not edited
+
+**D12 search-and-replace rubber-duck critique:** Requiring every hit to be
+unlocked made a locked object found only by a tag block replacement elsewhere,
+although tags are never replaced. The lock check now applies only to objects
+whose text actually changes, after the candidate edit and before commit, so
+failures still leave the sheet untouched. The dialog discloses the replaced
+fields instead of claiming only titles and labels; notes, topic labels and tags
+remain search-only because replacing them could merge or empty names. Tests
+cover atomic rollback on oversized property values and locked targets, and
+the disclosure in short windows. Ruler, units and page view are still
+missing, so the D12 item stays open.
+
+**D12 tag selection rubber-duck critique.** Find matches tags as substrings, so
+`web` also finds `webapp`; Select by Tag selects exact tags only. It lists
+and selects only objects the user can see: hidden layers and collapsed
+container contents are excluded, so a selection never targets invisible
+objects. Selection is not an edit (no undo entry), and pending label drafts
+are committed first. Only the first 40 tags are listed, with a hint to use
+Find for the rest. Duck check: draw.io's Tags panel also hides objects by tag;
+Thinoda leaves visibility to layers rather than adding a second, persistent
+hidden state. The context menu keeps its static entries, so the command is in
+the main Edit menu.
 
 ### D13 — Other formats
 
-- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, JPEG, WebP and GIF export
+- [x] JPEG visual export through the shared raster renderer
+- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, WebP and GIF export
+
+**JPEG rubber-duck critique:** JPEG is already available through the normal
+visual export path, so treating it as missing would duplicate existing work.
+It is a lossy, opaque image rather than an editable draw.io container;
+transparent pixels currently composite over black. This does not close the
+other D13 format gaps or establish draw.io visual parity.
 
 ### D14 — Appearance and effects
 
@@ -354,8 +441,72 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 
 ### D15 — Visual parity and hardening
 
+- [x] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
+- [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
-- [ ] Fuzz and size budgets for the bundle decoder and catalog
+- [x] Fuzz and size budgets for the bundle decoder and catalog
+  - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
+  - [x] Bound aggregate indexed alias bytes before allocating catalog keys
+  - [x] Add a production-path catalog and decoder fuzz target with a real bundled seed, corruption tests and CI campaigns
+  - [x] Complete and retain a sanitized 30-minute acceptance campaign for the committed candidate
+
+**Bundle-fuzz rubber-duck critique:** Fuzzing a second parser would not protect
+the shipped bundle, so the feature-gated harness uses the production catalog
+index and bounded decoder. It mutates catalog ranges and compressed bytes; the
+real package seed and deterministic malformed-input tests ensure decoding is
+actually reached. Range overflow, out-of-bounds data and invalid UTF-8 now log
+errors rather than silently returning. The release-size and inflation budgets
+are executable tests, not a visual-fidelity claim. A small catalog can repeat a
+long namespace across thousands of aliases; a preflight now rejects more than
+4 MiB of aggregate alias-key bytes before constructing the index. Duplicate
+keys count conservatively, and this bound does not claim to limit all allocator
+overhead. The shipped keys total about 79 KiB. A smoke run or a configured CI
+job is not the acceptance campaign. That campaign ran on Linux (nightly
+`cargo fuzz`, default AddressSanitizer, the CI limits: 1,800 s, 2 GiB RSS,
+1 MiB inputs, 5 s per input) against an immutable `git archive` of commit
+`5fb194fefc1ec82a35313ed79c8ed5a9577d62b6`: 17,302,468 executions, no crash,
+leak or timeout artifact, peak RSS 498 MB, 3,443 corpus entries. The log and
+corpus are retained outside the repository with the session evidence. Duck
+check: this is one local campaign of one target, not the hosted CI workflow
+run, and fuzzing finds no proof of absence; the deterministic tests remain the
+regression gate.
+
+**Document-tab rubber-duck critique:** Putting New Tab inside the scrolling
+content made it unreachable until the last file was revealed, while the
+fixed-width strip wasted header space. New Tab is now outside the clipped names
+area, immediately after the final capsule when everything fits and fixed at the
+edge when it does not. The header reserves its actions before sizing the strip,
+and uses logical widths for breakpoints so zoom cannot make the actions overlap
+the tabs. Focus reveal, close confirmation and touch cancellation are retained;
+longer names still truncate when necessary and retain their full path in the
+tooltip. Scroll limits follow the final capsule rather than decorative padding,
+so short names do not enable a meaningless arrow and closing files restores the
+unscrolled position. Tests exercise the native Windows header and Quick Access,
+overflow, resizing, zoom, keyboard and rejected touch.
+
+**Outliner-ribbon rubber-duck critique:** Keeping both ribbons wastes vertical
+space and separates structural actions from their selected topic, so native
+Outliner mode replaces the main ribbon rather than stacking a second toolbar.
+The heading has ribbon-title typography, spacing and a full-title tooltip; the
+same nine undoable actions remain available. A bounded panel and focus-driven
+scrolling protect the outline and inspector on small screens. Hiding the normal
+ribbon initially broke pending Quick Access dispatch and text-focus snapshots;
+both ribbons now share that preparation. The Outliner preserves the saved
+collapse setting and Ctrl+F1, while Main Menu retains the full command tree;
+Alt+1–8 opens the corresponding command category in a keyboard-navigable Main
+Menu popup instead of replacing the Outliner ribbon. Changing categories resets
+the popup scroll position; Escape closes it. Zen and non-native hosts retain
+their inline controls. The nearby More actions popup is height-bounded and
+scrollable: at high scale its former full-height menu covered the Outliner switch.
+Scrolled-out submenu rows cannot open over the remaining commands, which keeps
+the last actions clickable even in narrow windows. The extra Main Menu button
+also reduced the tab budget:
+header actions now collapse first, and very narrow native headers with Main Menu
+hide Quick Access Undo while keeping its menu/shortcut and New Tab available.
+Native layout, mode transitions, collapse, Quick Access, category shortcuts,
+modal and text-editor blocking, including the PowerPoint export dialog,
+localized controls, FIM, zoom and narrow-screen reachability have regression
+coverage.
 
 Out of scope: cloud storage connectors, comments, shared cursors, AI generation
 (Thinoda has its own AI), plugins, revision history (Thinoda has its own
@@ -365,6 +516,16 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
+| 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |
+| 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |
+| 2026-11-21 | D9 toolbar input ordering (partial) | Text or IME input that follows F6, Enter or Space toolbar activation in the same frame is no longer lost or applied before the formatting; a submitted toolbar size field routes later text back to the label, and composition keeps the field focused. Real-platform input and pointer batches remain open. |
+| 2026-11-21 | D12 board replace (partial) | Locked tag-only hits no longer block replacement elsewhere; the dialog discloses replaced and search-only fields in every shipped locale. |
+| 2026-11-21 | D15 bundle fuzzing (partial) | Added a production-path catalog/decoder target, real bundled seed, corruption tests, release-size and inflation budgets, and CI smoke and acceptance jobs. The sanitized acceptance campaign remains open. |
+| 2026-11-21 | D13 JPEG audit | Corrected the gap analysis: JPEG visual export already exists; transparency, editability and remaining format gaps are explicit. |
+| 2026-11-21 | D15 Outliner ribbon | Native Outliner replaces the main ribbon with contextual actions, a larger selected-topic heading and shared collapse/Quick Access behavior; the nearby actions popup no longer covers the mode switch in the tested high-scale layout. |
+| 2026-11-21 | D15 document tabs | New Tab stays visible during overflow; measured file names use the available header space without overlapping actions, including after resize and zoom. |
+| 2026-11-21 | D8 Layers panel | The panel can be dragged, restores its last validated position within the window, and shows at least six layers when space permits. |
 | 2026-11-19 | D9 card font search (partial) | Inline font choices can be filtered without losing the title selection; candidate choices are disabled during search-field IME composition. Arbitrary card color entry remains open. |
 | 2026-11-19 | D9 card inline typography (partial) | Selection and caret controls set font family, numeric size and palette color; mixed values, inherited resets and same-frame size input with color clicks or save are covered. |
 | 2026-11-19 | D9 card typing styles | Card-title inline toolbar and shortcuts now set caret typing styles; cursor changes and whole-value accessibility replacement clear them. |
@@ -957,6 +1118,18 @@ blocks commit, save and recovery snapshots until the edit is corrected or
 undone; the unrepresentable draft cannot itself be persisted. Typing style is
 transient and is not saved until text is entered.
 
+**D9 toolbar input ordering (partial).** Text that arrived in the same frame
+as a toolbar activation was either lost or inserted before the formatting it
+followed, because focus was forced back to the label before the activation was
+handled. Eligible batches containing F6, Enter or Space are now processed in
+order, so the activation completes before later text is applied. IME candidate
+keys are protected only while composing; a toolbar size field keeps focus during
+composition and returns later text to the label after submission. Tests cover
+shapes, primary and extra connector labels, plain text and IME. Duck check:
+these are synthetic egui event batches, not real Windows, macOS or browser IMEs,
+and pointer batches still use final-string reconciliation, so the parent items
+remain open.
+
 **D9 inline typography (partial).** The label toolbar adjusts selection and
 caret font size in one-unit steps and provides the shared 12-colour palette.
 Default clears that property's override without disturbing other formatting;
@@ -1339,7 +1512,25 @@ accessibility and visual acceptance; the plain-editor history guard remains.
 families and inherited/monospace choices, retains the title selection and
 guards synthetic IME composition in its search field. Duck check: filtering
 does not install missing fonts, and platform IME and accessibility testing
-remain open. Card colors still lack arbitrary entry.
+remain open.
+
+**D9 card RGBA entry (partial).** Custom color controls edit red, green, blue
+and alpha for whole-card text, selected text or subsequent typing; existing
+rich-draft and document undo boundaries remain intact. Committing a custom
+color can explicitly pin even the inherited value; Auto retains inheritance.
+Duck check: the picker uses egui's color-space mode and accessibility metadata;
+platform screen-reader, pointer and IME acceptance is still required. Color32
+conversion unpremultiplies translucent channels, with the precision limits of
+an 8-bit premultiplied representation.
+
+**D9 selection-handle clearance.** Placement uses the actual handle hit
+rectangles for shapes, connectors, topics, cards, relationships and images.
+The nearest free position is found by a bounded sweep; constrained layouts
+offer a compact Format button, and hide it if even that would block a handle.
+Duck check: an intentionally expanded popover can temporarily cover the canvas;
+nested menus and Escape must retain selection and focus. Extremely dense views
+can have no unobstructed nearby position. Right-click still exposes context
+actions, but formatting may require zooming out, resizing or repositioning.
 
 **D10 Sankey structure safety (partial).** Candidate conversion now checks
 deferred locks, groups and zone memberships as well as layers and scene

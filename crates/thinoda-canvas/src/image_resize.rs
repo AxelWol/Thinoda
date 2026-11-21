@@ -95,6 +95,16 @@ fn handle_visible(view: &MapView, geometry: Geometry, rect: Rect) -> bool {
             .is_none_or(|clip| view.xf().rect(clip).contains_rect(rect))
 }
 
+pub(super) fn selected_control_rect(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+) -> Option<Rect> {
+    let geometry = geometry(view, sheet, layout)?;
+    let rect = handle_rect(view, geometry, geometry.image);
+    handle_visible(view, geometry, rect).then_some(rect)
+}
+
 fn resize_cursor(geometry: Geometry) -> egui::CursorIcon {
     if geometry.rotation == 0.0 {
         return egui::CursorIcon::ResizeNwSe;

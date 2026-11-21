@@ -71,6 +71,15 @@ fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
     h.ctx.memory(|memory| memory.area_rect(id))
 }
 
+fn menu_content_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let id = thinoda_canvas::format_menu::area_id(&h.ctx).with("compact_popup");
+    h.ctx
+        .data(|data| data.get_temp::<egui::Id>(id))
+        .filter(|_| compact_selection_menu_open(&h.ctx))
+        .and_then(|id| h.ctx.memory(|memory| memory.area_rect(id)))
+        .or_else(|| menu_rect(h))
+}
+
 fn scroll_and_click(harness: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
     if label.starts_with("Text Color ") && harness.query_by_role_and_label(role, label).is_none() {
         harness
@@ -84,7 +93,53 @@ fn scroll_and_click(harness: &mut Harness<'_, ThinodaApp>, role: Role, label: &s
     harness.run_steps(3);
 }
 
+fn edit_custom_card_color_channel(h: &mut Harness<'_, ThinodaApp>, prefix: &str, value: &str) {
+    if h.query_by_label("Custom color").is_none() {
+        scroll_and_click(h, Role::Button, "Text Color");
+    }
+    h.get_by_label("Custom color").scroll_to_me();
+    h.run_steps(4);
+    if h.query_all_by_role(Role::SpinButton).all(|control| {
+        !control
+            .value()
+            .is_some_and(|value| value.starts_with(prefix))
+    }) {
+        h.get_by_label("Custom color").click();
+        h.run_steps(6);
+    }
+    h.query_all_by_role(Role::SpinButton)
+        .find(|control| {
+            control
+                .value()
+                .is_some_and(|value| value.starts_with(prefix))
+        })
+        .expect("custom color channel")
+        .scroll_to_me();
+    h.run_steps(4);
+    h.query_all_by_role(Role::SpinButton)
+        .find(|control| {
+            control
+                .value()
+                .is_some_and(|value| value.starts_with(prefix))
+        })
+        .expect("custom color channel")
+        .click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.event(egui::Event::Text(value.into()));
+    h.run_steps(3);
+}
+
 fn open_toolbar_from_context(h: &mut Harness<'_, ThinodaApp>) {
+    for _ in 0..2 {
+        if !compact_selection_menu_open(&h.ctx) {
+            break;
+        }
+        let selection = h.state().doc().unwrap().view.selection.clone();
+        h.key_press(Key::Escape);
+        h.run_steps(4);
+        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+    }
     let pos = {
         let doc = h.state().doc().unwrap();
         doc.view.selected_topic_rect(&doc.doc).unwrap().center()
@@ -103,6 +158,7 @@ fn open_toolbar_from_context(h: &mut Harness<'_, ThinodaApp>) {
     h.get_by_role_and_label(Role::Button, "Styles").hover();
     h.run_steps(6);
     scroll_and_click(h, Role::Button, card_text_label());
+    h.run_steps(5);
     assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
 }
 
@@ -1749,6 +1805,7 @@ fn formatting_overlays_a_stationary_canvas_with_bounded_controls_in_compact_wind
             let canvas = h.state().doc().unwrap().view.canvas_rect();
             let bold = h.get_by_role_and_label(Role::Button, "Bold").rect();
             let menu = menu_rect(&h).unwrap();
+            let content = menu_content_rect(&h).unwrap();
             assert!(canvas.contains_rect(menu), "{size:?}: {menu:?}");
             for (role, label) in [
                 (Role::Button, "Text"),
@@ -1761,8 +1818,8 @@ fn formatting_overlays_a_stationary_canvas_with_bounded_controls_in_compact_wind
             ] {
                 let rect = h.get_by_role_and_label(role, label).rect();
                 assert!(
-                    menu.contains_rect(rect),
-                    "{size:?}: {label}: {rect:?} {menu:?}"
+                    content.contains_rect(rect),
+                    "{size:?}: {label}: {rect:?} {content:?}"
                 );
             }
             assert_eq!(canvas, canvas_before, "opening formatting moved the canvas");
@@ -1775,7 +1832,7 @@ fn formatting_overlays_a_stationary_canvas_with_bounded_controls_in_compact_wind
                 let view = &h.state().doc().unwrap().view;
                 (view.offset, view.zoom)
             };
-            h.hover_at(menu.center());
+            h.hover_at(content.center());
             h.event(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
                 delta: vec2(-400.0, 0.0),
@@ -1815,7 +1872,10 @@ fn formatting_overlays_a_stationary_canvas_with_bounded_controls_in_compact_wind
                     .any(|layer| layer.id == egui::Id::unique("thinoda_board_toolbar"))
             });
             if visible {
-                assert!(!board.unwrap().intersects(bold));
+                assert!(!board.unwrap().intersects(menu));
+                if content == menu {
+                    assert!(!board.unwrap().intersects(bold));
+                }
                 assert_eq!(board, board_before, "opening formatting moved the toolbox");
             }
 
@@ -1894,7 +1954,14 @@ fn selected_card_menu_takes_priority_over_creation_ink_options() {
         h.get_by_role_and_label(Role::Button, "Bold").focus();
         h.key_press(Key::Escape);
         h.run_steps(4);
-        assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Bold").is_none(),
+            "{size:?}, compact={}, menu={:?}, bold={:?}",
+            compact_selection_menu_open(&h.ctx),
+            menu_rect(&h),
+            h.query_by_role_and_label(Role::Button, "Bold")
+                .map(|node| node.rect())
+        );
         h.get_by_role_and_label(Role::Button, "Ink width")
             .scroll_to_me();
         h.run_steps(6);
@@ -3969,6 +4036,268 @@ fn formatted_card_toolbar_applies_inline_font_size_and_color() {
 }
 
 #[test]
+fn translucent_srgba_color_conversion_preserves_unmultiplied_channels() {
+    let source = Color::rgba(255, 0, 0, 128);
+    assert_eq!(to_color(from_color(source)), source);
+}
+
+#[test]
+fn custom_card_text_color_applies_alpha_to_selection_and_typing() {
+    for (kind, selected) in [
+        (CardKind::Sticky, true),
+        (CardKind::Sticky, false),
+        (CardKind::Text, true),
+        (CardKind::Text, false),
+    ] {
+        let (mut app, id) = app_with_card(kind);
+        let inherited = Color::rgba(100, 120, 140, 96);
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Existing color", |sheet| {
+                sheet.update_style(&[id], |style| style.text_color = Some(inherited))
+            })
+            .unwrap();
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(3);
+        if selected {
+            let editor_id = MapCanvas::title_editor_id();
+            let mut state = egui::TextEdit::load_state(&h.ctx, editor_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(4),
+                    egui::text::CCursor::new(0),
+                )));
+            state.store(&h.ctx, editor_id);
+        }
+        let before = h.state().doc().unwrap().doc.state_id();
+        edit_custom_card_color_channel(&mut h, "A ", "37");
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), before);
+        h.key_press(Key::Enter);
+        h.run_steps(4);
+
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.view.editing_topic(), Some(id), "selected={selected}");
+        assert_eq!(
+            MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view)
+                .unwrap()
+                .color,
+            Some(Some(Color::rgba(100, 120, 140, 37))),
+            "selected={selected}"
+        );
+        assert_eq!(doc.doc.state_id(), before);
+        if !selected {
+            h.event(egui::Event::Text("!".into()));
+            run_input_hook_steps(&mut h, 3);
+        }
+        let draft = h
+            .state()
+            .doc()
+            .unwrap()
+            .view
+            .title_rich_formatting_draft()
+            .unwrap();
+        let run = &draft.runs[0];
+        assert_eq!(
+            (run.start, run.end),
+            if selected { (0, 4) } else { (10, 11) }
+        );
+        assert_eq!(run.style.color, Some(Color::rgba(100, 120, 140, 37)));
+
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert_eq!(doc.doc.sheet().topic(id).unwrap().inline_text, draft);
+        for format in [thinoda_io::Format::Thinoda, thinoda_io::Format::DrawIo] {
+            let bytes =
+                thinoda_io::export_bytes(doc.doc.workbook(), format, &Default::default()).unwrap();
+            let reopened = thinoda_io::import_bytes_with_report(format, &bytes)
+                .unwrap()
+                .workbook;
+            let card = reopened
+                .active()
+                .topics
+                .values()
+                .find(|topic| topic.card.is_some())
+                .unwrap();
+            assert_eq!(card.inline_text, draft, "{kind:?} {format:?}");
+        }
+        assert!(doc.doc.undo());
+        let card = doc.doc.sheet().topic(id).unwrap();
+        assert_eq!(card.title, "Card title");
+        assert!(card.inline_text.is_empty());
+        assert_eq!(card.style.text_color, Some(inherited));
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.sheet().topic(id).unwrap().inline_text, draft);
+    }
+}
+
+#[test]
+fn custom_card_text_color_accepts_independent_rgba_channels() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    for (channel, value) in [("R ", "18"), ("G ", "171"), ("B ", "52"), ("A ", "0")] {
+        edit_custom_card_color_channel(&mut h, channel, value);
+        h.key_press(Key::Enter);
+        h.run_steps(4);
+        assert_eq!(
+            h.state().doc().unwrap().view.editing_topic(),
+            Some(id),
+            "{channel}"
+        );
+    }
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        doc.view.title_rich_formatting_draft().unwrap().runs[0]
+            .style
+            .color,
+        Some(Color::rgba(18, 171, 52, 0))
+    );
+}
+
+#[test]
+fn escape_closes_card_color_picker_without_discarding_title_draft() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    open_toolbar(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
+    }
+    h.run_steps(4);
+    edit_custom_card_color_channel(&mut h, "A ", "37");
+    h.key_press(Key::Enter);
+    h.run_steps(4);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    let before = h
+        .state()
+        .doc()
+        .unwrap()
+        .view
+        .title_rich_formatting_draft()
+        .unwrap();
+    h.key_press(Key::Escape);
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert_eq!(doc.view.editing_topic(), Some(id));
+    assert_eq!(doc.view.title_rich_formatting_draft().unwrap(), before);
+    assert!(doc.doc.sheet().topic(id).unwrap().inline_text.is_empty());
+}
+
+#[test]
+fn custom_card_text_color_draft_cancels_on_escape_or_selection_change() {
+    for change_selection in [false, true] {
+        let (mut app, id) = app_with_card(CardKind::Text);
+        let second = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Create another card", |sheet| {
+                sheet
+                    .add_card(
+                        "Other card",
+                        Vec2::new(300.0, 0.0),
+                        Card::new(CardKind::Text, Vec2::new(180.0, 120.0)),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        let before = app.doc().unwrap().doc.state_id();
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, true);
+        }
+        h.run_steps(3);
+        edit_custom_card_color_channel(&mut h, "A ", "37");
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), before);
+        if change_selection {
+            h.state_mut().doc_mut().unwrap().view.select_only(second);
+        } else {
+            h.key_press(Key::Escape);
+        }
+        h.run_steps(5);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.doc.state_id(), before);
+        for id in [id, second] {
+            let card = doc.doc.sheet().topic(id).unwrap();
+            assert!(card.inline_text.is_empty());
+            assert_eq!(card.style.text_color, None);
+        }
+        if !change_selection {
+            assert_eq!(doc.view.editing_topic(), Some(id));
+            assert!(doc.view.title_rich_formatting_draft().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn custom_card_text_color_picker_fits_compact_canvases() {
+    for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(720.0, 480.0)] {
+        let (app, id) = app_with_card(CardKind::Sticky);
+        let mut h = harness(app, size);
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, true);
+        }
+        h.run_steps(4);
+        edit_custom_card_color_channel(&mut h, "A ", "37");
+        let alpha = h
+            .query_all_by_role(Role::SpinButton)
+            .find(|control| {
+                control
+                    .value()
+                    .is_some_and(|value| value == "37" || value.starts_with("A "))
+            })
+            .unwrap()
+            .rect();
+        let popup = h.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .filter(|layer| layer.order == egui::Order::Foreground)
+                .filter_map(|layer| memory.area_rect(layer.id))
+                .filter(|rect| rect.contains_rect(alpha))
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+                .expect("visible popup containing the alpha control")
+        });
+        assert!(
+            h.ctx.content_rect().expand(1.0).contains_rect(popup),
+            "{size:?}: popup {popup:?}, alpha {alpha:?}"
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(
+            MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view)
+                .unwrap()
+                .color
+                .flatten()
+                .unwrap()
+                .a,
+            37,
+            "{size:?}"
+        );
+    }
+}
+
+#[test]
 fn last_inline_size_keystroke_and_color_click_in_one_frame_are_preserved() {
     let (app, id) = app_with_card(CardKind::Text);
     let mut h = harness(app, vec2(2400.0, 700.0));
@@ -5669,4 +5998,80 @@ fn card_title_editor_visual_previews() {
             }
         }
     }
+}
+
+#[test]
+fn typing_on_a_selected_card_with_text_formatting_open_replaces_the_title() {
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.enabled = false;
+    app.settings.show_format_panel = false;
+    app.new_doc(templates::instantiate("blank-canvas"));
+    app.doc_mut()
+        .unwrap()
+        .view
+        .set_board_tool(BoardTool::Sticky);
+    let mut h = harness(app, vec2(1252.0, 1278.0));
+    let create = egui::pos2(220.0, 400.0);
+    h.event(egui::Event::PointerMoved(create));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: create,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    h.event(egui::Event::Text("Sticky".into()));
+    h.run_steps(3);
+    h.key_press(Key::Enter);
+    h.run_steps(5);
+    assert_eq!(h.state().doc().unwrap().view.editing_topic(), None);
+    let [modifiers, down, up, clear] = raw_key_press(Key::X, Modifiers::NONE);
+    h.input_mut()
+        .events
+        .extend([modifiers, down, egui::Event::Text("X".into()), up, clear]);
+    run_input_hook_steps(&mut h, 4);
+    assert_eq!(h.state().doc().unwrap().view.editing_text(), Some("X"));
+    assert!(
+        h.state().toasts.texts().next().is_none(),
+        "{:?}",
+        h.state().toasts.texts().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn keyboard_select_all_keeps_the_selected_text_scope_in_formatting() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.set_editing_text("Selected title");
+    }
+    h.run_steps(5);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Selected text").is_some(),
+        "before shortcut"
+    );
+    h.key_press_modifiers(Modifiers::ALT, Key::F10);
+    h.run_steps(3);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    assert!(
+        h.query_by_label("Selected text").is_some(),
+        "after shortcut"
+    );
+    h.key_press(Key::Space);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::F10);
+    h.run_steps(3);
+    h.event(egui::Event::Text("Replacement".into()));
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_text(),
+        Some("Replacement")
+    );
+    assert_eq!(style(&h, id).bold, Some(true));
 }

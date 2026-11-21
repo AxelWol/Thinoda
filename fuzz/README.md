@@ -1,6 +1,6 @@
 _Last updated: 2026-11-09 08:39:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
-# Importer fuzzing
+# Parser fuzzing
 
 The fuzz harness is a separate Cargo workspace: its `libfuzzer-sys` and ZIP
 dependencies are used only by these developer/CI tools and are not dependencies
@@ -23,6 +23,7 @@ cargo +nightly fuzz run --release xmind
 cargo +nightly fuzz run --release freemind
 cargo +nightly fuzz run --release opml
 cargo +nightly fuzz run --release drawio_import
+cargo +nightly fuzz run --release drawio_bundle
 ```
 
 To reproduce the bounded CI smoke locally, run each command with its matching
@@ -33,6 +34,7 @@ cargo +nightly fuzz run --release xmind -- -max_total_time=20 -rss_limit_mb=2048
 cargo +nightly fuzz run --release freemind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/freemind.dict
 cargo +nightly fuzz run --release opml -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/opml.dict
 cargo +nightly fuzz run --release drawio_import -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/drawio_import.dict
+cargo +nightly fuzz run --release drawio_bundle -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/drawio_bundle.dict
 ```
 
 Inputs over 1 MiB are ignored by the targets. XMind accepts raw input as well as
@@ -74,8 +76,19 @@ content and block boundaries through the same imports.
 An HTML-whitespace seed covers collapse warnings across adjacent text nodes.
 The target's PNG seed is the original editor-exported fixture already used by
 the importer tests.
+The bundle target splits input at the first zero byte into catalog JSON and a
+deflated package blob; without a separator it exercises catalog parsing alone.
+It uses the same catalog index and bounded package decoder as the shipped
+bundle, including mutated offsets, lengths and compressed bytes. Indexing
+preflights the aggregate UTF-8 bytes of namespace-plus-name keys against a
+4 MiB limit before allocating them; repeated keys count toward the limit. This
+limits key amplification, not all parser or allocator memory. Its small
+valid seed contains `drawio.electrical.plc_ladder` copied from the licensed
+bundled stencils, with a one-package catalog and an offset adjusted to zero; see
+`crates/thinoda-io/stencils/drawio/NOTICE`. The `fuzzing` Cargo feature exposes
+only the internal hooks needed by the separate fuzz workspace.
 On successful imports, including reports with conversion
-warnings, each target checks validation and an exact round-trip through
+warnings, each importer target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's
 conversion-consent flow. Fuzzer crashes and assertion failures are intentionally
 not caught; preserve any reproducer under that target's corpus and investigate it.
@@ -85,14 +98,16 @@ clipboard seed actually reaches its intended importer:
 
 ```sh
 cargo test --locked -p thinoda-io --test drawio_fuzz_seeds
+cargo test --locked -p thinoda-io --lib drawio_bundle::tests -- --test-threads=1
 ```
 
 CI runs on Ubuntu with nightly, caps each campaign at 20 seconds, each input at
 five seconds, maximum input at 1 MiB, RSS at 2 GiB, and the whole job at 30
-minutes including installation and compilation. Corpus files are small original
-examples and packages generated from them; no third-party map data is included.
+minutes including installation and compilation. Importer corpus files are small
+original examples and packages generated from them; the bundle seed is the
+licensed shipped package described above.
 
-The separate **Importer acceptance campaigns** workflow runs all four targets
+The separate **Importer acceptance campaigns** workflow runs all five targets
 on Linux with the default sanitizer for 30 minutes each, keeping the same
 per-input time, memory and length limits. It runs for pull requests changing the
 fuzz harness or its workflow, and supports manual dispatch after merging.

@@ -1,6 +1,14 @@
 use super::*;
 use std::collections::HashSet;
 
+const FUZZ_SEED: &[u8] = include_bytes!("../../../../fuzz/corpus/drawio_bundle/valid-package");
+
+fn fuzz_seed() -> (Bundle, &'static [u8]) {
+    let separator = FUZZ_SEED.iter().position(|byte| *byte == 0).unwrap();
+    let bundle = fuzzing_catalog(&FUZZ_SEED[..separator]).expect("seed catalog");
+    (bundle, &FUZZ_SEED[separator + 1..])
+}
+
 #[test]
 fn catalog_is_consistent_with_the_package_blob() {
     let bundle = Bundle::new();
@@ -94,4 +102,110 @@ fn bundle_stays_within_its_release_size_budget() {
         "bundled draw.io stencils add {} bytes",
         CATALOG.len() + PACKAGES.len()
     );
+    for package in &Bundle::new().catalog().packages {
+        assert!(package.length > 0, "{}", package.id);
+        assert!(
+            package.inflated <= Limits::DEFAULT.max_package_bytes,
+            "{} exceeds the stencil inflation limit",
+            package.id
+        );
+    }
+}
+
+#[test]
+fn fuzz_seed_reaches_catalog_indexing_and_package_decoding() {
+    let (bundle, blob) = fuzz_seed();
+    assert_eq!(bundle.catalog().packages.len(), 1);
+    let entry = &bundle.catalog().packages[0];
+    let shipped = Bundle::new();
+    let original = shipped
+        .catalog()
+        .packages
+        .iter()
+        .find(|package| package.id == entry.id)
+        .expect("seed package is still bundled");
+    assert_eq!(entry.sha256, original.sha256);
+    assert_eq!(entry.inflated, original.inflated);
+    assert_eq!(entry.length, original.length);
+    assert_eq!(
+        blob,
+        &PACKAGES[original.offset..original.offset + original.length]
+    );
+    let alias = entry.alias(&entry.shapes[0]);
+    assert!(bundle.has_alias(&alias));
+    let decoded = fuzzing_decode(entry, blob).expect("seed package");
+    assert_eq!(decoded.id, entry.id);
+    assert!(decoded.definition(&entry.shapes[0].definition).is_some());
+
+    let mut catalog: serde_json::Value =
+        serde_json::from_slice(&FUZZ_SEED[..FUZZ_SEED.len() - blob.len() - 1]).unwrap();
+    catalog["format"] = serde_json::json!(BUNDLE_FORMAT + 1);
+    assert!(fuzzing_catalog(&serde_json::to_vec(&catalog).unwrap()).is_none());
+    assert!(fuzzing_catalog(b"{invalid").is_none());
+}
+
+#[test]
+fn catalog_index_rejects_amplified_alias_keys() {
+    let separator = FUZZ_SEED.iter().position(|byte| *byte == 0).unwrap();
+    let mut catalog: serde_json::Value = serde_json::from_slice(&FUZZ_SEED[..separator]).unwrap();
+    let entry = &mut catalog["packages"][0];
+    let namespace = "n".repeat(262_144);
+    entry["namespace"] = serde_json::json!(namespace);
+    let prototype = entry["shapes"][0].clone();
+    let shapes: Vec<_> = (0..17)
+        .map(|index| {
+            let mut shape = prototype.clone();
+            shape[0] = serde_json::json!(format!("shape{index}"));
+            shape
+        })
+        .collect();
+    entry["shapes"] = serde_json::json!(&shapes[..15]);
+    let accepted = serde_json::to_vec(&catalog).unwrap();
+    let bundle = fuzzing_catalog(&accepted).expect("index within the budget");
+    assert!(bundle.has_alias(&format!("{namespace}.shape14")));
+    catalog["packages"][0]["shapes"] = serde_json::json!(shapes);
+    let bytes = serde_json::to_vec(&catalog).unwrap();
+    assert!(bytes.len() < 1_048_576);
+    assert!(fuzzing_catalog(&bytes).is_none());
+}
+
+#[test]
+fn decoder_rejects_invalid_ranges_lengths_and_packages() {
+    let (bundle, blob) = fuzz_seed();
+    let valid = &bundle.catalog().packages[0];
+
+    let mut entry = valid.clone();
+    entry.offset = usize::MAX;
+    entry.length = 1;
+    assert!(fuzzing_decode(&entry, blob).is_none());
+
+    entry.offset = blob.len();
+    assert!(fuzzing_decode(&entry, blob).is_none());
+
+    entry = valid.clone();
+    entry.length -= 1;
+    assert!(fuzzing_decode(&entry, blob).is_none());
+
+    entry = valid.clone();
+    entry.inflated += 1;
+    assert!(fuzzing_decode(&entry, blob).is_none());
+
+    entry = valid.clone();
+    entry.id.push_str(".different");
+    assert!(fuzzing_decode(&entry, blob).is_none());
+
+    for bytes in [&b"\xff"[..], &b"not JSON"[..]] {
+        let compressed = miniz_oxide::deflate::compress_to_vec(bytes, 6);
+        entry = valid.clone();
+        entry.length = compressed.len();
+        entry.inflated = bytes.len();
+        assert!(fuzzing_decode(&entry, &compressed).is_none());
+    }
+
+    let oversized = vec![b' '; Limits::DEFAULT.max_package_bytes + 1];
+    let compressed = miniz_oxide::deflate::compress_to_vec(&oversized, 6);
+    entry = valid.clone();
+    entry.length = compressed.len();
+    entry.inflated = oversized.len();
+    assert!(fuzzing_decode(&entry, &compressed).is_none());
 }

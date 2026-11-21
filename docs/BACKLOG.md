@@ -1521,8 +1521,10 @@ dependencies before improving existing offline workflows.
   - Cover no printer, unavailable printer, driver capability changes, invalid copy
     counts, multi-page navigation, cancellation and spool errors; never send a real
     print job as an automated smoke check without explicit user approval.
-- Cross-sheet Find and title replacement are implemented; notes/labels are explicitly
-  search-only. Rich-field replacement needs separately specified behavior.
+- Cross-sheet Find and title replacement are implemented; board labels,
+  descriptions and property values are also replaced, while notes, topic labels
+  and tags are explicitly search-only. Rich-field replacement needs separately
+  specified behavior.
 - Delivered Pitch from branches/Zones, presenter/player and PDF/PNG slide export
   in F4; PPTX/aspect-ratio follow-up is XV6. F5 is AI, not a Pitch shortcut claim.
 - Delivered Map Shot (F7): visible-canvas region capture to clipboard/PNG (see above).

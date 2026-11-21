@@ -87,6 +87,24 @@ fn arrow(ui: &egui::Ui) -> Option<Vec2> {
     None
 }
 
+fn handle_rect(view: &MapView, point: Vec2) -> egui::Rect {
+    egui::Rect::from_center_size(view.xf().pos(point), egui::vec2(22.0, 22.0))
+}
+
+pub(crate) fn selected_control_rects(view: &MapView, layout: &Layout) -> Vec<egui::Rect> {
+    let Some(ObjectSelection::Relationship(id)) = view.selected_object else {
+        return Vec::new();
+    };
+    let Some(curve) = layout.relationships.iter().find(|curve| curve.id == id) else {
+        return Vec::new();
+    };
+    [curve.start, curve.c1, curve.c2, curve.end]
+        .into_iter()
+        .map(|point| handle_rect(view, point))
+        .filter(|rect| view.canvas_rect().intersects(*rect))
+        .collect()
+}
+
 fn next_endpoint(rel: &Relationship, part: usize, delta: Vec2, layout: &Layout) -> TopicId {
     let (current, other) = if part == 0 {
         (rel.from, rel.to)
@@ -162,7 +180,7 @@ pub(crate) fn interact(
     // Endpoints win when a control lies on a topic edge.
     for part in [1, 2, 0, 3] {
         let point = positions[part];
-        let rect = egui::Rect::from_center_size(xf.pos(point), egui::vec2(22.0, 22.0));
+        let rect = handle_rect(view, point);
         if !view.canvas_rect().intersects(rect)
             && active.as_ref().is_none_or(|drag| drag.part != part)
         {

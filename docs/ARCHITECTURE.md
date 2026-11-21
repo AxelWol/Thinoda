@@ -512,7 +512,7 @@ graph TD
   Ribbon-only task aliases are Home and Capture; native menu taxonomy is unchanged.
   Each command supplies one combined tooltip with its label, binding and help;
   a long primary caption never forces a separate oversized first tile.
-  Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
+  Ctrl+F1 persists collapse state; in Map view Alt+1 through Alt+8 opens
   a category, and Escape or an outside press dismisses a temporary opening.
   A visible Pin/Unpin Ribbon control uses that same persisted collapse preference:
   pinned ribbons stay expanded after actions, while unpinned tab previews close.
@@ -522,7 +522,18 @@ graph TD
   34-point tab/secondary targets, 72-point primary controls, 24/20/16-point icons,
   four-point intra-group spacing and recalculated group widths/overflow budgets.
   Labels, semantic colors, shortcuts, pinning and popup command routing are shared;
-  Outline and Quick Access retain their existing density.
+  Quick Access retains its existing density. In native Outliner mode the outline
+  actions replace, rather than follow, the main ribbon; a prominent selected-topic
+  heading and collapse button share the saved ribbon preference. The full command
+  tree remains available from Main Menu and Quick Access still uses captured
+  text/document snapshots. Alt+1 through Alt+8 opens the corresponding Main
+  Menu category in Outliner without replacing its ribbon; Escape closes the
+  popup, and changing categories reveals their first command. Web, non-native and Zen modes keep inline outline
+  actions. Narrow or short viewports bound the outline panel and scroll its
+  controls to keyboard focus, leaving the outline itself reachable. Header actions
+  reduce before they collide with document tabs; at very narrow widths with a
+  Main Menu button, Quick Access also hides Undo (still available from the menu
+  or shortcut) to keep New Tab visible.
   **Icon system (UR6).** `thinoda_ui::icons` is the only icon source: a pinned,
   subset Google Material Symbols Outlined font (Apache-2.0; FILL 0, GRAD 0,
   weight 400, optical size 20) whose glyphs are remapped to Supplementary Private
@@ -549,8 +560,10 @@ graph TD
   controls and adapts between captioned tiles, labeled rows and compact icons;
   full accessible names, tooltips and all nine structural operations remain.
   Document tabs use a single rounded capsule around the name and its own close
-  button. New Tab follows the last capsule inside the same scroll viewport,
-  rather than being pinned across empty space. Navigation arrows stay fixed;
+  button. New Tab follows the last capsule when the names fit and stays outside
+  their scroll viewport when they overflow. The strip uses available header width
+  after reserving the visible actions; responsive breakpoints use logical points
+  so zoom cannot place actions over the tabs. Navigation arrows stay fixed;
   per-document keys, focus reveal and shared unsaved-close decisions are retained.
   Scroll rows reserve the full capsule height plus vertical breathing room so
   borders are not clipped by a shorter default interaction row.

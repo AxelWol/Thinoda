@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+fuzzing = []
+
 [dependencies]
 thinoda-core.workspace = true
 base64.workspace = true

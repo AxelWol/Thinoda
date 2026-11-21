@@ -22,6 +22,7 @@ pub mod edit;
 pub mod equations;
 pub mod fim;
 pub mod geometry;
+pub mod graph_layout;
 pub mod images;
 pub mod label_style;
 pub mod layout;

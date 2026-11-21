@@ -1134,6 +1134,11 @@ impl MapView {
 
     /// Bounds of selected scene objects, including routed connectors and rotation.
     pub fn selected_board_rect(&mut self, doc: &Document) -> Option<Rect> {
+        self.selected_board_geometry(doc).map(|(rect, _)| rect)
+    }
+
+    /// Bounds and visible screen-space hit targets belonging to the selection.
+    pub fn selected_board_geometry(&mut self, doc: &Document) -> Option<(Rect, Vec<Rect>)> {
         if self.has_active_canvas_gesture() {
             return None;
         }
@@ -1173,10 +1178,49 @@ impl MapView {
                     thinoda_core::board::points_bounds(&[item.start, item.c1, item.c2, item.end])
                 }),
         });
-        members
+        let rect = members
             .chain(annotation)
             .map(|rect| self.xf().rect(rect))
-            .reduce(|a, b| a.union(b))
+            .reduce(|a, b| a.union(b))?;
+        let controls = self.selection_control_rects(doc.sheet(), &layout, Some(&scene));
+        Some((rect, controls))
+    }
+
+    fn selection_control_rects(
+        &self,
+        sheet: &Sheet,
+        layout: &Layout,
+        scene: Option<&Scene>,
+    ) -> Vec<Rect> {
+        let mut controls = scene.map_or_else(Vec::new, |scene| {
+            board_input::selected_control_rects(self, sheet, layout, scene)
+        });
+        controls.extend(
+            add_handles(self, sheet, layout)
+                .into_iter()
+                .map(|handle| handle.rect()),
+        );
+        controls.extend(image_resize::selected_control_rect(self, sheet, layout));
+        controls.extend(crate::relationship_editing::selected_control_rects(
+            self, layout,
+        ));
+        controls
+    }
+
+    /// Visible screen-space hit targets belonging to the current selection.
+    pub fn selected_control_rects(&mut self, doc: &Document) -> Vec<Rect> {
+        if self.has_active_canvas_gesture() {
+            return Vec::new();
+        }
+        let layout = self.layout_for(doc);
+        let sheet = doc.sheet();
+        let needs_scene = !self.board_selection.is_empty()
+            || self
+                .selection
+                .iter()
+                .any(|id| sheet.topic(*id).is_some_and(|topic| topic.card.is_some()));
+        let scene = needs_scene.then(|| build_scene(sheet, &layout));
+        self.selection_control_rects(sheet, &layout, scene.as_ref())
     }
 
     /// Laid-out bounds of the supplied topics and their visible descendants.
@@ -1407,6 +1451,26 @@ impl MapView {
                 .is_some_and(|(previous, requested)| previous == frame && requested);
             self.title_companion_frame = Some((frame, refocus || already_refocusing));
         }
+    }
+
+    /// Keep the title selection while keyboard focus moves to a companion control;
+    /// an unfocused egui editor otherwise collapses its selection.
+    pub fn retain_title_selection_for_companion(&mut self, ctx: &egui::Context) {
+        if let Some(edit) = &mut self.editing
+            && !edit.ime_composing
+            && edit.companion_cursor.is_none()
+        {
+            edit.companion_cursor = TextEdit::load_state(ctx, MapCanvas::title_editor_id())
+                .map(|state| (edit.text.clone(), state.cursor.char_range()));
+        }
+    }
+
+    /// Whether formatting applies to a selected title range rather than new text.
+    pub fn title_has_selected_range(&self, ctx: &egui::Context) -> bool {
+        self.editing
+            .as_ref()
+            .and_then(|edit| card_title_selection(ctx, edit))
+            .is_some_and(|selection| selection.anchor != selection.focus)
     }
 
     /// Include current-frame IME events, which may precede the editor's update.
@@ -3246,6 +3310,7 @@ impl MapCanvas {
             && !minimap_blocks_keyboard
             && view.image_resize.is_none()
             && !egui::Popup::is_any_open(&ctx)
+            && !crate::format_menu::compact_open(&ctx)
             && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && !view.board_input.is_active()
             && (response.has_focus()
@@ -4660,12 +4725,22 @@ fn show_editor_pass(
     }
     if let Some(history) = &mut edit.rich_history {
         let draft_selection = history_cursor.unwrap_or_else(|| {
-            let selection = output.state.cursor.char_range().unwrap_or_else(|| {
-                egui::text::CCursorRange::one(egui::text::CCursor::new(edit.text.chars().count()))
-            });
+            let length = edit.text.chars().count();
+            // The shared editor ID can retain a previous title's cursor until
+            // this edit's first focus pass stores its initial selection.
+            if !edit.focus_requested {
+                return DraftSelection {
+                    anchor: if edit.select_all { 0 } else { length },
+                    focus: length,
+                };
+            }
+            let selection =
+                output.state.cursor.char_range().unwrap_or_else(|| {
+                    egui::text::CCursorRange::one(egui::text::CCursor::new(length))
+                });
             DraftSelection {
-                anchor: selection.secondary.index.0,
-                focus: selection.primary.index.0,
+                anchor: selection.secondary.index.0.min(length),
+                focus: selection.primary.index.0.min(length),
             }
         });
         let operations = operations.into_inner();

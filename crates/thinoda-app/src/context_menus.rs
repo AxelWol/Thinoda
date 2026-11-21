@@ -325,6 +325,13 @@ impl ThinodaApp {
             self.board_options_menu(Some(target)),
             self.grid_menu(),
             self.align_menu(true),
+            submenu(
+                "Layout",
+                Self::layout_commands()
+                    .into_iter()
+                    .map(|(command, label)| cmd(label, command))
+                    .collect(),
+            ),
             self.short_select_menu(),
             self.tools_menu(),
         ]);

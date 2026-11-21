@@ -1,7 +1,10 @@
 //! Localized mode/toolbar coverage must be sequential.
 
 use egui::accesskit::Role;
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_app::{
     app::{CenterMode, Cmd, Services, SidebarFamily, ThinodaApp},
     i18n::t,
@@ -18,6 +21,49 @@ fn exec(h: &mut Harness<'_, ThinodaApp>, command: Cmd) {
 fn click(h: &mut Harness<'_, ThinodaApp>, label: &'static str) {
     h.get_by_role_and_label(Role::Button, t(label)).click();
     h.run_steps(4);
+}
+
+#[test]
+fn bounded_nearby_more_actions_reaches_its_last_commands() {
+    let mut app = ThinodaApp::headless();
+    app.settings.ui_scale = 2.0;
+    app.settings.show_format_panel = false;
+    let doc = app.doc_mut().unwrap();
+    let mut selected = None;
+    doc.doc
+        .edit_sheet("Fixture", |sheet| {
+            selected = Some(sheet.add_child(sheet.root, None, "Selected topic"));
+            Ok(())
+        })
+        .unwrap();
+    let selected = selected.unwrap();
+    doc.view.select_only(selected);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(640.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    click(&mut h, "More actions");
+    h.get_by_role_and_label(Role::Button, t("Delete Topic Only"))
+        .scroll_to_me();
+    h.run_steps(6);
+    let command = h.get_by_role_and_label(Role::Button, t("Delete Topic Only"));
+    assert!(
+        !command.accesskit_node().is_disabled(),
+        "last command must be enabled"
+    );
+    let popup = h.ctx.memory(|memory| {
+        memory
+            .areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|layer| layer.order == egui::Order::Foreground)
+            .filter_map(|layer| memory.area_rect(layer.id))
+            .find(|rect| rect.contains(command.rect().center()))
+    });
+    assert!(popup.is_some(), "the last commands must scroll into view");
+    command.click();
+    h.run_steps(4);
+    assert!(!h.state().doc().unwrap().doc.sheet().contains(selected));
 }
 
 fn assert_outline_controls(h: &Harness<'_, ThinodaApp>) {
@@ -337,11 +383,31 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                 click(&mut h, "More actions");
                 assert!(egui::Popup::is_any_open(&h.ctx));
                 // The open More actions menu also lists Outliner; use the mode toggle.
-                h.query_all_by_role_and_label(Role::Button, t("Outliner"))
+                let outliner = h
+                    .query_all_by_role_and_label(Role::Button, t("Outliner"))
                     .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-                    .unwrap()
-                    .click();
+                    .unwrap();
+                let toggle_rect = outliner.rect();
+                let foreground: Vec<_> = h.ctx.memory(|memory| {
+                    memory
+                        .areas()
+                        .visible_layer_ids()
+                        .into_iter()
+                        .filter(|layer| layer.order == egui::Order::Foreground)
+                        .filter_map(|layer| memory.area_rect(layer.id))
+                        .collect()
+                });
+                assert!(
+                    foreground.iter().all(|rect| !rect.intersects(toggle_rect)),
+                    "{language:?}/{theme:?}/{scale}/{width}: toggle {toggle_rect:?}, popups {foreground:?}"
+                );
+                outliner.click();
                 h.run_steps(4);
+                assert_eq!(
+                    h.state().mode,
+                    CenterMode::Outliner,
+                    "{language:?}/{theme:?}/{scale}/{width}: Outliner toggle {toggle_rect:?}"
+                );
                 assert_outline_controls(&h);
                 assert!(!egui::Popup::is_any_open(&h.ctx));
                 click(&mut h, "Outliner");

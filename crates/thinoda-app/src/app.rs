@@ -78,6 +78,8 @@ pub enum Cmd {
     BoardLayers,
     BoardImage,
     BoardZoomSelection,
+    /// Selects the visible board objects carrying exactly this tag.
+    SelectTag(String),
     New,
     NewFromTemplate(&'static str),
     Home,
@@ -1070,6 +1072,21 @@ impl ThinodaApp {
                 }
             }
             Cmd::BoardZoomSelection => self.zoom_to_board_selection(),
+            Cmd::SelectTag(tag) => {
+                if !self.command_available(&Cmd::SelectTag(tag.clone())) {
+                    self.toasts.warning(t("Not possible here"));
+                } else if let Some(doc) = self.doc_mut() {
+                    let result = doc.commit_canvas_drafts().map(|()| {
+                        let ids = doc.doc.sheet().canvas.objects_with_tag(&tag);
+                        doc.view.selection.clear();
+                        doc.view.selected_object = None;
+                        doc.view.board_selection = ids;
+                    });
+                    if let Err(error) = result {
+                        self.toasts.error(error);
+                    }
+                }
+            }
             Cmd::New => {
                 self.remember_map_defaults();
                 let mut workbook = templates::instantiate("mind-map");
@@ -2098,6 +2115,13 @@ impl ThinodaApp {
             | Cmd::BoardImage => {
                 !self.any_modal_open() && self.mode == CenterMode::Map && self.doc().is_some()
             }
+            Cmd::SelectTag(tag) => {
+                !self.any_modal_open()
+                    && self.mode == CenterMode::Map
+                    && self
+                        .doc()
+                        .is_some_and(|doc| !doc.doc.sheet().canvas.objects_with_tag(tag).is_empty())
+            }
             Cmd::BoardZoomSelection => {
                 !self.any_modal_open()
                     && self.mode == CenterMode::Map
@@ -2449,6 +2473,23 @@ impl ThinodaApp {
                 "Distribute Vertical Centers",
             ),
         ]
+    }
+
+    /// Automatic layouts for the selected board items, in menu order.
+    pub fn layout_commands() -> Vec<(Cmd, &'static str)> {
+        use thinoda_core::graph_layout::GraphLayout as L;
+        [
+            (L::TreeDown, "Vertical Tree"),
+            (L::TreeRight, "Horizontal Tree"),
+            (L::FlowDown, "Vertical Flow"),
+            (L::FlowRight, "Horizontal Flow"),
+            (L::Radial, "Radial Tree"),
+            (L::Circle, "Circle Layout"),
+            (L::Organic, "Organic Layout"),
+        ]
+        .into_iter()
+        .map(|(kind, label)| (Cmd::BoardAction(BoardAction::Layout(kind)), label))
+        .collect()
     }
 
     pub fn board_commands() -> Vec<(Cmd, &'static str)> {
@@ -4425,6 +4466,11 @@ impl ThinodaApp {
                     }
                 }),
         );
+        v.extend(
+            Self::layout_commands()
+                .into_iter()
+                .map(|(command, label)| (command, label, "", "Boards")),
+        );
         for (action, label) in Self::selection_commands()
             .into_iter()
             .chain(Self::arrangement_commands())
@@ -5866,6 +5912,82 @@ mod tests {
         app.search.facets.notes_only = true;
         app.update_search();
         assert!(app.search.canvas_hits.is_empty());
+    }
+
+    #[test]
+    fn board_replace_skips_locked_tag_only_hits_and_remains_undoable() {
+        use std::sync::Arc;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2, object_data::ObjectData};
+
+        let mut app = ThinodaApp::headless();
+        let (tagged, valued) = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Board search data", |sheet| {
+                sheet.set_title(sheet.root, "Needle topic")?;
+                let make_shape = || {
+                    CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+                    )
+                };
+                let mut tagged = make_shape();
+                tagged.locked = true;
+                tagged.data = Some(Arc::new(ObjectData {
+                    tags: vec!["needle".into()],
+                    ..Default::default()
+                }));
+                let tagged = sheet
+                    .add_canvas_object(tagged)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let mut valued = make_shape();
+                valued.data = Some(Arc::new(ObjectData {
+                    properties: vec![("owner".into(), "Needle".into())],
+                    ..Default::default()
+                }));
+                let valued = sheet
+                    .add_canvas_object(valued)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((tagged, valued))
+            })
+            .unwrap();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.search.open = true;
+        app.search.query = "needle".into();
+        app.search.replace = "Goal".into();
+        app.update_search();
+        assert_eq!(app.search.result_count(), 3);
+        app.replace_all();
+        let after = app.doc().unwrap().doc.workbook().clone();
+        assert_eq!(after.sheets[0].root_topic().title, "Goal topic");
+        assert_eq!(
+            after.sheets[0]
+                .canvas
+                .object(tagged)
+                .unwrap()
+                .data
+                .as_ref()
+                .unwrap()
+                .tags,
+            ["needle"]
+        );
+        assert_eq!(
+            after.sheets[0]
+                .canvas
+                .object(valued)
+                .unwrap()
+                .data
+                .as_ref()
+                .unwrap()
+                .property("owner"),
+            Some("Goal")
+        );
+        assert_eq!(app.search.canvas_hits.len(), 1);
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(app.doc_mut().unwrap().doc.redo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &after);
     }
 
     #[test]

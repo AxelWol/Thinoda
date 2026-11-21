@@ -1,6 +1,6 @@
 //! Compact board Layers panel shared by native and web views.
 
-use egui::{Context, Rect, TextEdit, pos2};
+use egui::{Context, Rect, TextEdit, pos2, vec2};
 use thinoda_core::{BoardLayer, BoardLayerId};
 use thinoda_ui::{icons, widgets};
 
@@ -11,6 +11,10 @@ use crate::{
 
 const PANEL_WIDTH: f32 = 300.0;
 const PANEL_TOP_INSET: f32 = crate::board_ui::CONTEXT_STRIP_HEIGHT + 16.0;
+
+fn panel_id(ctx: &Context) -> egui::Id {
+    egui::Id::unique(("thinoda_board_layers", ctx.viewport_id()))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum LayerAction {
@@ -42,25 +46,57 @@ impl ThinodaApp {
         if !doc.show_layers || !self.command_available(&Cmd::BoardLayers) {
             return;
         }
-        let key = doc.key.clone();
         let layers = doc.doc.sheet().canvas.layers.clone();
         let has_selection = !doc.view.board_selection.is_empty();
         let touch = widgets::touch_activation_allowed(ctx);
-        let width = PANEL_WIDTH.min((canvas.width() - 40.0).max(0.0));
+        let bounds = ctx.content_rect();
+        let width = PANEL_WIDTH.min((bounds.width() - 40.0).max(0.0));
+        let max_height = (bounds.height() - 48.0).max(0.0);
+        let min_height = (7.0
+            * (thinoda_ui::tokens::Tokens::ICON_BUTTON
+                + ctx.global_style().spacing.item_spacing.y))
+            .min(max_height);
+        let initial_pos = self
+            .settings
+            .layers_panel_position
+            .filter(|position| position.iter().all(|coordinate| coordinate.is_finite()))
+            .map(|[x, y]| {
+                bounds.min
+                    + vec2(
+                        x.clamp(0.0, bounds.width().max(0.0)),
+                        y.clamp(0.0, bounds.height().max(0.0)),
+                    )
+            })
+            .unwrap_or_else(|| {
+                pos2(
+                    canvas.right() - width - 28.0,
+                    canvas.top() + PANEL_TOP_INSET,
+                )
+            });
         let mut action = None;
-        egui::Area::new(egui::Id::unique(("thinoda_board_layers", &key)))
+        let mut title_drag = None;
+        let id = panel_id(ctx);
+        let panel = egui::Area::new(id)
             .order(egui::Order::Middle)
-            .fixed_pos(pos2(
-                canvas.right() - width - 28.0,
-                canvas.top() + PANEL_TOP_INSET,
+            .default_pos(initial_pos)
+            .default_size(vec2(
+                (width + 16.0).min(bounds.width()),
+                min_height + 48.0,
             ))
-            .constrain_to(canvas)
-            .movable(false)
+            .constrain_to(bounds)
+            .movable(true)
             .show(ctx, |ui| {
                 widgets::card(ui).show(ui, |ui| {
                     ui.set_width(width);
                     ui.horizontal(|ui| {
-                        ui.strong(t("Layers"));
+                        title_drag = Some(
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(t("Layers")).strong())
+                                    .sense(egui::Sense::drag()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::Grab)
+                            .on_hover_text(t("Drag to move")),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if widgets::icon_button(ui, icons::CLOSE, t("Close"), false).clicked()
                                 && touch
@@ -80,9 +116,9 @@ impl ThinodaApp {
                             t("Only the base layer exists. Add a layer to hide or lock board objects together."),
                         );
                     }
-                    let max_height = (canvas.height() - PANEL_TOP_INSET - 96.0).max(80.0);
                     egui::ScrollArea::vertical()
                         .id_salt("board_layers_scroll")
+                        .min_scrolled_height(min_height)
                         .max_height(max_height)
                         .show(ui, |ui| {
                             let count = layers.len();
@@ -123,6 +159,38 @@ impl ThinodaApp {
                     crate::ui::reveal_changed_focus(ui);
                 });
             });
+        let mut panel_pos = panel.response.rect.min;
+        if let Some(title) = &title_drag
+            && title.dragged()
+        {
+            // The title is a separate widget, so its drag must move the Area.
+            let max = (bounds.max - panel.response.rect.size()).max(bounds.min);
+            let position = (panel.response.rect.min + title.drag_delta()).clamp(bounds.min, max);
+            if let Some(mut state) = egui::AreaState::load(ctx, id) {
+                state.set_left_top_pos(position);
+                ctx.memory_mut(|memory| {
+                    memory
+                        .areas_mut()
+                        .set_state(egui::LayerId::new(egui::Order::Middle, id), state);
+                });
+                panel_pos = position;
+                ctx.request_repaint();
+            } else {
+                log::warn!("Could not move the Layers panel: its area state is missing");
+            }
+        }
+        if panel.response.drag_stopped()
+            || title_drag
+                .as_ref()
+                .is_some_and(|title| title.drag_stopped())
+        {
+            let position = panel_pos - bounds.min;
+            let position = [position.x, position.y];
+            if self.settings.layers_panel_position != Some(position) {
+                self.settings.layers_panel_position = Some(position);
+                self.save_settings();
+            }
+        }
         if let Some(action) = action {
             self.apply_layer_action(action, &layers);
             ctx.request_repaint();

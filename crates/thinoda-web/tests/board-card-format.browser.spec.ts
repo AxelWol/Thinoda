@@ -65,6 +65,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
                 await input.pressSequentially(" continued");
                 await page.keyboard.press("Enter");
                 await frames(page);
+                // Dismiss the nearby menu so the next creation click reaches the canvas.
+                await page.keyboard.press("Escape");
+                await frames(page);
             }
 
             const archive = await saveAs(page, "pointer-cards.thinoda");
@@ -73,7 +76,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
                     topics: Record<string, {
                         title: string;
                         card?: { kind: string };
-                        style?: { bold?: boolean };
+                        inline_text?: {
+                            runs: { start: number; end: number; style: { bold?: boolean } }[];
+                        };
                     }>;
                 }[];
             } = JSON.parse(zipEntry(archive, "content.json").toString("utf8"));
@@ -82,13 +87,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
             const text = cards.filter((card) => card.card?.kind === "text");
             expect(sticky).toHaveLength(1);
             expect(text).toHaveLength(1);
+            // With no selected text, the formatting applies to the newly typed text.
             expect(sticky[0]).toMatchObject({
                 title: "Pointer sticky title continued",
-                style: { bold: true },
+                inline_text: { runs: [{ start: 20, end: 30, style: { bold: true } }] },
             });
             expect(text[0]).toMatchObject({
                 title: "Pointer text title continued",
-                style: { bold: true },
+                inline_text: { runs: [{ start: 18, end: 28, style: { bold: true } }] },
             });
         });
 
@@ -122,6 +128,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
             await expect(input).toBeFocused();
             await page.keyboard.press("Control+End");
             await input.pressSequentially(" size");
+            // Whole-card font size is a selected-object setting, outside title editing.
+            await page.keyboard.press("Enter");
+            await frames(page);
             await page.keyboard.press("Alt+F10");
             await frames(page);
             for (let index = 0; index < 8; index++) {
@@ -145,17 +154,21 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
                         title: string;
                         card?: { kind: string };
                         style?: { bold?: boolean; font_size?: number };
+                        inline_text?: {
+                            runs: { start: number; end: number; style: { bold?: boolean } }[];
+                        };
                     }>;
                 }[];
             } = JSON.parse(zipEntry(archive, "content.json").toString("utf8"));
             const cards = Object.values(saved.sheets[0].topics);
             expect(cards.find((card) => card.card?.kind === "sticky")).toMatchObject({
                 title: "Browser draft continued",
-                style: { bold: true },
+                inline_text: { runs: [{ start: 13, end: 23, style: { bold: true } }] },
             });
             expect(cards.find((card) => card.card?.kind === "text")).toMatchObject({
                 title: "Replacement size",
-                style: { bold: true, font_size: 27 },
+                style: { font_size: 27 },
+                inline_text: { runs: [{ start: 0, end: 16, style: { bold: true } }] },
             });
         });
 
@@ -177,14 +190,13 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
             await page.keyboard.press("Escape");
             await frames(page);
             await insertCard(page, "Sticky note", "Browser alignment");
+            // Whole-card alignment is a selected-object setting, outside title editing.
+            await page.keyboard.press("Enter");
+            await frames(page);
 
             const positions: number[] = [];
             for (const [align, tabs] of [["left", 4], ["right", 6]] as const) {
-                if (align === "right") {
-                    await canvas.focus();
-                    await page.keyboard.press("F2");
-                    await frames(page);
-                }
+                await canvas.focus();
                 await page.keyboard.press("Alt+F10");
                 await frames(page);
                 for (let index = 0; index < tabs; index++) {
@@ -193,10 +205,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
                 }
                 await page.keyboard.press("Space");
                 await frames(page);
-                await page.keyboard.press("Alt+F10");
-                await frames(page);
-                await expect(page.locator("input[type='text']")).toBeFocused();
-                await page.keyboard.press("Enter");
+                await page.keyboard.press("Escape");
                 await frames(page);
 
                 const archive = await saveAs(page, `alignment-${align}.thinoda`);
