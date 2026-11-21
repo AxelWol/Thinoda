@@ -492,6 +492,7 @@ impl ThinodaApp {
         snapshot
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn show_outliner_ribbon(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.prepare_ribbon(&ctx);

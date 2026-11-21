@@ -1772,7 +1772,7 @@ fn outliner_group_height(detail: thinoda_ui::ribbon::Detail, columns: usize, spa
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) fn outliner_ribbon_height(width: f32, compact: bool, spacing: f32) -> f32 {
     let (detail, columns) = outliner_toolbar_layout(width, compact);
     let rows = 4_usize.div_ceil(columns);
