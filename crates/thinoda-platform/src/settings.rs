@@ -453,6 +453,8 @@ pub struct Settings {
     pub format_tab: FormatTab,
     pub show_topic_toolbar: bool,
     pub show_topic_add_buttons: bool,
+    /// Last Layers panel position in logical points relative to the app window.
+    pub layers_panel_position: Option<[f32; 2]>,
     /// Visual free-placement alignment feedback; does not snap or change positions.
     pub show_alignment_guides: bool,
     /// Optional installed fallback face; never replaces a document's configured font.
@@ -507,6 +509,7 @@ impl Default for Settings {
             format_tab: FormatTab::default(),
             show_topic_toolbar: true,
             show_topic_add_buttons: true,
+            layers_panel_position: None,
             show_alignment_guides: false,
             default_cjk_font: None,
             label_auto_sort: false,
@@ -839,6 +842,13 @@ impl Settings {
         self.autosave_interval_secs = self.autosave_interval_secs.max(1);
         if !self.ui_scale.is_finite() || self.ui_scale <= 0.0 {
             self.ui_scale = 1.0;
+        }
+        if self
+            .layers_panel_position
+            .is_some_and(|position| position.iter().any(|coordinate| !coordinate.is_finite()))
+        {
+            log::warn!("Ignoring invalid Layers panel position");
+            self.layers_panel_position = None;
         }
         self.initial_canvas_zoom = if self.initial_canvas_zoom.is_finite() {
             self.initial_canvas_zoom.clamp(0.1, 5.0)

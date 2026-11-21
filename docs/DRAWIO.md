@@ -235,6 +235,17 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
+- [x] Show at least six layers in a movable Layers dialog and remember its last position
+
+**Rubber-duck critique:** Constraining the panel to the drawing canvas left too
+little room for six rows beneath the ribbon at the minimum native window size,
+so it uses the app viewport instead and scrolls if even that viewport is too
+small. Dragging the title or empty background moves the panel without stealing
+the layer controls' interactions; position is saved only after dragging,
+validated before restoration and clamped again when the window shrinks. Tests
+cover six actionable rows at multiple interface scales, drag/reopen/restart,
+scrolling and smaller-window restoration. Keyboard repositioning is not
+implemented.
 
 ### D9 — Style and text
 
@@ -247,6 +258,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Expose only applicable Text/Style/Arrange/Actions controls and explicit selected-object, selected-text or new-text scope
 - [x] Preserve multi-selection common typography and card fill with undo; retain editor focus, IME and numeric/picker draft ownership
 - [x] Complete contextual-menu rubber-duck critique, compact rendered-control acceptance and label-outline regression checks (see linked design)
+- [ ] Keep the nearby menu clear of selected-object connection, extend, resize and rotation handles, including the right-hand quick-connect action
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
@@ -354,6 +366,8 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 
 ### D15 — Visual parity and hardening
 
+- [ ] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
+- [ ] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
 - [ ] Fuzz and size budgets for the bundle decoder and catalog
 
@@ -365,6 +379,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D8 Layers panel | The panel can be dragged, restores its last validated position within the window, and shows at least six layers when space permits. |
 | 2026-11-19 | D9 card font search (partial) | Inline font choices can be filtered without losing the title selection; candidate choices are disabled during search-field IME composition. Arbitrary card color entry remains open. |
 | 2026-11-19 | D9 card inline typography (partial) | Selection and caret controls set font family, numeric size and palette color; mixed values, inherited resets and same-frame size input with color clicks or save are covered. |
 | 2026-11-19 | D9 card typing styles | Card-title inline toolbar and shortcuts now set caret typing styles; cursor changes and whole-value accessibility replacement clear them. |

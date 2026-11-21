@@ -147,6 +147,19 @@ fn settings_defaults_and_empty_toml() {
 }
 
 #[test]
+fn invalid_layers_panel_position_is_rejected_when_loading_settings() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    fs::write(
+        paths.config_dir.join("settings.toml"),
+        "layers_panel_position = [nan, 20.0]",
+    )
+    .unwrap();
+    assert_eq!(Settings::load(&paths).unwrap().layers_panel_position, None);
+}
+
+#[test]
 fn settings_store_api_key_outside_toml_and_restore_from_mock_store() {
     let dir = directory();
     let paths = paths(&dir);
@@ -391,6 +404,7 @@ fn settings_roundtrip_every_field() {
         show_format_panel: false,
         show_topic_toolbar: false,
         show_topic_add_buttons: false,
+        layers_panel_position: Some([220.0, 100.0]),
         default_cjk_font: Some("Noto Sans CJK JP".into()),
         show_alignment_guides: true,
         label_auto_sort: true,

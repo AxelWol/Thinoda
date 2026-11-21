@@ -4588,6 +4588,7 @@ const DE: &[(&str, &str)] = &[
     ("Add", "Hinzufügen"),
     ("Format", "Format"),
     ("Layers", "Ebenen"),
+    ("Drag to move", "Ziehen zum Verschieben"),
     ("Container", "Container"),
     ("Software", "Software"),
     ("Human/service handoff", "Mensch-Service-Übergabe"),

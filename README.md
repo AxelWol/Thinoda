@@ -382,6 +382,10 @@ those system-owned controls. WinGet publishing remains paused.
   titles and toolbars. If they cannot fit, use the main menu or the topic's
   context menu instead. **Board** is a first-level main-menu category. Board
   commands provide grid, snapping, grouping, locking, arrangement and a minimap.
+- Open **Layers** from the View or Board menu or the board toolbar. Drag the
+  panel's title or empty background to move it; its last position is remembered.
+  At least six layer rows fit when the window has room, with scrolling in
+  smaller windows.
 - The canvas context menu adapts to what you right-click. Topics show
   Topic/Subtopic/Parent Topic, the clipboard and Collapse/Expand first, then the
   Add, Structure, Format, Arrange, Select, Zones, AI and View submenus,

@@ -986,15 +986,18 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   attachments use Shift or Enter/Space today. The supported default connection
   points can also be cycled with Home/End. Named ports, other default point sets
   and Tab between individual ports remain planned.
-- **Layers panel**: compact side panel (View menu + board toolbar), visibility/lock,
-  rename, reorder, move selection to layer; hidden when only the default layer exists.
+- **Layers panel**: movable panel (View menu + board toolbar), visibility/lock,
+  rename, reorder and move selection to layer.
   *As implemented in D8 (layers):* `CanvasLayer.layers: Vec<BoardLayer { id, name,
   visible, locked, source_id }>` lists named layers above an implicit base layer, and
   `CanvasObject.layer: Option<BoardLayerId>` (not `parent`) references them; `objects`
   stays stably ordered by layer, scene children share their parent's layer, and hidden
-  layers are filtered in `build_scene`. The panel is a compact canvas card opened from
-  the View and Board menus and the board toolbar; with only the base layer it shows an
-  explanation and "Add layer". Changes are announced through toasts. Gates: native v45,
+  layers are filtered in `build_scene`. The panel is opened from the View and Board
+  menus and the board toolbar; with only the base layer it shows an explanation and
+  "Add layer". Dragging the title or empty panel background moves it; its validated
+  position is remembered relative to the app window and clamped to the current
+  viewport. The scroll area reserves six visible layer rows when space permits and
+  scrolls in smaller windows. Changes are announced through toasts. Gates: native v45,
   board clipboard v38, sheet clipboard v34, XMind and recovery layer envelopes.
 - **Tables**: insert rows × columns, row/column commands, merge, stripes.
   *As implemented in D8 (tables):* `SceneStructure.tables` maps a table container to a

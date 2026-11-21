@@ -2230,6 +2230,7 @@ Review hierarchy changes|Revisar cambios de jerarquía|Examiner les modification
 Add|Añadir|Ajouter|Tilføj|Toevoegen|Adicionar|Aggiungi|Dodaj
 Format|Formato|Format|Format|Opmaak|Formato|Formato|Format
 Layers|Capas|Calques|Lag|Lagen|Camadas|Livelli|Warstwy
+Drag to move|Arrastra para mover|Faites glisser pour déplacer|Træk for at flytte|Sleep om te verplaatsen|Arraste para mover|Trascina per spostare|Przeciągnij, aby przesunąć
 Protection|Protección|Protection|Beskyttelse|Beveiliging|Proteção|Protezione|Ochrona
 Draw|Dibujar|Dessiner|Tegn|Tekenen|Desenhar|Disegna|Rysuj
 Canvas settings|Configuración del lienzo|Paramètres du canevas|Lærredsindstillinger|Canvasinstellingen|Definições da tela|Impostazioni area di lavoro|Ustawienia obszaru roboczego
