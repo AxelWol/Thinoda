@@ -102,6 +102,8 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         board.align-top board.align-vertical-center board.back board.backward board.below-map board.distribute-horizontal
         board.distribute-vertical board.forward board.front board.grid.dots board.grid.lines board.grid.none
         board.group board.hide-central-topic board.image board.layers board.lock board.minimap board.rotate-clockwise
+        board.layout.circle board.layout.horizontal-flow board.layout.horizontal-tree board.layout.organic
+        board.layout.radial-tree board.layout.vertical-flow board.layout.vertical-tree
         board.rotate-counterclockwise board.show-central-topic board.snap board.tool.connector board.tool.frame
         board.tool.hand board.tool.highlighter board.tool.lasso board.tool.object-eraser board.tool.pen
         board.tool.pixel-eraser board.tool.select board.tool.shape board.tool.sticky board.tool.text

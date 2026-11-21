@@ -1314,6 +1314,19 @@ struct TopicToolbarMeasureKey {
     font_key: u64,
 }
 
+impl TopicToolbarMeasureKey {
+    /// Whether only a selected topic's own buttons changed (for example after
+    /// toggling its to-do or link). Such a change keeps the menu visible at the
+    /// previous size and relies on the same-frame size correction, instead of
+    /// an invisible sizing pass that would make the menu flicker after the action.
+    fn differs_only_in_content(&self, other: &Self) -> bool {
+        let mut aligned = other.clone();
+        aligned.todo = self.todo;
+        aligned.has_link = self.has_link;
+        self != other && *self == aligned
+    }
+}
+
 fn topic_toolbar_measure_key(
     ctx: &Context,
     available: egui::Rect,
@@ -5917,13 +5930,14 @@ impl ThinodaApp {
         if measure_key.is_none() {
             ctx.data_mut(|data| data.remove::<TopicToolbarMeasureKey>(measure_id));
         }
-        let sizing_pass = measure_key.is_some()
-            && !compact_open
-            && (previous_size.is_none()
-                || ctx
-                    .data(|data| data.get_temp::<TopicToolbarMeasureKey>(measure_id))
-                    .as_ref()
-                    != measure_key.as_ref());
+        let stored_key = ctx.data(|data| data.get_temp::<TopicToolbarMeasureKey>(measure_id));
+        let sizing_pass = measure_key.as_ref().is_some_and(|key| {
+            !compact_open
+                && (previous_size.is_none()
+                    || stored_key
+                        .as_ref()
+                        .is_none_or(|stored| stored != key && !stored.differs_only_in_content(key)))
+        });
         if board_toolbar.is_some() && previous_size.is_none() {
             ctx.request_repaint();
         }
