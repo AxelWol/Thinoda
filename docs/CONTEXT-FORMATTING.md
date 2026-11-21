@@ -1,3 +1,5 @@
+_Last updated: 2026-11-20 15:11:55 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Nearby selection menu
 
 The existing nearby mind-map node menu is the selection menu for the canvas.

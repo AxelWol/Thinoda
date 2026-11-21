@@ -1,4 +1,4 @@
-_Last updated: 2026-10-20 10:07:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-20 11:47:26 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Accessibility
 

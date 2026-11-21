@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 09:56:52 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-20 11:47:26 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Freeform boards: research, concept and plan
 
