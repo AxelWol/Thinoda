@@ -378,6 +378,23 @@ other D13 format gaps or establish draw.io visual parity.
 - [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
 - [ ] Fuzz and size budgets for the bundle decoder and catalog
+  - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
+  - [x] Bound aggregate indexed alias bytes before allocating catalog keys
+  - [x] Add a production-path catalog and decoder fuzz target with a real bundled seed, corruption tests and CI campaigns
+  - [ ] Complete and retain a sanitized 30-minute acceptance campaign for the committed candidate
+
+**Bundle-fuzz rubber-duck critique:** Fuzzing a second parser would not protect
+the shipped bundle, so the feature-gated harness uses the production catalog
+index and bounded decoder. It mutates catalog ranges and compressed bytes; the
+real package seed and deterministic malformed-input tests ensure decoding is
+actually reached. Range overflow, out-of-bounds data and invalid UTF-8 now log
+errors rather than silently returning. The release-size and inflation budgets
+are executable tests, not a visual-fidelity claim. A small catalog can repeat a
+long namespace across thousands of aliases; a preflight now rejects more than
+4 MiB of aggregate alias-key bytes before constructing the index. Duplicate
+keys count conservatively, and this bound does not claim to limit all allocator
+overhead. The shipped keys total about 79 KiB. A smoke run or a configured CI
+job is not the 30-minute sanitized acceptance campaign, which remains open.
 
 **Document-tab rubber-duck critique:** Putting New Tab inside the scrolling
 content made it unreachable until the last file was revealed, while the
@@ -424,6 +441,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D15 bundle fuzzing (partial) | Added a production-path catalog/decoder target, real bundled seed, corruption tests, release-size and inflation budgets, and CI smoke and acceptance jobs. The sanitized acceptance campaign remains open. |
 | 2026-11-21 | D13 JPEG audit | Corrected the gap analysis: JPEG visual export already exists; transparency, editability and remaining format gaps are explicit. |
 | 2026-11-21 | D15 Outliner ribbon | Native Outliner replaces the main ribbon with contextual actions, a larger selected-topic heading and shared collapse/Quick Access behavior; the nearby actions popup no longer covers the mode switch in the tested high-scale layout. |
 | 2026-11-21 | D15 document tabs | New Tab stays visible during overflow; measured file names use the available header space without overlapping actions, including after resize and zoom. |

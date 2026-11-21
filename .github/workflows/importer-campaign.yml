@@ -5,6 +5,11 @@ on:
     paths:
       - "fuzz/**"
       - ".github/workflows/importer-campaign.yml"
+      - "crates/thinoda-io/src/drawio_bundle.rs"
+      - "crates/thinoda-io/src/drawio_bundle/**"
+      - "crates/thinoda-io/stencils/drawio/catalog.json"
+      - "crates/thinoda-io/stencils/drawio/packages.bin"
+      - "crates/thinoda-core/src/stencil.rs"
   workflow_dispatch:
 
 permissions:
@@ -22,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [xmind, freemind, opml, drawio_import]
+        target: [xmind, freemind, opml, drawio_import, drawio_bundle]
     env:
       CARGO_BUILD_JOBS: 2
     steps:
