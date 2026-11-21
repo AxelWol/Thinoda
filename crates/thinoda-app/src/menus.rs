@@ -62,6 +62,7 @@ impl ThinodaApp {
                     },
                 ),
             )
+            .chain(Self::layout_commands())
             .collect()
     }
 

@@ -9931,3 +9931,186 @@ fn quick_picker_keeps_its_arrow_clickable_and_draggable() {
     assert!(!tile_open(&h));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
+
+fn link(
+    sheet: &mut Sheet,
+    from: CanvasObjectId,
+    to: CanvasObjectId,
+    bends: &[Vec2],
+) -> CanvasObjectId {
+    let mut connector = CanvasConnector::new(Endpoint::Object(from), Endpoint::Object(to));
+    connector.waypoints = bends.to_vec().into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap()
+}
+
+fn center_of(h: &Harness<'_, State>, id: CanvasObjectId) -> Vec2 {
+    h.state()
+        .doc
+        .sheet()
+        .canvas
+        .object(id)
+        .unwrap()
+        .rect
+        .center()
+}
+
+fn bends(h: &Harness<'_, State>, id: CanvasObjectId) -> usize {
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!("not a connector");
+    };
+    connector.waypoints.len()
+}
+
+fn lay_out(h: &mut Harness<'_, State>, kind: thinoda_core::graph_layout::GraphLayout) -> bool {
+    let state = h.state_mut();
+    let available = BoardAction::Layout(kind).available(&state.doc, &state.view);
+    let applied =
+        apply_board_action(&mut state.doc, &mut state.view, BoardAction::Layout(kind)).unwrap();
+    assert_eq!(available, applied, "{kind:?}");
+    applied
+}
+
+#[test]
+fn automatic_layout_follows_connectors_resets_bends_and_undoes_once() {
+    use thinoda_core::graph_layout::GraphLayout;
+    let mut sheet = board();
+    let root = shape(&mut sheet, 300.0, 300.0, "Root");
+    let left = shape(&mut sheet, -400.0, 50.0, "Left");
+    let right = shape(&mut sheet, 500.0, -200.0, "Right");
+    let leaf = shape(&mut sheet, 0.0, 0.0, "Leaf");
+    let pinned = shape(&mut sheet, 900.0, 900.0, "Pinned");
+    let selected_edge = link(&mut sheet, root, left, &[]);
+    let bent = link(&mut sheet, root, right, &[Vec2::new(700.0, 700.0)]);
+    link(&mut sheet, left, leaf, &[]);
+    let locked_edge = link(&mut sheet, right, leaf, &[Vec2::new(-900.0, -900.0)]);
+    sheet
+        .set_canvas_objects_locked(&[pinned, locked_edge], true)
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![leaf, right, selected_edge, root, left, pinned];
+    let before = h.state().doc.workbook().clone();
+    let pinned_center = center_of(&h, pinned);
+
+    assert!(lay_out(&mut h, GraphLayout::TreeDown));
+    let [root_c, left_c, right_c, leaf_c] = [root, left, right, leaf].map(|id| center_of(&h, id));
+    assert!(left_c.y > root_c.y && right_c.y > root_c.y && leaf_c.y > left_c.y);
+    assert!((root_c.x - (left_c.x + right_c.x) / 2.0).abs() < 0.5);
+    assert_eq!(
+        center_of(&h, pinned),
+        pinned_center,
+        "locked items are skipped like Align"
+    );
+    assert_eq!(bends(&h, bent), 0, "bends between moved items are reset");
+    assert_eq!(
+        bends(&h, locked_edge),
+        1,
+        "locked connectors keep their bends"
+    );
+    assert_eq!(h.state().doc.undo_label(), Some("Lay out board items"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    for kind in GraphLayout::ALL {
+        assert!(lay_out(&mut h, kind), "{kind:?}");
+        let rects: Vec<_> = [root, left, right, leaf]
+            .map(|id| h.state().doc.sheet().canvas.object(id).unwrap().rect)
+            .into();
+        for (a, first) in rects.iter().enumerate() {
+            for second in &rects[a + 1..] {
+                assert!(!first.intersects(second), "{kind:?}");
+            }
+        }
+        assert!(h.state_mut().doc.undo());
+    }
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn automatic_layout_moves_groups_and_containers_rigidly() {
+    use thinoda_core::graph_layout::GraphLayout;
+    let mut sheet = board();
+    let first = shape(&mut sheet, -300.0, 0.0, "First");
+    let second = shape(&mut sheet, -100.0, 40.0, "Second");
+    let single = shape(&mut sheet, 400.0, 400.0, "Single");
+    sheet
+        .group_board_members(&[BoardMember::Object(first), BoardMember::Object(second)])
+        .unwrap();
+    link(&mut sheet, single, second, &[]);
+    let mut h = harness(sheet);
+    // Selecting one member and a lone connector still yields two units.
+    h.state_mut().view.board_selection = vec![first, single];
+    let offset = center_of(&h, second) - center_of(&h, first);
+    assert!(lay_out(&mut h, GraphLayout::FlowRight));
+    assert_eq!(center_of(&h, second) - center_of(&h, first), offset);
+    assert!(center_of(&h, single).x < center_of(&h, first).x.min(center_of(&h, second).x));
+
+    let (sheet, [pool, _, _, child, _, outside, _]) = containment_board();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![child, pool];
+    assert!(
+        !BoardAction::Layout(GraphLayout::Circle).available(&h.state().doc, &h.state().view),
+        "a container and its own child are one item"
+    );
+    h.state_mut().view.board_selection = vec![child, pool, outside];
+    let inside = center_of(&h, child) - center_of(&h, pool);
+    assert!(lay_out(&mut h, GraphLayout::Circle));
+    assert_eq!(center_of(&h, child) - center_of(&h, pool), inside);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn automatic_layout_needs_two_items_besides_connectors() {
+    use thinoda_core::graph_layout::GraphLayout;
+    let mut sheet = board();
+    let only = shape(&mut sheet, 0.0, 0.0, "Only");
+    let other = shape(&mut sheet, 300.0, 0.0, "Other");
+    let edge = link(&mut sheet, only, other, &[]);
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![only, edge];
+    assert!(!lay_out(&mut h, GraphLayout::Organic));
+    assert!(!h.state().doc.can_undo());
+}
+
+#[test]
+fn automatic_layout_keeps_floating_branches_apart_with_their_subtopics() {
+    use thinoda_core::graph_layout::GraphLayout;
+    let mut sheet = Sheet::new("Map", "Root");
+    let first = sheet.add_floating("First", Vec2::new(600.0, 0.0));
+    for index in 0..3 {
+        sheet.add_child(first, None, format!("Child {index}"));
+    }
+    let second = sheet.add_floating("Second", Vec2::new(640.0, 30.0));
+    sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(first),
+            Endpoint::Topic(second),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![first, second];
+    assert!(lay_out(&mut h, GraphLayout::TreeRight));
+    let state = h.state_mut();
+    let layout = state.view.layout_for(&state.doc);
+    let scene = thinoda_core::build_scene(state.doc.sheet(), &layout);
+    let branch = |root: TopicId| {
+        state
+            .doc
+            .sheet()
+            .subtree_ids(root)
+            .into_iter()
+            .filter_map(|id| scene.item(SceneId::Topic(id)).map(|item| item.bounds))
+            .reduce(|a, b| a.union(&b))
+            .unwrap()
+    };
+    let (first_branch, second_branch) = (branch(first), branch(second));
+    assert!(!first_branch.intersects(&second_branch));
+    assert!(
+        second_branch.min.x >= first_branch.max().x,
+        "the edge points right"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}

@@ -2,8 +2,8 @@ _Last updated: 2026-11-19 16:28:42 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
-Status: 🟡 in progress. D0–D3 and D6–D8 are complete; D4 and D5 have
-deferred work, and D9 is partially complete. D10–D15 remain open. Binding
+Status: 🟡 in progress. D0–D3, D6–D8 and D11 are complete; D4 and D5 have
+deferred work, and D9 is partially complete. D10 and D12–D15 remain open. Binding
 contracts that shipped code already follows (user decisions,
 ownership/passthrough, JSON stencil DSL, model, UX, security, guardrails,
 licensing) are in
@@ -97,7 +97,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
-| Layout | ELK flow/tree/radial/organic, circle, org chart | Missing for boards (mind-map layout is native) | D11 |
+| Layout | ELK flow/tree/radial/organic, circle, org chart | Native selection layouts: tree, layered flow, radial, circle and organic (org chart = vertical tree); no edge routing or ELK options | D11 |
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
 | Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Missing | D12 |
@@ -346,9 +346,35 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
-### D11 — Automatic layouts
+### D11 — Automatic layouts ✅
 
-- [ ] Tree, flow, radial, circle and organic layouts for selected board objects
+- [x] Tree, flow, radial, circle and organic layouts for selected board objects
+  - [x] Pure, deterministic, bounded core algorithms (≤ 500 items, ≤ 5,000 connections) with a guaranteed non-overlap pass and a fixed top-left anchor
+  - [x] One undoable board command per layout in the Board menu, context-menu Layout submenu and command palette, translated in all locales
+  - [x] Groups, selected containers with their descendants and floating mind-map branches move rigidly; locked items are skipped as Align does
+  - [x] Bends of unlocked connectors between items that moved apart are reset; locked connectors keep theirs
+
+**D11 rubber-duck critique.** A pre-implementation review found five
+blocking traps, all addressed: a container and its selected child were
+separate units and would have moved the child twice (a shared resolver now
+merges descendants into their container, and endpoints map through the
+hierarchy); floating topics were measured without their branch (the unit now
+uses the visible subtree footprint); clearing all bends could edit locked or
+internal connectors (only unlocked, ungrouped connectors whose ends receive
+different translations are reset); the algorithm returned no errors and had
+no complete bound (input is validated, every pass is bounded and failure is
+an error, not a partial edit); and size-unaware radial and organic placement
+could overlap (ring radii use node diagonals, coincident nodes get a
+deterministic direction, and a final uniform scaling about the centroid
+provably removes any remaining overlap). Availability and execution use the
+same resolver, so a container selected with its own child is one item and the
+command is disabled. Tree and flow follow connector direction (`from → to`),
+not arrowheads; cycles are broken only for placement. Duck check: layouts
+place items, not edges, so routes and fixed ports are unchanged and long
+flow edges are not given virtual bends; exactly coincident items fall back
+to selection order; each moved item is applied with one sheet move, so very
+large selections may be slow even within the 500-item bound. draw.io's ELK
+options, org-chart variants and edge routing are out of scope.
 
 ### D12 — Insert tools and editors
 
@@ -358,6 +384,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [ ] Find/replace and tags on boards, ruler, units and page view
   - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
   - [ ] Tag browser/filter, ruler, units and page view
+- [ ] Stencil editor for JSON definitions; draw.io stencil XML is converted on import, not edited
 
 **D12 search-and-replace rubber-duck critique:** Requiring every hit to be
 unlocked made a locked object found only by a tag block replacement elsewhere,
@@ -369,7 +396,6 @@ remain search-only because replacing them could merge or empty names. Tests
 cover atomic rollback on oversized property values and locked targets, and
 the disclosure in short windows. A tag browser, ruler, units and page view are
 still missing, so the D12 item stays open.
-- [ ] Stencil editor for JSON definitions; draw.io stencil XML is converted on import, not edited
 
 ### D13 — Other formats
 
@@ -455,6 +481,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |
 | 2026-11-21 | D9 toolbar input ordering (partial) | Text or IME input that follows F6, Enter or Space toolbar activation in the same frame is no longer lost or applied before the formatting; a submitted toolbar size field routes later text back to the label, and composition keeps the field focused. Real-platform input and pointer batches remain open. |
 | 2026-11-21 | D12 board replace (partial) | Locked tag-only hits no longer block replacement elsewhere; the dialog discloses replaced and search-only fields in every shipped locale. |
 | 2026-11-21 | D15 bundle fuzzing (partial) | Added a production-path catalog/decoder target, real bundled seed, corruption tests, release-size and inflation budgets, and CI smoke and acceptance jobs. The sanitized acceptance campaign remains open. |

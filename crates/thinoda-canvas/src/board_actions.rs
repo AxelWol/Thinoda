@@ -2,12 +2,15 @@
 
 use super::{Action, BoardAction, FloatingArrangement};
 use crate::view::{MapView, ObjectSelection};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use thinoda_core::{
-    CanvasObjectId, Document, EditError, EditResult, Rect, SceneId, Sheet, TopicId, Vec2,
+    CanvasObjectId, CanvasObjectKind, Document, EditError, EditResult, Endpoint, Rect, SceneId,
+    Sheet, TopicId, Vec2,
     board::{BoardMember, MIN_CARD_SIZE},
     clipboard::{self, BoardClipboardPayload},
+    graph_layout::{DEFAULT_LAYOUT_SPACING, GraphLayout, layout_graph},
     scene::build_scene,
+    scene_hierarchy::SceneHierarchy,
 };
 
 const PASTE_OFFSET: Vec2 = Vec2::new(40.0, 40.0);
@@ -401,6 +404,7 @@ pub(super) fn available(doc: &Document, view: &MapView, action: BoardAction) -> 
             };
             topics().len() + grouping_units(sheet, &members()) >= minimum
         }
+        BoardAction::Layout(_) => layout_units(sheet, view).len() >= 2,
         BoardAction::ZOrder(_) | BoardAction::SetBand(_) => !objects().is_empty(),
         BoardAction::Group => {
             let selected = selected_board_members(sheet, view);
@@ -753,6 +757,233 @@ fn arrange(
     Ok(true)
 }
 
+/// Items that an automatic layout moves rigidly.
+///
+/// Floating mind-map topics carry their branch; groups move as one; a selected
+/// scene container absorbs any selected descendant, so nothing moves twice.
+/// Lone connectors are edges rather than items, and immovable items are
+/// skipped as Align does.
+#[derive(Default)]
+struct LayoutUnit {
+    topics: Vec<TopicId>,
+    members: Vec<BoardMember>,
+}
+
+fn layout_units(sheet: &Sheet, view: &MapView) -> Vec<LayoutUnit> {
+    let mut units: Vec<LayoutUnit> = floating_topics(sheet, view)
+        .into_iter()
+        .map(|id| LayoutUnit {
+            topics: vec![id],
+            members: Vec::new(),
+        })
+        .collect();
+    let is_connector = |member: &BoardMember| {
+        matches!(member, BoardMember::Object(id)
+            if sheet.canvas.object(*id).is_some_and(|object| object.is_connector()))
+    };
+    let mut seen = HashSet::new();
+    for member in movable_board_members(sheet, view) {
+        if !seen.insert(member) {
+            continue;
+        }
+        let members = sheet
+            .board_member_group(member)
+            .map(|group| sheet.board_group_members(group))
+            .unwrap_or_else(|| vec![member]);
+        seen.extend(members.iter().copied());
+        if members.iter().all(is_connector) {
+            continue;
+        }
+        units.push(LayoutUnit {
+            topics: Vec::new(),
+            members,
+        });
+    }
+    if sheet.canvas.scene.is_empty() || units.len() < 2 {
+        return units;
+    }
+    let Ok(hierarchy) = SceneHierarchy::from_canvas(&sheet.canvas) else {
+        return units;
+    };
+    let mut owner = HashMap::new();
+    for (index, unit) in units.iter().enumerate() {
+        for member in &unit.members {
+            if let BoardMember::Object(id) = member {
+                owner.insert(*id, index);
+            }
+        }
+    }
+    let mut parent: Vec<usize> = (0..units.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+    for (&id, &index) in &owner {
+        let mut current = id;
+        while let Ok(Some(ancestor)) = hierarchy.parent(current) {
+            if let Some(&container) = owner.get(&ancestor) {
+                let (a, b) = (find(&mut parent, index), find(&mut parent, container));
+                if a != b {
+                    parent[a] = b;
+                }
+                break;
+            }
+            current = ancestor;
+        }
+    }
+    let mut merged: Vec<LayoutUnit> = Vec::new();
+    let mut slot = HashMap::new();
+    for (index, unit) in units.iter_mut().enumerate() {
+        let root = find(&mut parent, index);
+        let target = *slot.entry(root).or_insert_with(|| {
+            merged.push(LayoutUnit::default());
+            merged.len() - 1
+        });
+        let unit = std::mem::take(unit);
+        merged[target].topics.extend(unit.topics);
+        merged[target].members.extend(unit.members);
+    }
+    merged
+}
+
+fn layout(doc: &mut Document, view: &mut MapView, kind: GraphLayout) -> EditResult<bool> {
+    let units = layout_units(doc.sheet(), view);
+    if units.len() < 2 {
+        return Ok(false);
+    }
+    let layout = view.layout_for(doc);
+    let sheet = doc.sheet();
+    let scene = build_scene(sheet, &layout);
+    let hierarchy = (!sheet.canvas.scene.is_empty())
+        .then(|| SceneHierarchy::from_canvas(&sheet.canvas).ok())
+        .flatten();
+    let mut topic_owner = HashMap::new();
+    let mut object_owner = HashMap::new();
+    let mut nodes = Vec::with_capacity(units.len());
+    for (index, unit) in units.iter().enumerate() {
+        let mut items = Vec::new();
+        for &root in &unit.topics {
+            for id in sheet.subtree_ids(root) {
+                if sheet.is_visible(id) {
+                    topic_owner.insert(id, index);
+                    items.push(SceneId::Topic(id));
+                }
+            }
+        }
+        for member in &unit.members {
+            match *member {
+                BoardMember::Card(id) => {
+                    topic_owner.insert(id, index);
+                    items.push(SceneId::Topic(id));
+                }
+                BoardMember::Object(id) => {
+                    object_owner.insert(id, index);
+                    items.push(SceneId::Object(id));
+                }
+            }
+        }
+        let bounds = items
+            .into_iter()
+            .filter_map(|id| scene.item(id).map(|item| item.bounds))
+            .reduce(|a, b| a.union(&b));
+        let Some(bounds) = bounds else {
+            return Ok(false);
+        };
+        nodes.push(bounds);
+    }
+    // Objects inside a selected container belong to the container's unit.
+    let owner_of = |id: CanvasObjectId| {
+        let mut current = id;
+        loop {
+            if let Some(&unit) = object_owner.get(&current) {
+                return Some(unit);
+            }
+            current = hierarchy.as_ref()?.parent(current).ok()??;
+        }
+    };
+    let endpoint_owner =
+        |end: Endpoint| match end {
+            Endpoint::Object(id) => owner_of(id),
+            Endpoint::Topic(id) => topic_owner.get(&id).copied().or_else(|| {
+                match sheet.board_member_for_topic(id)? {
+                    BoardMember::Object(object) => owner_of(object),
+                    BoardMember::Card(_) => None,
+                }
+            }),
+            Endpoint::Point(_) => None,
+        };
+    let mut edges = Vec::new();
+    let mut crossing = Vec::new();
+    for object in &sheet.canvas.objects {
+        let CanvasObjectKind::Connector(connector) = &object.kind else {
+            continue;
+        };
+        let (Some(from), Some(to)) = (endpoint_owner(connector.from), endpoint_owner(connector.to))
+        else {
+            continue;
+        };
+        if from == to {
+            continue;
+        }
+        edges.push((from, to));
+        let locked = !member_is_movable(sheet, BoardMember::Object(object.id))
+            || hierarchy.as_ref().is_some_and(|h| h.is_locked(object.id));
+        if owner_of(object.id).is_none() && !connector.waypoints.is_empty() && !locked {
+            crossing.push((object.id, from, to));
+        }
+    }
+    let centers =
+        layout_graph(kind, &nodes, &edges, DEFAULT_LAYOUT_SPACING).map_err(EditError::Invalid)?;
+    let deltas: Vec<Vec2> = nodes
+        .iter()
+        .zip(&centers)
+        .map(|(rect, center)| *center - rect.center())
+        .collect();
+    if deltas.iter().all(|delta| *delta == Vec2::ZERO) {
+        return Ok(false);
+    }
+    // Explicit bends of a connector between items that moved apart would no
+    // longer fit; draw.io's layouts reset them too. Locked connectors keep them.
+    let reset: Vec<_> = crossing
+        .into_iter()
+        .filter(|&(_, from, to)| deltas[from] != deltas[to])
+        .map(|(id, _, _)| id)
+        .collect();
+    doc.edit_sheet("Lay out board items", |sheet| {
+        for (unit, delta) in units.iter().zip(&deltas) {
+            if *delta == Vec2::ZERO {
+                continue;
+            }
+            for &id in &unit.topics {
+                let position = sheet
+                    .topic(id)
+                    .and_then(|topic| topic.position)
+                    .ok_or(EditError::NoSuchTopic(id))?;
+                sheet.set_position(id, position + *delta)?;
+            }
+            if !unit.members.is_empty() {
+                sheet
+                    .move_board_members(&unit.members, *delta)
+                    .map_err(EditError::Invalid)?;
+            }
+        }
+        for id in reset {
+            sheet
+                .update_canvas_object(id, |object| {
+                    if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                        connector.waypoints = Vec::new().into();
+                    }
+                })
+                .map_err(EditError::Invalid)?;
+        }
+        Ok(())
+    })?;
+    Ok(true)
+}
+
 fn paste_board(
     doc: &mut Document,
     view: &mut MapView,
@@ -1002,6 +1233,7 @@ pub(super) fn apply(
         BoardAction::Resize(delta) => resize_selection(doc, view, delta),
         BoardAction::Rotate(delta) => rotate_selection(doc, view, delta),
         BoardAction::Arrange(arrangement) => arrange(doc, view, arrangement),
+        BoardAction::Layout(kind) => layout(doc, view, kind),
         BoardAction::ZOrder(order) => {
             let ids = movable_objects(doc.sheet(), view);
             if ids.is_empty() {

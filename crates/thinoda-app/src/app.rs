@@ -2451,6 +2451,23 @@ impl ThinodaApp {
         ]
     }
 
+    /// Automatic layouts for the selected board items, in menu order.
+    pub fn layout_commands() -> Vec<(Cmd, &'static str)> {
+        use thinoda_core::graph_layout::GraphLayout as L;
+        [
+            (L::TreeDown, "Vertical Tree"),
+            (L::TreeRight, "Horizontal Tree"),
+            (L::FlowDown, "Vertical Flow"),
+            (L::FlowRight, "Horizontal Flow"),
+            (L::Radial, "Radial Tree"),
+            (L::Circle, "Circle Layout"),
+            (L::Organic, "Organic Layout"),
+        ]
+        .into_iter()
+        .map(|(kind, label)| (Cmd::BoardAction(BoardAction::Layout(kind)), label))
+        .collect()
+    }
+
     pub fn board_commands() -> Vec<(Cmd, &'static str)> {
         use thinoda_core::{Band, ShapeKind, ZOrder};
         vec![
@@ -4424,6 +4441,11 @@ impl ThinodaApp {
                         None
                     }
                 }),
+        );
+        v.extend(
+            Self::layout_commands()
+                .into_iter()
+                .map(|(command, label)| (command, label, "", "Boards")),
         );
         for (action, label) in Self::selection_commands()
             .into_iter()

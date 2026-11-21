@@ -253,6 +253,7 @@ with the reason.
 | Group / ungroup | Adapt | Canvas objects and floating cards |
 | Lock / unlock | Adapt | Locked objects ignore drag and delete |
 | Align and distribute | Adapt | Selection-wide |
+| Automatic layouts (tree, flow, radial, circle, organic) | Adapt | Selection-wide; connectors between selected items define the graph (see DRAWIO.md D11) |
 | Duplicate (Alt-drag, Alt-arrow) | Fits | Copy/paste with ID remapping |
 | Copy and paste style | Fits | Implemented for topics/cards and, within the same object kind, shapes, connectors and ink; locked selections remain protected |
 | Find and replace across text | Fits | Implemented for topic titles, shape/connector labels and canvas descriptions; notes and labels are search-only |

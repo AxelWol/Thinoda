@@ -87,6 +87,8 @@ pub enum BoardAction {
     Rotate(f32),
     /// Align or distribute selected floating topics/cards and canvas objects.
     Arrange(FloatingArrangement),
+    /// Automatically lay out the selected items along the connectors between them.
+    Layout(thinoda_core::graph_layout::GraphLayout),
     /// Reorder selected canvas objects within their current paint bands.
     ZOrder(ZOrder),
     /// Move selected canvas objects behind or in front of the map band.

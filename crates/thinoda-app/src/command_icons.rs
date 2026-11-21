@@ -3,6 +3,7 @@ use crate::{
     app::{Cmd, FocusField},
 };
 use thinoda_canvas::{Action, BoardTool, FloatingArrangement};
+use thinoda_core::graph_layout::GraphLayout;
 use thinoda_ui::{
     icons as I,
     ribbon::{CommandIcon, IconTone as T},
@@ -100,6 +101,21 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
                     FloatingArrangement::DistributeVertical => I::DISTRIBUTE_VERTICAL,
                 },
                 None,
+                T::Edit,
+            ),
+            thinoda_canvas::BoardAction::Layout(kind) => (
+                match kind {
+                    GraphLayout::TreeDown | GraphLayout::TreeRight => I::MAP,
+                    GraphLayout::FlowDown | GraphLayout::FlowRight => I::BRANCH,
+                    GraphLayout::Radial => I::ROOT,
+                    GraphLayout::Circle => I::RESET,
+                    GraphLayout::Organic => I::SHARE,
+                },
+                match kind {
+                    GraphLayout::TreeDown | GraphLayout::FlowDown => Some(I::ARROW_DOWN),
+                    GraphLayout::TreeRight | GraphLayout::FlowRight => Some(I::ARROW_RIGHT),
+                    _ => None,
+                },
                 T::Edit,
             ),
         },
