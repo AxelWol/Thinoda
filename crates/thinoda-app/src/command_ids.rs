@@ -263,6 +263,7 @@ impl Cmd {
             },
             Self::NewFromTemplate(_)
             | Self::OpenPath(_)
+            | Self::SelectTag(_)
             | Self::ApplyQuickStyle(_)
             | Self::ApplyCustomTheme(_) => return None,
         })

@@ -38,6 +38,30 @@ fn items(commands: impl IntoIterator<Item = (&'static str, Cmd)>) -> Vec<MenuEnt
 }
 
 impl ThinodaApp {
+    /// "Select by Tag" lists the tags of visible board objects on this sheet.
+    pub(crate) fn select_by_tag_menu(&self) -> Option<MenuEntry> {
+        const MAX_LISTED_TAGS: usize = 40;
+        let tags = self.doc()?.doc.sheet().canvas.selectable_tags();
+        if tags.is_empty() {
+            return None;
+        }
+        let more = tags.len() > MAX_LISTED_TAGS;
+        let mut entries: Vec<_> = tags
+            .into_iter()
+            .take(MAX_LISTED_TAGS)
+            .map(|tag| MenuEntry::Command {
+                label: tag.clone(),
+                command: Cmd::SelectTag(tag),
+            })
+            .collect();
+        if more {
+            entries.push(MenuEntry::Caption(
+                t("More tags exist; use Find to locate them.").into(),
+            ));
+        }
+        Some(submenu("Select by Tag", entries))
+    }
+
     pub(crate) fn zone_menu_commands() -> Vec<(Cmd, &'static str)> {
         vec![
             (Cmd::CreateZone, "Create Zone"),
@@ -190,6 +214,7 @@ impl ThinodaApp {
             Self::selection_commands()
                 .into_iter()
                 .map(|(action, label)| item(label, Cmd::Canvas(action)))
+                .chain(self.select_by_tag_menu())
                 .collect(),
         ));
         let mut arrange: Vec<_> = Self::arrangement_commands()
@@ -318,6 +343,49 @@ mod tests {
     use egui::{Role, vec2};
     use egui_kittest::{Harness, kittest::Queryable};
     use thinoda_core::Workbook;
+
+    #[test]
+    fn select_by_tag_lists_visible_tags_and_selects_exact_matches() {
+        use thinoda_core::{
+            CanvasObject, Rect, ShapeKind, Vec2, object_data::ObjectData, templates,
+        };
+        let mut app = ThinodaApp::headless();
+        app.new_doc(templates::instantiate("blank-canvas"));
+        let doc = app.doc_mut().unwrap();
+        let mut ids = Vec::new();
+        for (x, tags) in [
+            (0.0, vec!["web"]),
+            (100.0, vec!["webapp"]),
+            (200.0, vec!["web"]),
+        ] {
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(x, 0.0), Vec2::new(40.0, 40.0)),
+            );
+            object.data = Some(std::sync::Arc::new(ObjectData {
+                tags: tags.into_iter().map(Into::into).collect(),
+                ..Default::default()
+            }));
+            ids.push(doc.doc.add_canvas_object(object).unwrap());
+        }
+        let Some(MenuEntry::Submenu { entries, .. }) = app.select_by_tag_menu() else {
+            panic!("tag submenu");
+        };
+        let labels: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Command { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["web", "webapp"]);
+        let ctx = egui::Context::default();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&ctx, Cmd::SelectTag("web".into()));
+        assert_eq!(app.doc().unwrap().view.board_selection, [ids[0], ids[2]]);
+        assert!(!app.command_available(&Cmd::SelectTag("missing".into())));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
 
     #[test]
     fn main_board_menu_keeps_its_tool_commands() {

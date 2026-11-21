@@ -1439,6 +1439,8 @@ Align Bottom|Alinear abajo|Aligner en bas|Justér nederst|Onderaan uitlijnen|Ali
 Distribute Horizontal Centers|Distribuir centros horizontalmente|Répartir les centres horizontalement|Fordel centre vandret|Middelpunten horizontaal verdelen|Distribuir centros horizontalmente|Distribuisci centri orizzontalmente|Rozłóż środki w poziomie
 Distribute Vertical Centers|Distribuir centros verticalmente|Répartir les centres verticalement|Fordel centre lodret|Middelpunten verticaal verdelen|Distribuir centros verticalmente|Distribuisci centri verticalmente|Rozłóż środki w pionie
 Layout|Disposición|Disposition|Layout|Indeling|Disposição|Disposizione|Układ
+Select by Tag|Seleccionar por etiqueta|Sélectionner par étiquette|Vælg efter tag|Selecteren op tag|Selecionar por etiqueta|Seleziona per tag|Zaznacz według tagu
+More tags exist; use Find to locate them.|Hay más etiquetas; use Buscar para encontrarlas.|D’autres étiquettes existent ; utilisez Rechercher pour les trouver.|Der findes flere tags; brug Søg for at finde dem.|Er zijn meer tags; gebruik Zoeken om ze te vinden.|Existem mais etiquetas; use Procurar para as encontrar.|Esistono altri tag; usa Trova per individuarli.|Istnieje więcej tagów; użyj wyszukiwania, aby je znaleźć.
 Vertical Tree|Árbol vertical|Arbre vertical|Lodret træ|Verticale boom|Árvore vertical|Albero verticale|Drzewo pionowe
 Horizontal Tree|Árbol horizontal|Arbre horizontal|Vandret træ|Horizontale boom|Árvore horizontal|Albero orizzontale|Drzewo poziome
 Vertical Flow|Flujo vertical|Flux vertical|Lodret flow|Verticale stroom|Fluxo vertical|Flusso verticale|Przepływ pionowy

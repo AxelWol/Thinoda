@@ -398,7 +398,8 @@ position fields; stack-managed children and table cells can reject a value,
 which is then reported and kept as a correctable draft rather than hidden.
 - [ ] Find/replace and tags on boards, ruler, units and page view
   - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
-  - [ ] Tag browser/filter, ruler, units and page view
+  - [x] Select board objects by exact tag from Edit › Select › Select by Tag, limited to visible objects
+  - [ ] Ruler, units and page view
 - [ ] Stencil editor for JSON definitions; draw.io stencil XML is converted on import, not edited
 
 **D12 search-and-replace rubber-duck critique:** Requiring every hit to be
@@ -409,8 +410,19 @@ failures still leave the sheet untouched. The dialog discloses the replaced
 fields instead of claiming only titles and labels; notes, topic labels and tags
 remain search-only because replacing them could merge or empty names. Tests
 cover atomic rollback on oversized property values and locked targets, and
-the disclosure in short windows. A tag browser, ruler, units and page view are
-still missing, so the D12 item stays open.
+the disclosure in short windows. Ruler, units and page view are still
+missing, so the D12 item stays open.
+
+**D12 tag selection rubber-duck critique.** Find matches tags as substrings, so
+`web` also finds `webapp`; Select by Tag selects exact tags only. It lists
+and selects only objects the user can see: hidden layers and collapsed
+container contents are excluded, so a selection never targets invisible
+objects. Selection is not an edit (no undo entry), and pending label drafts
+are committed first. Only the first 40 tags are listed, with a hint to use
+Find for the rest. Duck check: draw.io's Tags panel also hides objects by tag;
+Thinoda leaves visibility to layers rather than adding a second, persistent
+hidden state. The context menu keeps its static entries, so the command is in
+the main Edit menu.
 
 ### D13 — Other formats
 
@@ -504,6 +516,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
 | 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |
 | 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |
 | 2026-11-21 | D9 toolbar input ordering (partial) | Text or IME input that follows F6, Enter or Space toolbar activation in the same frame is no longer lost or applied before the formatting; a submitted toolbar size field routes later text back to the label, and composition keeps the field focused. Real-platform input and pointer batches remain open. |

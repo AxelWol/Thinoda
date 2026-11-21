@@ -36,6 +36,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::New => (I::NEW_FILE, None, T::File),
         Cmd::NewFromTemplate(_) => (I::TEMPLATE, None, T::File),
         Cmd::Open | Cmd::OpenPath(_) => (I::OPEN, None, T::File),
+        Cmd::SelectTag(_) => (I::LABEL, None, T::Edit),
         Cmd::ShowInFolder => (I::SHOW_IN_FOLDER, None, T::File),
         Cmd::Save => (I::SAVE, None, T::File),
         Cmd::SaveAs => (I::SAVE_AS, None, T::File),

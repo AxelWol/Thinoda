@@ -429,9 +429,118 @@ pub fn with_resolved_placeholders<'a>(
     resolved.map_or(Cow::Borrowed(object), Cow::Owned)
 }
 
+/// Tag selection over objects a user can currently see and select.
+impl CanvasLayer {
+    fn tag_selectable(&self) -> impl Fn(&CanvasObject) -> bool + '_ {
+        let hierarchy = (!self.scene.is_empty())
+            .then(|| crate::scene_hierarchy::SceneHierarchy::from_canvas(self).ok())
+            .flatten();
+        move |object| {
+            if !self.is_layer_visible(object.layer) {
+                return false;
+            }
+            let Some(hierarchy) = &hierarchy else {
+                return true;
+            };
+            let mut current = object.id;
+            while let Ok(Some(parent)) = hierarchy.parent(current) {
+                if self.scene.collapsed.contains_key(&parent) {
+                    return false;
+                }
+                current = parent;
+            }
+            true
+        }
+    }
+
+    /// Distinct tags of selectable objects, sorted case-insensitively.
+    pub fn selectable_tags(&self) -> Vec<String> {
+        let selectable = self.tag_selectable();
+        let mut tags: Vec<String> = self
+            .objects
+            .iter()
+            .filter(|object| selectable(object))
+            .filter_map(|object| object.data.as_ref())
+            .flat_map(|data| data.tags.iter().cloned())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
+        tags
+    }
+
+    /// Selectable objects carrying exactly `tag`, in paint order.
+    pub fn objects_with_tag(&self, tag: &str) -> Vec<crate::board::CanvasObjectId> {
+        let selectable = self.tag_selectable();
+        self.objects
+            .iter()
+            .filter(|object| {
+                selectable(object)
+                    && object
+                        .data
+                        .as_ref()
+                        .is_some_and(|data| data.tags.iter().any(|t| t == tag))
+            })
+            .map(|object| object.id)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tag_selection_is_exact_and_skips_hidden_or_collapsed_objects() {
+        use crate::{Rect, ShapeKind, Sheet, Vec2};
+        use std::sync::Arc;
+        let mut sheet = Sheet::new("Board", "");
+        let add = |sheet: &mut Sheet, x: f32, tags: &[&str]| {
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(x, 0.0), Vec2::new(40.0, 40.0)),
+            );
+            object.data = (!tags.is_empty()).then(|| {
+                Arc::new(ObjectData {
+                    tags: tags.iter().map(|tag| (*tag).into()).collect(),
+                    ..Default::default()
+                })
+            });
+            sheet.add_canvas_object(object).unwrap()
+        };
+        let web = add(&mut sheet, 0.0, &["web", "Prod"]);
+        let webapp = add(&mut sheet, 100.0, &["webapp"]);
+        let hidden = add(&mut sheet, 200.0, &["web", "secret"]);
+        let container = add(&mut sheet, 300.0, &[]);
+        let folded = add(&mut sheet, 310.0, &["web", "folded"]);
+        let layer = sheet.add_board_layer("Hidden").unwrap();
+        sheet
+            .move_canvas_objects_to_layer(&[hidden], Some(layer))
+            .unwrap();
+        sheet.set_board_layer_visible(layer, false).unwrap();
+        sheet.set_canvas_container(container, true).unwrap();
+        sheet
+            .reparent_canvas_objects(&[folded], Some(container))
+            .unwrap();
+        assert_eq!(sheet.canvas.objects_with_tag("web"), [web, folded]);
+        assert_eq!(
+            sheet.canvas.selectable_tags(),
+            ["folded", "Prod", "web", "webapp"]
+        );
+        assert_eq!(sheet.canvas.objects_with_tag("webapp"), [webapp]);
+        assert!(sheet.canvas.objects_with_tag("we").is_empty());
+        sheet
+            .set_canvas_container_collapsed(
+                container,
+                Some(Rect::from_min_size(
+                    Vec2::new(300.0, 0.0),
+                    Vec2::new(40.0, 20.0),
+                )),
+            )
+            .unwrap();
+        assert_eq!(sheet.canvas.objects_with_tag("web"), [web]);
+        assert!(!sheet.canvas.selectable_tags().contains(&"folded".into()));
+    }
 
     fn data() -> ObjectData {
         ObjectData {

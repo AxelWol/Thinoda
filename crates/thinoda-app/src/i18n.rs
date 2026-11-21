@@ -2600,6 +2600,11 @@ const DE: &[(&str, &str)] = &[
         "Mittelpunkte vertikal verteilen",
     ),
     ("Layout", "Layout"),
+    ("Select by Tag", "Nach Tag auswählen"),
+    (
+        "More tags exist; use Find to locate them.",
+        "Es gibt weitere Tags; verwenden Sie die Suche, um sie zu finden.",
+    ),
     ("Vertical Tree", "Vertikaler Baum"),
     ("Horizontal Tree", "Horizontaler Baum"),
     ("Vertical Flow", "Vertikaler Fluss"),

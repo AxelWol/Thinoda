@@ -78,6 +78,8 @@ pub enum Cmd {
     BoardLayers,
     BoardImage,
     BoardZoomSelection,
+    /// Selects the visible board objects carrying exactly this tag.
+    SelectTag(String),
     New,
     NewFromTemplate(&'static str),
     Home,
@@ -1070,6 +1072,21 @@ impl ThinodaApp {
                 }
             }
             Cmd::BoardZoomSelection => self.zoom_to_board_selection(),
+            Cmd::SelectTag(tag) => {
+                if !self.command_available(&Cmd::SelectTag(tag.clone())) {
+                    self.toasts.warning(t("Not possible here"));
+                } else if let Some(doc) = self.doc_mut() {
+                    let result = doc.commit_canvas_drafts().map(|()| {
+                        let ids = doc.doc.sheet().canvas.objects_with_tag(&tag);
+                        doc.view.selection.clear();
+                        doc.view.selected_object = None;
+                        doc.view.board_selection = ids;
+                    });
+                    if let Err(error) = result {
+                        self.toasts.error(error);
+                    }
+                }
+            }
             Cmd::New => {
                 self.remember_map_defaults();
                 let mut workbook = templates::instantiate("mind-map");
@@ -2097,6 +2114,13 @@ impl ThinodaApp {
             | Cmd::BoardLayers
             | Cmd::BoardImage => {
                 !self.any_modal_open() && self.mode == CenterMode::Map && self.doc().is_some()
+            }
+            Cmd::SelectTag(tag) => {
+                !self.any_modal_open()
+                    && self.mode == CenterMode::Map
+                    && self
+                        .doc()
+                        .is_some_and(|doc| !doc.doc.sheet().canvas.objects_with_tag(tag).is_empty())
             }
             Cmd::BoardZoomSelection => {
                 !self.any_modal_open()
