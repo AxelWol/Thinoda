@@ -336,7 +336,8 @@ pub fn search_workbook(wb: &Workbook, needle: &str, opts: &SearchOptions) -> Vec
         .collect()
 }
 
-/// Searches canvas labels and accessibility descriptions in object order.
+/// Searches canvas labels, accessibility descriptions, tags and property values
+/// in object order.
 pub fn search_canvas(
     sheet: &Sheet,
     sheet_index: usize,
@@ -484,8 +485,9 @@ pub fn replace_in_titles(
     Ok(count)
 }
 
-/// Atomically replaces matching canvas labels and descriptions. Locked objects and
-/// invalid replacement results return an error without changing the sheet.
+/// Atomically replaces matching canvas labels, descriptions and property values.
+/// Tags are search-only. Locked objects that would be replaced and invalid
+/// replacement results return an error without changing the sheet.
 pub fn replace_in_canvas(
     sheet: &mut Sheet,
     ids: &[CanvasObjectId],
@@ -495,21 +497,15 @@ pub fn replace_in_canvas(
 ) -> Result<usize, String> {
     let mut candidate = sheet.clone();
     let wanted: HashSet<_> = ids.iter().copied().collect();
-    if !wanted.is_empty() {
-        let members: Vec<_> = wanted
-            .iter()
-            .copied()
-            .map(crate::board::BoardMember::Object)
-            .collect();
-        candidate.require_unlocked_board_selection(&members)?;
-    }
     let mut found = HashSet::new();
+    let mut changed = Vec::new();
     let mut count = 0;
     for object in &mut candidate.canvas.objects {
         if !wanted.contains(&object.id) {
             continue;
         }
         found.insert(object.id);
+        let previous_count = count;
         count += replace_text(&mut object.alt_text, needle, replacement, opts);
         // Tags are names, so only property values change.
         if let Some(data) = &mut object.data {
@@ -552,9 +548,15 @@ pub fn replace_in_canvas(
                 .extra_labels
                 .retain(|label| !label.text.is_empty() || label.has_list());
         }
+        if count > previous_count {
+            changed.push(crate::board::BoardMember::Object(object.id));
+        }
     }
     if let Some(id) = wanted.difference(&found).next() {
         return Err(format!("canvas object {id} not found"));
+    }
+    if !changed.is_empty() {
+        sheet.require_unlocked_board_selection(&changed)?;
     }
     candidate.validate()?;
     sheet.canvas = candidate.canvas;
@@ -1021,6 +1023,76 @@ mod tests {
             .is_err()
         );
         assert_eq!(invalid, before);
+    }
+
+    #[test]
+    fn canvas_replace_changes_property_values_but_not_search_only_tags() {
+        use crate::{CanvasObject, Rect, ShapeKind, Vec2, object_data::ObjectData};
+        use std::sync::Arc;
+
+        let mut sheet = Sheet::new("Board", "");
+        let make_shape = || {
+            CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+            )
+        };
+        let mut tagged = make_shape();
+        tagged.locked = true;
+        tagged.data = Some(Arc::new(ObjectData {
+            tags: vec!["needle".into()],
+            ..Default::default()
+        }));
+        let tagged = sheet.add_canvas_object(tagged).unwrap();
+        let mut valued = make_shape();
+        valued.data = Some(Arc::new(ObjectData {
+            tags: vec!["keep".into()],
+            properties: vec![("needle_key".into(), "needle Needle".into())],
+            ..Default::default()
+        }));
+        let valued = sheet.add_canvas_object(valued).unwrap();
+        let options = SearchOptions::default();
+        let hits = search_canvas(&sheet, 0, "needle", &options);
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|hit| hit.field == CanvasMatchField::Data));
+        assert_eq!(
+            replace_in_canvas(&mut sheet, &[tagged, valued], "needle", "ready", &options).unwrap(),
+            2
+        );
+        assert_eq!(
+            sheet
+                .canvas
+                .object(tagged)
+                .unwrap()
+                .data
+                .as_ref()
+                .unwrap()
+                .tags,
+            ["needle"]
+        );
+        let data = sheet.canvas.object(valued).unwrap().data.as_ref().unwrap();
+        assert_eq!(data.tags, ["keep"]);
+        assert_eq!(data.property("needle_key"), Some("ready ready"));
+        assert_eq!(search_canvas(&sheet, 0, "needle", &options).len(), 1);
+
+        let before = sheet.clone();
+        assert!(
+            replace_in_canvas(
+                &mut sheet,
+                &[valued],
+                "ready",
+                &"x".repeat(crate::object_data::MAX_OBJECT_DATA_BYTES + 1),
+                &options,
+            )
+            .is_err()
+        );
+        assert_eq!(sheet, before);
+        sheet.set_canvas_objects_locked(&[valued], true).unwrap();
+        let locked = sheet.clone();
+        assert!(
+            replace_in_canvas(&mut sheet, &[tagged, valued], "ready", "done", &options).is_err()
+        );
+        assert_eq!(sheet, locked);
     }
 
     #[test]

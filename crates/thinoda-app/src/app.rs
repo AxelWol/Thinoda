@@ -5869,6 +5869,82 @@ mod tests {
     }
 
     #[test]
+    fn board_replace_skips_locked_tag_only_hits_and_remains_undoable() {
+        use std::sync::Arc;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2, object_data::ObjectData};
+
+        let mut app = ThinodaApp::headless();
+        let (tagged, valued) = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Board search data", |sheet| {
+                sheet.set_title(sheet.root, "Needle topic")?;
+                let make_shape = || {
+                    CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+                    )
+                };
+                let mut tagged = make_shape();
+                tagged.locked = true;
+                tagged.data = Some(Arc::new(ObjectData {
+                    tags: vec!["needle".into()],
+                    ..Default::default()
+                }));
+                let tagged = sheet
+                    .add_canvas_object(tagged)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let mut valued = make_shape();
+                valued.data = Some(Arc::new(ObjectData {
+                    properties: vec![("owner".into(), "Needle".into())],
+                    ..Default::default()
+                }));
+                let valued = sheet
+                    .add_canvas_object(valued)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((tagged, valued))
+            })
+            .unwrap();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.search.open = true;
+        app.search.query = "needle".into();
+        app.search.replace = "Goal".into();
+        app.update_search();
+        assert_eq!(app.search.result_count(), 3);
+        app.replace_all();
+        let after = app.doc().unwrap().doc.workbook().clone();
+        assert_eq!(after.sheets[0].root_topic().title, "Goal topic");
+        assert_eq!(
+            after.sheets[0]
+                .canvas
+                .object(tagged)
+                .unwrap()
+                .data
+                .as_ref()
+                .unwrap()
+                .tags,
+            ["needle"]
+        );
+        assert_eq!(
+            after.sheets[0]
+                .canvas
+                .object(valued)
+                .unwrap()
+                .data
+                .as_ref()
+                .unwrap()
+                .property("owner"),
+            Some("Goal")
+        );
+        assert_eq!(app.search.canvas_hits.len(), 1);
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(app.doc_mut().unwrap().doc.redo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &after);
+    }
+
+    #[test]
     fn replace_all_preserves_formatted_titles_across_sheets_and_is_atomic() {
         use thinoda_core::{Card, CardKind, Sheet, Vec2};
 

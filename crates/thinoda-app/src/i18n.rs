@@ -1249,8 +1249,8 @@ const DE: &[(&str, &str)] = &[
     ("Rotation", "Drehung"),
     ("Custom color", "Benutzerdefinierte Farbe"),
     (
-        "Replaces topic titles, board labels and descriptions.",
-        "Ersetzt Thementitel, Board-Beschriftungen und Beschreibungen.",
+        "Replaces topic titles and board labels, descriptions and property values; not notes, topic labels or tags.",
+        "Ersetzt Thementitel sowie Board-Beschriftungen, Beschreibungen und Eigenschaftswerte; nicht Notizen, Themenlabels oder Tags.",
     ),
     (
         "AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.",
@@ -5711,7 +5711,7 @@ mod tests {
             "Parent container",
             "Contained objects",
             "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.",
-            "Replaces topic titles, board labels and descriptions.",
+            "Replaces topic titles and board labels, descriptions and property values; not notes, topic labels or tags.",
             "Zoom to selection",
             "Shape",
             "Shape library",

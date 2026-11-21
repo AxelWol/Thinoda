@@ -355,6 +355,19 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [ ] draw.io templates in the template gallery (CC BY 4.0 attribution)
 - [ ] Edit style (raw key/value), edit geometry, raw diagram XML import/export dialog
 - [ ] Find/replace and tags on boards, ruler, units and page view
+  - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
+  - [ ] Tag browser/filter, ruler, units and page view
+
+**D12 search-and-replace rubber-duck critique:** Requiring every hit to be
+unlocked made a locked object found only by a tag block replacement elsewhere,
+although tags are never replaced. The lock check now applies only to objects
+whose text actually changes, after the candidate edit and before commit, so
+failures still leave the sheet untouched. The dialog discloses the replaced
+fields instead of claiming only titles and labels; notes, topic labels and tags
+remain search-only because replacing them could merge or empty names. Tests
+cover atomic rollback on oversized property values and locked targets, and
+the disclosure in short windows. A tag browser, ruler, units and page view are
+still missing, so the D12 item stays open.
 - [ ] Stencil editor for JSON definitions; draw.io stencil XML is converted on import, not edited
 
 ### D13 — Other formats
@@ -441,6 +454,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D12 board replace (partial) | Locked tag-only hits no longer block replacement elsewhere; the dialog discloses replaced and search-only fields in every shipped locale. |
 | 2026-11-21 | D15 bundle fuzzing (partial) | Added a production-path catalog/decoder target, real bundled seed, corruption tests, release-size and inflation budgets, and CI smoke and acceptance jobs. The sanitized acceptance campaign remains open. |
 | 2026-11-21 | D13 JPEG audit | Corrected the gap analysis: JPEG visual export already exists; transparency, editability and remaining format gaps are explicit. |
 | 2026-11-21 | D15 Outliner ribbon | Native Outliner replaces the main ribbon with contextual actions, a larger selected-topic heading and shared collapse/Quick Access behavior; the nearby actions popup no longer covers the mode switch in the tested high-scale layout. |

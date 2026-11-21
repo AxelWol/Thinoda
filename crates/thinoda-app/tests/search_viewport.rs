@@ -95,6 +95,10 @@ fn find_and_replace_remain_reachable_in_short_windows() {
                 assert_eq!(h.state().search.hits.len(), 2);
                 if size.y / scale >= 500.0 {
                     assert_visible(&h, Role::TextInput, "Search");
+                    h.get_by_role_and_label(
+                        Role::Label,
+                        t("Replaces topic titles and board labels, descriptions and property values; not notes, topic labels or tags."),
+                    );
                     assert_visible(&h, Role::TextInput, "Replace with");
                     assert_visible(&h, Role::Button, "Replace All");
                     h.state_mut().search.show_replace = false;

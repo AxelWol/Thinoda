@@ -8999,7 +8999,7 @@ impl ThinodaApp {
                                 ui.label(t("Replace with"));
                                 widgets::caption(
                                     ui,
-                                    t("Replaces topic titles, board labels and descriptions."),
+                                    t("Replaces topic titles and board labels, descriptions and property values; not notes, topic labels or tags."),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut self.search.replace)
