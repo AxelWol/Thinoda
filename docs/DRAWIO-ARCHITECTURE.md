@@ -1,4 +1,4 @@
-_Last updated: 2026-11-18 13:48:14 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-19 14:57:20 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io integration: binding architecture contracts
 
