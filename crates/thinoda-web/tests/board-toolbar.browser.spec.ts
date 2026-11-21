@@ -122,13 +122,20 @@ test("the selected-shape toolbar changes and restores label text color", async (
     };
 
     expect((await shape("shape-color-auto.thinoda")).style.text_color).toBeUndefined();
-    // The egui toolbar is drawn inside the canvas rather than exposed as DOM buttons.
-    await canvas.click({ position: { x: 277, y: 76 } });
-    await frames(page);
-    await canvas.click({ position: { x: 277, y: 145 } });
-    await frames(page);
-    await page.keyboard.press("Escape");
-    await frames(page);
+    // The egui nearby menu is drawn inside the canvas rather than exposed as DOM buttons.
+    const chooseTextColor = async (swatch: { x: number; y: number }) => {
+        // Let the bottom "Saved to" toasts expire; they can cover the nearby menu.
+        await page.waitForTimeout(4_500);
+        await canvas.click({ position: { x: 366, y: 455 } });
+        await frames(page);
+        await canvas.click({ position: { x: 500, y: 540 } });
+        await frames(page);
+        await canvas.click({ position: swatch });
+        await frames(page);
+        await page.keyboard.press("Escape");
+        await frames(page);
+    };
+    await chooseTextColor({ x: 501, y: 444 });
     expect((await shape("shape-color-blue.thinoda")).style.text_color).toBe("#2E7CF6");
 
     await page.keyboard.press("Control+z");
@@ -138,12 +145,7 @@ test("the selected-shape toolbar changes and restores label text color", async (
     await frames(page);
     expect((await shape("shape-color-redo.thinoda")).style.text_color).toBe("#2E7CF6");
 
-    await canvas.click({ position: { x: 277, y: 76 } });
-    await frames(page);
-    await canvas.click({ position: { x: 290, y: 112 } });
-    await frames(page);
-    await page.keyboard.press("Escape");
-    await frames(page);
+    await chooseTextColor({ x: 600, y: 394 });
     expect((await shape("shape-color-reset.thinoda")).style.text_color).toBeUndefined();
 });
 

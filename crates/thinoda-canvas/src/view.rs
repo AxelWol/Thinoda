@@ -1453,6 +1453,26 @@ impl MapView {
         }
     }
 
+    /// Keep the title selection while keyboard focus moves to a companion control;
+    /// an unfocused egui editor otherwise collapses its selection.
+    pub fn retain_title_selection_for_companion(&mut self, ctx: &egui::Context) {
+        if let Some(edit) = &mut self.editing
+            && !edit.ime_composing
+            && edit.companion_cursor.is_none()
+        {
+            edit.companion_cursor = TextEdit::load_state(ctx, MapCanvas::title_editor_id())
+                .map(|state| (edit.text.clone(), state.cursor.char_range()));
+        }
+    }
+
+    /// Whether formatting applies to a selected title range rather than new text.
+    pub fn title_has_selected_range(&self, ctx: &egui::Context) -> bool {
+        self.editing
+            .as_ref()
+            .and_then(|edit| card_title_selection(ctx, edit))
+            .is_some_and(|selection| selection.anchor != selection.focus)
+    }
+
     /// Include current-frame IME events, which may precede the editor's update.
     pub fn title_ime_active(&self, ctx: &egui::Context) -> bool {
         self.editing.as_ref().is_some_and(|edit| {
@@ -4705,12 +4725,22 @@ fn show_editor_pass(
     }
     if let Some(history) = &mut edit.rich_history {
         let draft_selection = history_cursor.unwrap_or_else(|| {
-            let selection = output.state.cursor.char_range().unwrap_or_else(|| {
-                egui::text::CCursorRange::one(egui::text::CCursor::new(edit.text.chars().count()))
-            });
+            let length = edit.text.chars().count();
+            // The shared editor ID can retain a previous title's cursor until
+            // this edit's first focus pass stores its initial selection.
+            if !edit.focus_requested {
+                return DraftSelection {
+                    anchor: if edit.select_all { 0 } else { length },
+                    focus: length,
+                };
+            }
+            let selection =
+                output.state.cursor.char_range().unwrap_or_else(|| {
+                    egui::text::CCursorRange::one(egui::text::CCursor::new(length))
+                });
             DraftSelection {
-                anchor: selection.secondary.index.0,
-                focus: selection.primary.index.0,
+                anchor: selection.secondary.index.0.min(length),
+                focus: selection.primary.index.0.min(length),
             }
         });
         let operations = operations.into_inner();

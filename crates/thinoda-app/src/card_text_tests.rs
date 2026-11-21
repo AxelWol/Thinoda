@@ -5999,3 +5999,79 @@ fn card_title_editor_visual_previews() {
         }
     }
 }
+
+#[test]
+fn typing_on_a_selected_card_with_text_formatting_open_replaces_the_title() {
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.enabled = false;
+    app.settings.show_format_panel = false;
+    app.new_doc(templates::instantiate("blank-canvas"));
+    app.doc_mut()
+        .unwrap()
+        .view
+        .set_board_tool(BoardTool::Sticky);
+    let mut h = harness(app, vec2(1252.0, 1278.0));
+    let create = egui::pos2(220.0, 400.0);
+    h.event(egui::Event::PointerMoved(create));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: create,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    h.event(egui::Event::Text("Sticky".into()));
+    h.run_steps(3);
+    h.key_press(Key::Enter);
+    h.run_steps(5);
+    assert_eq!(h.state().doc().unwrap().view.editing_topic(), None);
+    let [modifiers, down, up, clear] = raw_key_press(Key::X, Modifiers::NONE);
+    h.input_mut()
+        .events
+        .extend([modifiers, down, egui::Event::Text("X".into()), up, clear]);
+    run_input_hook_steps(&mut h, 4);
+    assert_eq!(h.state().doc().unwrap().view.editing_text(), Some("X"));
+    assert!(
+        h.state().toasts.texts().next().is_none(),
+        "{:?}",
+        h.state().toasts.texts().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn keyboard_select_all_keeps_the_selected_text_scope_in_formatting() {
+    let (app, id) = app_with_card(CardKind::Text);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.set_editing_text("Selected title");
+    }
+    h.run_steps(5);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Selected text").is_some(),
+        "before shortcut"
+    );
+    h.key_press_modifiers(Modifiers::ALT, Key::F10);
+    h.run_steps(3);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    assert!(
+        h.query_by_label("Selected text").is_some(),
+        "after shortcut"
+    );
+    h.key_press(Key::Space);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::F10);
+    h.run_steps(3);
+    h.event(egui::Event::Text("Replacement".into()));
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_text(),
+        Some("Replacement")
+    );
+    assert_eq!(style(&h, id).bold, Some(true));
+}

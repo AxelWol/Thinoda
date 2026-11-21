@@ -1085,6 +1085,9 @@ test("draw.io paste and copy preserve an editable double ellipse", async ({ page
         })];
     }, text);
     await paste(page);
+    // Escape dismisses the selection and its nearby menu, whose stroke-color control matches.
+    await page.keyboard.press("Escape");
+    await frames(page);
     await page.screenshot({ path: testInfo.outputPath("drawio-double-ellipse-paste.png") });
     const viewport = page.viewportSize();
     if (!viewport) throw new Error("Cannot inspect the canvas without a viewport");
@@ -1133,6 +1136,12 @@ test("draw.io paste and copy preserve an editable double ellipse", async ({ page
     expect(objects[0].double_ellipse_margin).toBe(8.5);
     expect(after.manifest.version).toBe(21);
 
+    // Reselect the shape to edit its label.
+    await page.mouse.click(
+        Math.round((bounds.minX + bounds.maxX) / 2),
+        Math.round((bounds.minY + bounds.maxY) / 2) + 100,
+    );
+    await frames(page);
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("F2");
     await frames(page);

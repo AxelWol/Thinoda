@@ -4011,7 +4011,7 @@ impl ThinodaApp {
         }
     }
 
-    fn finish_card_text_focus_handoff(&self, ctx: &Context) {
+    fn finish_card_text_focus_handoff(&mut self, ctx: &Context) {
         let slot = card_text_slot(self.current_viewport);
         let pending = ctx.data_mut(|data| {
             let pending =
@@ -4033,6 +4033,9 @@ impl ThinodaApp {
             && ctx.memory(|memory| memory.has_focus(MapCanvas::title_editor_id()))
             && !ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released())
         {
+            if let Some(doc) = self.doc_mut() {
+                doc.view.retain_title_selection_for_companion(ctx);
+            }
             ctx.memory_mut(|memory| memory.request_focus(pending.control));
             ctx.request_repaint();
         }
@@ -4176,6 +4179,7 @@ impl ThinodaApp {
         let context_owner = format_menu::owner(&doc.doc, &doc.view);
         format_menu::prepare(&ctx, context_owner);
         let title_active = doc.view.editing_topic() == Some(target.topic);
+        let title_has_selection = title_active && doc.view.title_has_selected_range(&ctx);
         let inline_formats = [
             ("Bold", icons::BOLD, CardTitleFormat::Bold),
             ("Italic", icons::ITALIC, CardTitleFormat::Italic),
@@ -4530,7 +4534,7 @@ impl ThinodaApp {
                                             } else {
                                                 ui.label(
                                                     RichText::new(t(if title_active {
-                                                        if MapCanvas::title_has_selection(&ctx) {
+                                                        if title_has_selection {
                                                             "Selected text"
                                                         } else {
                                                             "New text"
