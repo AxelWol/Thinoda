@@ -70,7 +70,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | Save back in place to `.drawio` | Missing (Save As/export only) | D10 |
 | Files | PDF with embedded diagram | Missing | D13 |
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
-| Files | VSDX, JPEG/WebP/GIF export | Missing (SVG/PNG/PDF exist) | D13 |
+| Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over black, with no editable diagram data | — |
+| Files | VSDX, WebP/GIF export | Missing (SVG/PNG/PDF/JPEG exist) | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
@@ -358,7 +359,14 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 
 ### D13 — Other formats
 
-- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, JPEG, WebP and GIF export
+- [x] JPEG visual export through the shared raster renderer
+- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, WebP and GIF export
+
+**JPEG rubber-duck critique:** JPEG is already available through the normal
+visual export path, so treating it as missing would duplicate existing work.
+It is a lossy, opaque image rather than an editable draw.io container;
+transparent pixels currently composite over black. This does not close the
+other D13 format gaps or establish draw.io visual parity.
 
 ### D14 — Appearance and effects
 
@@ -416,6 +424,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-21 | D13 JPEG audit | Corrected the gap analysis: JPEG visual export already exists; transparency, editability and remaining format gaps are explicit. |
 | 2026-11-21 | D15 Outliner ribbon | Native Outliner replaces the main ribbon with contextual actions, a larger selected-topic heading and shared collapse/Quick Access behavior; the nearby actions popup no longer covers the mode switch in the tested high-scale layout. |
 | 2026-11-21 | D15 document tabs | New Tab stays visible during overflow; measured file names use the available header space without overlapping actions, including after resize and zoom. |
 | 2026-11-21 | D8 Layers panel | The panel can be dragged, restores its last validated position within the window, and shows at least six layers when space permits. |
