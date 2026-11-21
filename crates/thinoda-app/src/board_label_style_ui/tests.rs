@@ -6,6 +6,32 @@ use thinoda_core::{
 
 use super::*;
 
+#[test]
+fn whole_label_change_clears_only_the_conflicting_run_property() {
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+    );
+    object.set_label("Styled").unwrap();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("Styled", 0..6, |style| {
+        style.bold = Some(true);
+        style.italic = Some(true);
+        style.color = Some(Color::rgb(200, 30, 50));
+    })
+    .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    LabelStyleChange::Bold(false).apply_to(&mut object);
+    let run = &object.label_rich_text.as_ref().unwrap().runs[0];
+    assert_eq!(run.style.bold, None);
+    assert_eq!(run.style.italic, Some(true));
+    assert_eq!(run.style.color, Some(Color::rgb(200, 30, 50)));
+    LabelStyleChange::Color(None).apply_to(&mut object);
+    let run = &object.label_rich_text.as_ref().unwrap().runs[0];
+    assert_eq!(run.style.color, None);
+    assert_eq!(run.style.italic, Some(true));
+}
+
 fn app_with_shapes() -> (ThinodaApp, Vec<CanvasObjectId>) {
     let mut app = ThinodaApp::headless();
     app.new_doc(templates::instantiate("blank-canvas"));
@@ -98,7 +124,11 @@ fn label_text_changes_keep_other_fields_and_reset_to_no_style() {
         })
         .unwrap();
     let mut harness = inspector(app);
-    // The first shape drives the checkbox, so this turns italic off on both.
+    // A mixed toggle first applies to all, then clears the property on all.
+    click(&mut harness, "Italic");
+    for id in &ids {
+        assert!(label_style(harness.state(), *id).unwrap().italic);
+    }
     click(&mut harness, "Italic");
     assert!(label_style(harness.state(), ids[0]).is_none());
     assert!(label_style(harness.state(), ids[1]).is_none());

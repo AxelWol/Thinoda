@@ -655,23 +655,22 @@ semantics and require native v6.
   the toolbar to the available canvas height and scroll rather than hiding
   actions on short windows or at high UI scale. The toolbox starts collapsed
   to avoid obscuring canvas content; either state can be changed by the user.
-- Show contextual action icons for the active mode in a separate strip over the
+- Show contextual action icons for the active ink mode in a separate strip over the
   canvas, above the lowered board toolbox. For ink, expose colour, width,
   opacity, and the supported pen/highlighter stroke types; erasers expose their
-  radius. A selected connector gets a separate strip for its route, arrows,
-  colour, width, label editing, and formatting shortcut. A selected shape gets
-  the same style of strip for changing its shape, fill, outline, outline width,
-  label text colour, label editing, and further formatting. Text colour applies
-  to the whole label; Auto restores the canvas's contrast-based colour. The
-  canvas remains stationary and the strips scroll in compact windows.
+  radius. Selected objects use the existing nearby node menu, unified with
+  card, shape, connector and draw.io stencil formatting. Its applicable
+  Actions, Text, Style and Arrange sections wrap without a horizontally
+  scrolling formatting strip. Text colour follows the visible scope:
+  selected object(s), selected text or new typing. Auto restores inherited
+  colour. The canvas remains stationary.
   The selected shape or connector remains editable while a shape tool is armed;
   clicking an empty part of the canvas still places the armed shape.
   An open picker consumes the first outside click to dismiss itself, so click
   the canvas again to place a shape.
-  When Whole-card text is also open, the strips share the row without overlap.
-  On canvases too short for both the strip and toolbox, the toolbox is hidden
-  until the strip closes; the existing menus remain available.
-  These controls remain usable in either toolbar presentation.
+  There is only one nearby selection menu, including while editing a label;
+  creation and active ink tools remain separate. See
+  [Nearby selection menu](CONTEXT-FORMATTING.md) for scope and keyboard behavior.
   Colour swatches and graphical width presets complement the exact controls;
   swatches preserve colour alpha and do not change the independent opacity.
 - Double-click an unlocked shape or connector, use its **Edit label** action,
@@ -1772,6 +1771,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   physical touch and assistive-technology acceptance remain open.
 
 ### Whole-card formatting checkpoint and critique
+
+Historical checkpoint: the scrolling strip and returning upper insert toolbar
+described below are superseded by the
+[unified nearby selection menu](CONTEXT-FORMATTING.md).
 
 - Selected sticky notes and text cards expose bold, italic, underline, alignment,
   font family, size and color presets for the **whole card**. The strip is

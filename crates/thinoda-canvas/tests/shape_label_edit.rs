@@ -2299,14 +2299,12 @@ fn replace_toolbar_value(h: &mut Harness<'_, State>, label: &str, value: &str) {
 }
 
 fn enter_direct_typography(h: &mut Harness<'_, State>, size: &str, color: &str) {
-    click_toolbar_button(h, "Font Size / Text Color / Font Family");
     click_toolbar_button(h, "Font Size");
     replace_toolbar_value(h, "Font Size · Value", size);
     h.key_press(Key::Enter);
     h.run_steps(2);
     assert!(h.get_by_label("Board object label").is_focused());
     click_toolbar_button(h, "Label formatting (F6)");
-    click_toolbar_button(h, "Text Color");
     click_toolbar_button(h, "Custom color");
     replace_toolbar_value(h, "Text Color · Value", color);
     h.key_press(Key::Enter);
@@ -2380,7 +2378,6 @@ fn invalid_direct_typography_stays_in_the_field_until_corrected() {
     let mut h = harness("Label");
     double_click_shape(&mut h);
     let before = h.state().doc.state_id();
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     for value in ["NaN", "5.99", "257"] {
         replace_toolbar_value(&mut h, "Font Size · Value", value);
@@ -2396,7 +2393,6 @@ fn invalid_direct_typography_stays_in_the_field_until_corrected() {
     h.run_steps(2);
     assert!(h.get_by_label("Board object label").is_focused());
     click_toolbar_button(&mut h, "Label formatting (F6)");
-    click_toolbar_button(&mut h, "Text Color");
     click_toolbar_button(&mut h, "Custom color");
     assert!(h.query_by_label("Invalid color").is_none());
     click_toolbar_button(&mut h, "Apply");
@@ -2430,7 +2426,6 @@ fn invalid_direct_typography_stays_in_the_field_until_corrected() {
 fn direct_typography_apply_button_rejects_invalid_values_without_finishing() {
     let mut h = harness("Label");
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     replace_toolbar_value(&mut h, "Font Size · Value", "999");
     click_toolbar_button(&mut h, "Apply");
@@ -2456,7 +2451,6 @@ fn toolbar_keyboard_input_preceding_an_outside_click_is_applied_in_order() {
     for direct in [false, true] {
         let mut h = harness("Label");
         double_click_shape(&mut h);
-        click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
         if direct {
             click_toolbar_button(&mut h, "Font Size");
             let position = h.get_by_label("Font Size · Value").rect().center();
@@ -2468,7 +2462,7 @@ fn toolbar_keyboard_input_preceding_an_outside_click_is_applied_in_order() {
         } else {
             h.key_press(Key::F6);
             h.run_steps(2);
-            for _ in 0..3 {
+            for _ in 0..11 {
                 h.key_press(Key::Tab);
                 h.run_steps(1);
             }
@@ -2525,7 +2519,6 @@ fn toolbar_keyboard_input_preceding_an_outside_click_is_applied_in_order() {
 fn text_after_toolbar_enter_and_before_an_outside_click_stays_in_the_label() {
     let mut h = harness("Label");
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     let position = h.get_by_label("Font Size · Value").rect().center();
     click(&mut h, position);
@@ -2579,7 +2572,6 @@ fn text_after_toolbar_enter_and_before_an_outside_click_stays_in_the_label() {
 fn invalid_toolbar_submit_before_an_outside_click_is_reported() {
     let mut h = harness("Label");
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     let position = h.get_by_label("Font Size · Value").rect().center();
     click(&mut h, position);
@@ -2634,7 +2626,6 @@ fn corrected_toolbar_submit_before_an_outside_click_does_not_report_a_stale_erro
     double_click_shape(&mut h);
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.run_steps(1);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     let position = h.get_by_label("Font Size · Value").rect().center();
     click(&mut h, position);
@@ -2691,7 +2682,6 @@ fn direct_typography_pages_fit_compact_canvases() {
     let mut h = harness_with_size("Label", vec2(260.0, 180.0));
     h.state_mut().view.board_labels.label_invalid_size = "Nieprawidłowy rozmiar czcionki".into();
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size");
     for label in ["Font Size · Value", "Apply"] {
         assert!(
@@ -2705,10 +2695,9 @@ fn direct_typography_pages_fit_compact_canvases() {
     replace_toolbar_value(&mut h, "Font Size · Value", "999");
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
-    assert!(!toolbar.contains(h.get_by_label("Board object label").rect().center()));
     assert!(
         h.state().view.canvas_rect().contains_rect(
             h.get_by_label("Nieprawidłowy rozmiar czcionki (6–256)")
@@ -2731,9 +2720,8 @@ fn direct_typography_pages_fit_compact_canvases() {
     }
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
-    assert!(!toolbar.contains(h.get_by_label("Board object label").rect().center()));
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
     replace_toolbar_value(&mut h, "Text Color · Value", "123456");
     click_toolbar_button(&mut h, "Apply");
@@ -2758,15 +2746,7 @@ fn direct_typography_field_is_keyboard_and_ime_accessible() {
     double_click_shape(&mut h);
     h.key_press(Key::F6);
     h.run_steps(2);
-    for _ in 0..8 {
-        h.key_press(Key::Tab);
-        h.run_steps(1);
-    }
-    h.key_press(Key::Enter);
-    h.run_steps(2);
-    h.key_press(Key::F6);
-    h.run_steps(2);
-    for _ in 0..2 {
+    for _ in 0..10 {
         h.key_press(Key::Tab);
         h.run_steps(1);
     }
@@ -2818,9 +2798,7 @@ fn selected_label_size_and_color_are_atomic_for_shapes_and_connectors() {
         let before = h.state().doc.state_id();
         h.key_press_modifiers(Modifiers::COMMAND, Key::B);
         h.run_steps(2);
-        click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
         click_toolbar_button(&mut h, "Font Size +");
-        click_toolbar_button(&mut h, "Text Color");
         let red = h
             .get_by_role_and_label(Role::ColorWell, "Text Color #E8455C")
             .rect()
@@ -2878,9 +2856,7 @@ fn label_size_and_color_at_the_caret_apply_only_to_later_text() {
     let mut h = harness("A");
     double_click_shape(&mut h);
     set_label_cursor(&mut h, 1);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size +");
-    click_toolbar_button(&mut h, "Text Color");
     let blue = h
         .get_by_role_and_label(Role::ColorWell, "Text Color #2E7CF6")
         .rect()
@@ -2925,9 +2901,7 @@ fn selected_label_size_and_color_can_return_to_inherited_values() {
         })
         .unwrap();
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size · Default");
-    click_toolbar_button(&mut h, "Text Color");
     click_toolbar_button(&mut h, "Text Color · Default");
     let (_, _, rich) = h
         .state()
@@ -2970,7 +2944,6 @@ fn selection_typography_limit_failure_keeps_the_original_draft() {
         .unwrap();
     double_click_shape(&mut h);
     set_label_selection(&mut h, text.len() - 1, text.len());
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size +");
     let (_, current_text, current_rich) = h
         .state()
@@ -2990,26 +2963,10 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
     double_click_shape(&mut h);
     h.key_press(Key::F6);
     h.run_steps(2);
-    for _ in 0..8 {
+    for _ in 0..11 {
         h.key_press(Key::Tab);
         h.run_steps(1);
     }
-    assert!(
-        h.get_by_role_and_label(Role::Button, "Font Size / Text Color / Font Family")
-            .is_focused()
-    );
-    h.key_press(Key::Enter);
-    h.run_steps(2);
-    assert!(h.get_by_label("Board object label").is_focused());
-    assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
-    h.key_press(Key::F6);
-    h.run_steps(2);
-    h.key_press(Key::Tab);
-    h.run_steps(1);
-    h.key_press(Key::Tab);
-    h.run_steps(1);
-    h.key_press(Key::Tab);
-    h.run_steps(1);
     assert!(
         h.get_by_role_and_label(Role::Button, "Font Size +")
             .is_focused()
@@ -3017,6 +2974,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
     h.key_press(Key::Enter);
     h.run_steps(2);
     assert!(h.get_by_label("Board object label").is_focused());
+    assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
     h.key_press(Key::F6);
     h.run_steps(2);
     h.key_press(Key::F6);
@@ -3032,19 +2990,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
     assert_eq!(rich.unwrap().runs[0].style.font_size, Some(13.0));
     h.key_press(Key::F6);
     h.run_steps(2);
-    for _ in 0..5 {
-        h.key_press(Key::Tab);
-        h.run_steps(1);
-    }
-    assert!(
-        h.get_by_role_and_label(Role::Button, "Text Color")
-            .is_focused()
-    );
-    h.key_press(Key::Enter);
-    h.run_steps(2);
-    h.key_press(Key::F6);
-    h.run_steps(2);
-    for _ in 0..2 {
+    for _ in 0..14 {
         h.key_press(Key::Tab);
         h.run_steps(1);
     }
@@ -3072,8 +3018,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
 fn compact_canvas_keeps_typography_pages_inside_the_canvas() {
     let mut h = harness_with_size("Label", vec2(260.0, 180.0));
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
-    for label in ["Font Size +", "Text Color"] {
+    for label in ["Font Size +", "Font Family", "Text Color"] {
         let control = h.get_by_role_and_label(Role::Button, label).rect();
         assert!(
             h.state().view.canvas_rect().contains_rect(control),
@@ -3090,16 +3035,13 @@ fn compact_canvas_keeps_typography_pages_inside_the_canvas() {
     }
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
-    let editor = h.get_by_label("Board object label").rect();
-    assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
 fn open_family_page(h: &mut Harness<'_, State>) {
-    click_toolbar_button(h, "Font Size / Text Color / Font Family");
     click_toolbar_button(h, "Font Family");
 }
 
@@ -3341,7 +3283,7 @@ fn keyboard_can_reach_families_beyond_the_visible_rows() {
     assert!(choice.is_focused());
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
     assert!(toolbar.contains(choice.rect().center()));
     h.key_press(Key::Enter);
@@ -3388,7 +3330,7 @@ fn family_list_scrolls_without_moving_the_canvas() {
     let choice = h.get_by_role_and_label(Role::Button, "Font Family · Family 15");
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
     assert!(choice.rect().center().y < before_y);
     assert!(toolbar.contains(choice.rect().center()));
@@ -3461,7 +3403,7 @@ fn immediate_outside_click_after_family_choice_finishes_without_recapturing_focu
 
 #[test]
 fn immediate_outside_click_after_toolbar_action_finishes_the_draft() {
-    for action in ["Bold", "Font Size / Text Color / Font Family"] {
+    for action in ["Bold", "Font Family"] {
         let mut h = harness("Label");
         double_click_shape(&mut h);
         let position = h
@@ -3514,10 +3456,8 @@ fn compact_canvas_keeps_the_family_picker_operable() {
     open_family_page(&mut h);
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
-    let editor = h.get_by_label("Board object label").rect();
-    assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
     search_families(&mut h, "example");
     click_toolbar_button(&mut h, "Font Family · Example Family");
@@ -5216,14 +5156,22 @@ fn compact_canvas_keeps_the_editor_description_without_covering_the_shape() {
 
 #[test]
 fn compact_formatting_toolbar_leaves_the_label_visible_and_operable() {
+    let mut h = harness_with_size("Minimum label", vec2(720.0, 480.0));
+    double_click_shape(&mut h);
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
+        .unwrap();
+    let editor = h.get_by_label("Board object label").rect();
+    assert!(!toolbar.intersects(editor), "{toolbar:?} {editor:?}");
+    assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    // Below the native minimum, the menu may cover the editor but stays usable.
     let mut h = harness_with_size("Compact label", vec2(260.0, 180.0));
     double_click_shape(&mut h);
     let toolbar = h
         .ctx
-        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .memory(|memory| memory.area_rect(thinoda_canvas::format_menu::area_id(&h.ctx)))
         .unwrap();
-    let editor = h.get_by_label("Board object label").rect();
-    assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
     let bold = h
         .get_by_role_and_label(Role::Button, "Bold")

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Ui};
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, CanvasObjectKind, Color, TextAlign,
+    CanvasObject, CanvasObjectKind, Color, TextAlign,
     board::BoardMember,
     label_style::{
         LabelStyle, LabelVAlign, MAX_LABEL_FONT_SIZE, MAX_LABEL_SPACING, MIN_LABEL_FONT_SIZE,
@@ -39,6 +39,7 @@ enum Side {
 
 #[derive(Clone, Debug, PartialEq)]
 enum LabelStyleChange {
+    Color(Option<Color>),
     Family(Option<String>),
     Size(f32),
     Bold(bool),
@@ -59,6 +60,7 @@ enum LabelStyleChange {
 impl LabelStyleChange {
     fn apply(&self, style: &mut LabelStyle) {
         match self {
+            Self::Color(_) => {}
             Self::Family(family) => style.font_family = family.clone(),
             Self::Size(size) => style.font_size = Some(*size),
             Self::Bold(on) => style.bold = *on,
@@ -90,28 +92,71 @@ impl LabelStyleChange {
         let mut style = object.label_style.as_deref().cloned().unwrap_or_default();
         self.apply(&mut style);
         object.label_style = (!style.is_default()).then(|| Arc::new(style));
+        if let Self::Color(color) = self {
+            object.style.text_color = *color;
+        }
+        let clear = |rich: &mut Option<Arc<thinoda_core::InlineText>>| {
+            if let Some(rich) = rich {
+                let rich = Arc::make_mut(rich);
+                for run in &mut rich.runs {
+                    match self {
+                        Self::Color(_) => run.style.color = None,
+                        Self::Family(_) => run.style.font_family = None,
+                        Self::Size(_) => run.style.font_size = None,
+                        Self::Bold(_) => run.style.bold = None,
+                        Self::Italic(_) => run.style.italic = None,
+                        Self::Underline(_) => run.style.underline = None,
+                        Self::Strikethrough(_) => run.style.strikethrough = None,
+                        _ => {}
+                    }
+                }
+                rich.runs.retain(|run| !run.style.is_empty());
+            }
+            if rich.as_ref().is_some_and(|rich| rich.is_empty()) {
+                *rich = None;
+            }
+        };
+        clear(&mut object.label_rich_text);
+        if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+            for label in &mut connector.extra_labels {
+                clear(&mut label.rich_text);
+            }
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, Hash)]
+struct LabelControlOwner {
+    identity: egui::Id,
+    revision: u64,
 }
 
 /// Numeric field that commits once, when dragging or typing finishes.
 fn draft_number(
     ui: &mut Ui,
     label: &'static str,
-    id: CanvasObjectId,
+    owner: LabelControlOwner,
     stored: f32,
     range: std::ops::RangeInclusive<f32>,
+    compact: bool,
 ) -> Option<f32> {
-    let slot = ui.make_persistent_id(("label_style_draft", id, label));
-    let mut value = ui.data(|data| data.get_temp::<f32>(slot)).unwrap_or(stored);
-    let response = widgets::property_field(ui, t(label), |ui| {
-        ui.add(egui::DragValue::new(&mut value).speed(0.5).range(range))
-    });
+    let slot = ui.make_persistent_id(("label_style_draft", owner.identity, label));
+    let mut value = ui
+        .data(|data| data.get_temp::<(u64, f32)>(slot))
+        .filter(|(revision, _)| *revision == owner.revision)
+        .map_or(stored, |(_, value)| value);
+    let field = |ui: &mut Ui| ui.add(egui::DragValue::new(&mut value).speed(0.5).range(range));
+    let response = if compact {
+        field(ui).accessible_name(t(label))
+    } else {
+        widgets::property_field(ui, t(label), field)
+    };
     let editing = response.dragged() || response.has_focus();
     if editing {
-        ui.data_mut(|data| data.insert_temp(slot, value));
+        ui.data_mut(|data| data.insert_temp(slot, (owner.revision, value)));
         return None;
     }
-    ui.data_mut(|data| data.remove::<f32>(slot));
+    ui.data_mut(|data| data.remove::<(u64, f32)>(slot));
     ((value - stored).abs() > 0.01).then_some(value)
 }
 
@@ -171,24 +216,90 @@ fn color_option(
 fn label_style_controls(
     ui: &mut Ui,
     fonts: &mut thinoda_ui::fonts::SystemFonts,
-    id: CanvasObjectId,
+    owner: LabelControlOwner,
     style: &LabelStyle,
+    compact: bool,
+    popups: &mut Vec<egui::Id>,
+    family_mixed: bool,
 ) -> Option<LabelStyleChange> {
     let mut change = None;
+    if compact {
+        ui.horizontal_wrapped(|ui| {
+            for (icon, label, on, next) in [
+                (
+                    thinoda_ui::icons::BOLD,
+                    "Bold",
+                    style.bold,
+                    LabelStyleChange::Bold(!style.bold),
+                ),
+                (
+                    thinoda_ui::icons::ITALIC,
+                    "Italic",
+                    style.italic,
+                    LabelStyleChange::Italic(!style.italic),
+                ),
+                (
+                    thinoda_ui::icons::UNDERLINE,
+                    "Underline",
+                    style.underline,
+                    LabelStyleChange::Underline(!style.underline),
+                ),
+                (
+                    thinoda_ui::icons::STRIKE,
+                    "Strikethrough",
+                    style.strikethrough,
+                    LabelStyleChange::Strikethrough(!style.strikethrough),
+                ),
+            ] {
+                if widgets::icon_button(ui, icon, t(label), on).clicked() {
+                    change = Some(next);
+                }
+            }
+            let mut family = style.font_family.clone();
+            let (response, picked) = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(126.0, ui.spacing().interact_size.y),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| crate::ui::font_selector_mixed(ui, fonts, &mut family, family_mixed),
+                )
+                .inner;
+            let response = response.accessible_name(t("Font Family"));
+            popups.push(response.id.with("popup"));
+            if picked {
+                change = Some(LabelStyleChange::Family(family));
+            }
+            if let Some(size) = draft_number(
+                ui,
+                "Font Size",
+                owner,
+                style.size(),
+                MIN_LABEL_FONT_SIZE..=MAX_LABEL_FONT_SIZE,
+                true,
+            ) {
+                change = Some(LabelStyleChange::Size(size));
+            }
+        });
+        return change;
+    }
     ui.strong(t("Label text style"));
     let mut family = style.font_family.clone();
+    let mut picked = false;
     widgets::property_field(ui, t("Font Family"), |ui| {
-        crate::ui::font_selector(ui, fonts, &mut family, t("Default"))
+        let (response, touched) =
+            crate::ui::font_selector_mixed(ui, fonts, &mut family, family_mixed);
+        picked = touched;
+        response
     });
-    if family != style.font_family {
+    if picked {
         change = Some(LabelStyleChange::Family(family));
     }
     if let Some(size) = draft_number(
         ui,
         "Font Size",
-        id,
+        owner,
         style.size(),
         MIN_LABEL_FONT_SIZE..=MAX_LABEL_FONT_SIZE,
+        false,
     ) {
         change = Some(LabelStyleChange::Size(size));
     }
@@ -213,6 +324,18 @@ fn label_style_controls(
     if let Some(align) = choice(ui, "label_align", "Alignment", style.align, &ALIGNMENTS) {
         change = Some(LabelStyleChange::Align(align));
     }
+    if let Some(next) = label_advanced_controls(ui, owner, style) {
+        change = Some(next);
+    }
+    change
+}
+
+fn label_advanced_controls(
+    ui: &mut Ui,
+    owner: LabelControlOwner,
+    style: &LabelStyle,
+) -> Option<LabelStyleChange> {
+    let mut change = None;
     if let Some(align) = choice(
         ui,
         "label_vertical_align",
@@ -248,7 +371,8 @@ fn label_style_controls(
         (Side::Right, "Right spacing", style.spacing_right),
     ];
     for (side, label, stored) in sides {
-        if let Some(value) = draft_number(ui, label, id, stored, 0.0..=MAX_LABEL_SPACING) {
+        if let Some(value) = draft_number(ui, label, owner, stored, 0.0..=MAX_LABEL_SPACING, false)
+        {
             change = Some(LabelStyleChange::Spacing(side, value));
         }
     }
@@ -276,6 +400,21 @@ impl ThinodaApp {
     /// Label text section for selected shapes; one change edits every
     /// selected shape in a single undo step. Returns whether it was shown.
     pub(crate) fn board_label_style_properties(&mut self, ui: &mut Ui) -> bool {
+        self.board_text_properties(ui, false, &mut Vec::new())
+    }
+
+    pub(crate) fn board_context_text_properties(&mut self, ui: &mut Ui) -> Vec<egui::Id> {
+        let mut popups = Vec::new();
+        self.board_text_properties(ui, true, &mut popups);
+        popups
+    }
+
+    fn board_text_properties(
+        &mut self,
+        ui: &mut Ui,
+        compact: bool,
+        popups: &mut Vec<egui::Id>,
+    ) -> bool {
         let Some(doc) = self.doc() else { return false };
         let view = &doc.view;
         if view.board_selection.is_empty() || !view.selection.is_empty() {
@@ -289,16 +428,62 @@ impl ThinodaApp {
                 sheet
                     .canvas
                     .object(*id)
-                    .filter(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+                    .filter(|object| !matches!(object.kind, CanvasObjectKind::Ink(_)))
             })
             .collect();
         let Some(shapes) = shapes else { return false };
         let ids: Vec<_> = shapes.iter().map(|object| object.id).collect();
-        let style = shapes[0]
+        let mut style = shapes[0]
             .label_style
             .as_deref()
             .cloned()
             .unwrap_or_default();
+        let family_mixed = shapes.iter().any(|object| {
+            object
+                .label_style
+                .as_deref()
+                .cloned()
+                .unwrap_or_default()
+                .font_family
+                != style.font_family
+        });
+        let style_mixed = shapes
+            .iter()
+            .any(|object| object.label_style.as_deref().cloned().unwrap_or_default() != style);
+        style.bold = shapes
+            .iter()
+            .all(|object| object.label_style.as_ref().is_some_and(|style| style.bold));
+        style.italic = shapes.iter().all(|object| {
+            object
+                .label_style
+                .as_ref()
+                .is_some_and(|style| style.italic)
+        });
+        style.underline = shapes.iter().all(|object| {
+            object
+                .label_style
+                .as_ref()
+                .is_some_and(|style| style.underline)
+        });
+        style.strikethrough = shapes.iter().all(|object| {
+            object
+                .label_style
+                .as_ref()
+                .is_some_and(|style| style.strikethrough)
+        });
+        let text_color = shapes[0].style.text_color;
+        let colors_mixed = shapes
+            .iter()
+            .any(|object| object.style.text_color != text_color);
+        let mut automatic_style = shapes[0].style;
+        automatic_style.text_color = None;
+        let auto_color = crate::ui::to_color(
+            thinoda_canvas::board_label_colors(sheet, &automatic_style, view.dark).0,
+        );
+        let owner = LabelControlOwner {
+            identity: egui::Id::unique((doc.doc.instance_id(), doc.doc.active_index(), &ids)),
+            revision: doc.doc.state_id(),
+        };
         let members: Vec<_> = ids.iter().map(|id| BoardMember::Object(*id)).collect();
         let locked = sheet
             .expand_board_selection(&members)
@@ -307,13 +492,65 @@ impl ThinodaApp {
                     .iter()
                     .any(|member| sheet.is_board_member_locked(*member))
             });
-        let enabled = !locked && !view.has_active_canvas_gesture();
+        let enabled = !locked
+            && !view.has_active_canvas_gesture()
+            && !doc.has_inspector_changes()
+            && doc.ensure_no_pending_ink().is_ok();
+        let canvas = view.canvas_rect();
         let fonts = &mut self.fonts;
         let change = ui
-            .push_id(("board_label_style", ids[0]), |ui| {
-                ui.separator();
+            .push_id(("board_label_style", owner.identity), |ui| {
+                if !compact {
+                    ui.separator();
+                }
                 ui.add_enabled_ui(enabled, |ui| {
-                    label_style_controls(ui, fonts, ids[0], &style)
+                    if (style_mixed || colors_mixed)
+                        && (!compact || ui.ctx().content_rect().height() >= 400.0)
+                    {
+                        ui.label(egui::RichText::new(t("Mixed")).small());
+                    }
+                    let mut change = label_style_controls(
+                        ui,
+                        fonts,
+                        owner,
+                        &style,
+                        compact,
+                        popups,
+                        family_mixed,
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if compact {
+                            let alignment = ui.menu_button(t("Alignment"), |ui| {
+                                for (value, label) in ALIGNMENTS {
+                                    if ui
+                                        .selectable_label(style.align == value, t(label))
+                                        .clicked()
+                                    {
+                                        change = Some(LabelStyleChange::Align(value));
+                                    }
+                                }
+                            });
+                            popups.push(egui::Popup::menu(&alignment.response).get_id());
+                            let advanced = ui.menu_button(t("More text options"), |ui| {
+                                if let Some(next) = label_advanced_controls(ui, owner, &style) {
+                                    change = Some(next);
+                                }
+                            });
+                            popups.push(egui::Popup::menu(&advanced.response).get_id());
+                        }
+                        let (popup, color) = crate::board_ui::text_color_popup(
+                            ui,
+                            canvas,
+                            &owner,
+                            text_color,
+                            text_color.unwrap_or(auto_color),
+                        );
+                        popups.push(popup);
+                        if let Some(color) = color {
+                            change = Some(LabelStyleChange::Color(color));
+                        }
+                    });
+                    change
                 })
                 .inner
             })

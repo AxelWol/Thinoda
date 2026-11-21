@@ -33,10 +33,10 @@ fn assert_popups_fit(h: &Harness<'_, ThinodaApp>) {
     // egui snaps popups to physical pixels; allow one pixel of rounding slack.
     let viewport = h.ctx.content_rect().expand(1.0 / ppp);
     h.ctx.memory(|memory| {
-        for layer in memory
-            .layer_ids()
-            .filter(|layer| layer.order == egui::Order::Foreground)
-        {
+        // Hidden areas keep their last rect, which may predate a scale change.
+        for layer in memory.layer_ids().filter(|layer| {
+            layer.order == egui::Order::Foreground && memory.areas().visible_last_frame(layer)
+        }) {
             if let Some(rect) = memory.area_rect(layer.id) {
                 assert!(
                     viewport.contains_rect(rect),
@@ -375,4 +375,137 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     menu_action(&h, t("Board")).click();
     h.run_steps(3);
     reveal(&mut h, t("Unlock board selection"));
+}
+
+fn assert_context_menu_above_nearby_menu(h: &Harness<'_, ThinodaApp>) {
+    let popup = egui::LayerId::new(
+        egui::Order::Foreground,
+        thinoda_canvas::MapCanvas::id().with("popup"),
+    );
+    let nearby = egui::LayerId::new(
+        thinoda_canvas::format_menu::ORDER,
+        thinoda_canvas::format_menu::area_id(&h.ctx),
+    );
+    h.ctx.memory(|memory| {
+        assert!(
+            memory.areas().visible_last_frame(&popup),
+            "context menu closed"
+        );
+        if !memory.areas().visible_last_frame(&nearby) {
+            return;
+        }
+        let order: Vec<_> = memory.layer_ids().collect();
+        let index = |layer| order.iter().position(|candidate| *candidate == layer);
+        assert!(
+            index(popup) > index(nearby),
+            "nearby menu painted above the context menu"
+        );
+    });
+}
+
+#[test]
+fn right_click_selection_keeps_the_context_menu_above_the_nearby_menu() {
+    let mut app = ThinodaApp::headless();
+    app.settings.show_format_panel = false;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .allow_missing_glyphs()
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    let shapes = {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+        let doc = h.state_mut().doc_mut().unwrap();
+        [
+            (ShapeKind::Rectangle, Vec2::new(-400.0, -250.0)),
+            (ShapeKind::Ellipse, Vec2::new(250.0, 120.0)),
+        ]
+        .map(|(kind, min)| {
+            doc.doc
+                .add_canvas_object(CanvasObject::shape(
+                    kind,
+                    Rect::from_min_size(min, Vec2::new(100.0, 70.0)),
+                ))
+                .unwrap()
+        })
+    };
+    h.run_steps(3);
+    let centre = |h: &Harness<'_, ThinodaApp>, offset: egui::Vec2| {
+        let view = &h.state().doc().unwrap().view;
+        view.canvas_rect().center() + view.offset + offset * view.zoom
+    };
+    let targets = [
+        (shapes[0], egui::vec2(-350.0, -215.0)),
+        (shapes[1], egui::vec2(300.0, 155.0)),
+    ];
+    for round in 0..3 {
+        for (shape, offset) in targets {
+            // Raise the nearby menu in egui's order, as a click on it would.
+            if round > 0 {
+                let menu = egui::LayerId::new(
+                    thinoda_canvas::format_menu::ORDER,
+                    thinoda_canvas::format_menu::area_id(&h.ctx),
+                );
+                h.ctx.move_to_top(menu);
+                h.run_steps(1);
+            }
+            let pos = centre(&h, offset);
+            right_click(&mut h, pos);
+            assert_eq!(h.state().doc().unwrap().view.board_selection, vec![shape]);
+            assert_context_menu_above_nearby_menu(&h);
+            h.run_steps(4);
+            assert_context_menu_above_nearby_menu(&h);
+            h.key_press(egui::Key::Escape);
+            h.run_steps(3);
+        }
+    }
+}
+
+#[test]
+fn right_click_on_the_nearby_menu_opens_the_selection_menu_not_a_stale_marker() {
+    use thinoda_canvas::Action;
+    let mut app = ThinodaApp::headless();
+    app.settings.show_format_panel = false;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .allow_missing_glyphs()
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(
+        &ctx,
+        Cmd::Canvas(Action::ToggleMarkerColor("flag-red".into(), None)),
+    );
+    h.run_steps(5);
+    let (root, marker) = {
+        let d = h.state().doc().unwrap();
+        let root = d.doc.sheet().root;
+        (root, d.view.symbol_rect(&d.doc, root, 0).unwrap().center())
+    };
+    right_click(&mut h, marker);
+    assert_eq!(
+        h.state().doc().unwrap().view.context_marker,
+        Some((root, 0))
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    let nearby = egui::LayerId::new(
+        thinoda_canvas::format_menu::ORDER,
+        thinoda_canvas::format_menu::area_id(&h.ctx),
+    );
+    let rect = h.ctx.memory(|memory| {
+        assert!(
+            memory.areas().visible_last_frame(&nearby),
+            "nearby menu hidden"
+        );
+        memory.area_rect(nearby.id).unwrap()
+    });
+    right_click(&mut h, rect.left_top() + egui::vec2(3.0, 3.0));
+    assert_eq!(h.state().doc().unwrap().view.context_marker, None);
+    assert_context_menu_above_nearby_menu(&h);
+    assert!(
+        h.query_all_by_role_and_label(Role::Button, t("Remove Symbol"))
+            .next()
+            .is_none(),
+        "forwarded right-click reopened the marker menu"
+    );
 }

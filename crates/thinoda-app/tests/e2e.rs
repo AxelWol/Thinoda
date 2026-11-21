@@ -1925,10 +1925,11 @@ fn format_panel_on_home_explains_why_it_is_hidden() {
 }
 
 #[test]
-fn toolbar_inserts_subtopic_and_topic() {
+fn selection_menu_inserts_subtopic_and_topic() {
     let mut h = harness(ThinodaApp::headless());
     let before = root_children(h.state());
-    h.get_by_role_and_label(Role::Button, "Subtopic").click();
+    h.get_by_role_and_label(Role::Button, "Add subtopic")
+        .click();
     h.run_steps(2);
     assert_eq!(
         root_children(h.state()),
@@ -1938,7 +1939,12 @@ fn toolbar_inserts_subtopic_and_topic() {
     assert!(h.state().doc().unwrap().is_dirty());
 
     // The new topic is selected, so "Topic" inserts a sibling under the root.
-    h.get_by_role_and_label(Role::Button, "Topic").click();
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "More actions")
+        .click();
+    h.run_steps(3);
+    menu_action(&h, "Topic").click();
     h.run_steps(2);
     assert_eq!(root_children(h.state()), before + 2);
 }
@@ -2432,12 +2438,10 @@ fn contextual_toolbar_follows_selection_and_edits_topic_properties() {
 }
 
 #[test]
-fn floating_insert_menu_opens_notes_and_preserves_selection() {
+fn selection_menu_opens_notes_and_preserves_selection() {
     let mut h = harness(ThinodaApp::headless());
     let selected = h.state().doc().unwrap().view.primary();
-    h.get_by_label("More insert actions").click();
-    h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Notes").click();
+    h.get_by_role_and_label(Role::Button, "Edit notes").click();
     h.run_steps(3);
     assert_eq!(h.state().doc().unwrap().view.primary(), selected);
     assert!(
@@ -2606,11 +2610,12 @@ fn contextual_menu_disables_root_parent_and_blank_canvas_topic_actions() {
     let canvas = h.state().doc().unwrap().view.canvas_rect();
     right_click_at(&mut h, canvas.left_top() + egui::vec2(16.0, 80.0));
     assert!(h.state().doc().unwrap().view.selection.is_empty());
-    h.query_all_by_role_and_label(Role::Button, "Subtopic")
-        .last()
-        .unwrap()
-        .click();
-    h.run_steps(2);
+    assert!(
+        h.query_all_by_role_and_label(Role::Button, "Subtopic")
+            .next()
+            .is_none(),
+        "blank canvas must not offer subtopic insertion"
+    );
     assert_eq!(
         h.state().doc().unwrap().doc.sheet().all_ids_ordered().len(),
         before

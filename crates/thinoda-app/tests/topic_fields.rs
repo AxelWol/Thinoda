@@ -217,14 +217,12 @@ fn topic_fields_share_selection_guards_and_preserve_inline_edits() {
                     );
                     h.key_press(egui::Key::Escape);
                     h.run_steps(3);
-                    h.get_by_role_and_label(Role::Button, t("More insert actions"))
-                        .click();
-                    h.run_steps(3);
-                    assert!(
-                        h.get_by_role_and_label(Role::Button, t(label))
-                            .accesskit_node()
-                            .is_disabled()
-                    );
+                    // Without a selection the nearby menu offers no field actions.
+                    let action = match field {
+                        FocusField::Notes => "Edit notes",
+                        FocusField::Hyperlink => "Edit hyperlink",
+                    };
+                    assert!(h.query_by_role_and_label(Role::Button, t(action)).is_none());
                 }
             }
         }

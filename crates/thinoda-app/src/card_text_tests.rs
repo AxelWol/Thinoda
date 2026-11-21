@@ -45,9 +45,19 @@ fn harness(app: ThinodaApp, size: egui::Vec2) -> Harness<'static, ThinodaApp> {
 }
 
 fn open_toolbar(harness: &mut Harness<'_, ThinodaApp>) {
-    harness
-        .get_by_role_and_label(Role::Button, card_text_label())
-        .click();
+    if harness
+        .query_by_role_and_label(Role::Button, "Bold")
+        .is_none()
+    {
+        if let Some(text) = harness
+            .query_all_by_role_and_label(Role::Button, "Text")
+            .find(|node| menu_rect(harness).is_some_and(|rect| rect.contains(node.rect().center())))
+        {
+            text.click();
+        } else {
+            harness.key_press_modifiers(Modifiers::ALT, Key::F10);
+        }
+    }
     harness.run_steps(5);
     assert!(
         harness
@@ -56,7 +66,18 @@ fn open_toolbar(harness: &mut Harness<'_, ThinodaApp>) {
     );
 }
 
+fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let id = thinoda_canvas::format_menu::area_id(&h.ctx);
+    h.ctx.memory(|memory| memory.area_rect(id))
+}
+
 fn scroll_and_click(harness: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
+    if label.starts_with("Text Color ") && harness.query_by_role_and_label(role, label).is_none() {
+        harness
+            .get_by_role_and_label(Role::Button, "Text Color")
+            .click();
+        harness.run_steps(3);
+    }
     harness.get_by_role_and_label(role, label).scroll_to_me();
     harness.run_steps(4);
     harness.get_by_role_and_label(role, label).click();
@@ -82,19 +103,38 @@ fn open_toolbar_from_context(h: &mut Harness<'_, ThinodaApp>) {
     h.get_by_role_and_label(Role::Button, "Styles").hover();
     h.run_steps(6);
     scroll_and_click(h, Role::Button, card_text_label());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
 }
 
 fn style(harness: &Harness<'_, ThinodaApp>, id: TopicId) -> TopicStyle {
-    harness
-        .state()
-        .doc()
-        .unwrap()
-        .doc
-        .sheet()
-        .topic(id)
-        .unwrap()
-        .style
-        .clone()
+    let doc = harness.state().doc().unwrap();
+    let mut style = doc.doc.sheet().topic(id).unwrap().style.clone();
+    // Text controls target the current selection/typing style during editing,
+    // and card defaults otherwise. Persistence assertions read the topic directly.
+    if doc.view.editing_topic() == Some(id) {
+        for (format, value) in [
+            (thinoda_canvas::CardTitleFormat::Bold, &mut style.bold),
+            (thinoda_canvas::CardTitleFormat::Italic, &mut style.italic),
+            (
+                thinoda_canvas::CardTitleFormat::Underline,
+                &mut style.underline,
+            ),
+            (
+                thinoda_canvas::CardTitleFormat::Strikethrough,
+                &mut style.strikethrough,
+            ),
+        ] {
+            if MapCanvas::title_format_is_active(&harness.ctx, &doc.doc, &doc.view, format) {
+                *value = Some(true);
+            }
+        }
+        if let Some(values) = MapCanvas::title_inline_values(&harness.ctx, &doc.doc, &doc.view) {
+            style.font_family = values.font_family.flatten().or(style.font_family);
+            style.font_size = values.font_size.flatten().or(style.font_size);
+            style.text_color = values.color.flatten().or(style.text_color);
+        }
+    }
+    style
 }
 
 fn raw_key_press(key: Key, modifiers: Modifiers) -> [egui::Event; 4] {
@@ -121,6 +161,137 @@ fn run_input_hook_steps(h: &mut Harness<'_, ThinodaApp>, steps: usize) {
         *h.input_mut() = input;
         h.run_steps(1);
     }
+}
+
+#[test]
+fn selected_cards_default_to_actions_and_text_is_an_explicit_scope() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Actions")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+        assert!(h.query_by_role_and_label(Role::Button, "Arrange").is_none());
+        let before = h.state().doc().unwrap().doc.state_id();
+        open_toolbar(&mut h);
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Text")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), before);
+        assert_eq!(h.state().doc().unwrap().view.selection, [id]);
+    }
+}
+
+#[test]
+fn text_section_handover_commits_same_frame_title_input_once() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let section = "Style";
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1000.0, 700.0));
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(4);
+        let point = h
+            .get_by_role_and_label(Role::Button, section)
+            .rect()
+            .center();
+        h.input_mut().events.push(egui::Event::Text("!".into()));
+        h.input_mut().events.push(egui::Event::PointerMoved(point));
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: point,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.run_steps(5);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().topic(id).unwrap().title,
+            "Card title!",
+            "{section}"
+        );
+        assert_eq!(doc.view.editing_topic(), None, "{section}");
+        assert_eq!(doc.view.selection, [id]);
+        assert_eq!(
+            format!(
+                "{:?}",
+                thinoda_canvas::format_menu::section(
+                    &h.ctx,
+                    thinoda_canvas::format_menu::owner(&doc.doc, &doc.view),
+                    thinoda_canvas::format_menu::Section::Text,
+                )
+            ),
+            section
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .title,
+            "Card title"
+        );
+    }
+}
+
+#[test]
+fn ime_blocks_section_handover_without_losing_the_title_draft() {
+    let (app, id) = app_with_card(CardKind::Sticky);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.set_editing_text("Pending ");
+    }
+    h.run_steps(4);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "nihon".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    let section = h.get_by_role_and_label(Role::Button, "Style");
+    assert!(section.accesskit_node().is_disabled());
+    section.click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
+    assert!(h.get_by_label("Topic title").is_focused());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("日本".into())));
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_text(),
+        Some("Pending 日本")
+    );
+    scroll_and_click(&mut h, Role::Button, "Style");
+    assert_eq!(h.state().doc().unwrap().view.editing_topic(), None);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .title,
+        "Pending 日本"
+    );
 }
 
 #[test]
@@ -397,7 +568,7 @@ fn plugin_orders_input_and_close_in_an_immediate_document_viewport() {
     }
     let doc = app.docs.iter().find(|doc| doc.key == key).unwrap();
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title!");
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(!app.document_windows.contains_key(&key));
 }
 
@@ -452,7 +623,7 @@ fn native_window_command_waits_for_its_queued_card_input() {
         run(&mut app, vec![], false);
     }
     let doc = app.docs.iter().find(|doc| doc.key == key).unwrap();
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(!app.document_windows.contains_key(&key));
     assert!(!card_text_input_needs_repaint(&ctx, child));
 }
@@ -529,7 +700,7 @@ fn root_close_waits_for_an_immediate_childs_pending_input() {
     }
     let doc = app.docs.iter().find(|doc| doc.key == child_key).unwrap();
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title!");
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(app.dialogs.close.is_some());
 }
 
@@ -609,7 +780,7 @@ fn check_opening_document_window_with_pending_input(input_already_queued: bool) 
         run_root(&mut app, false);
     }
     let doc = app.docs.iter().find(|doc| doc.key == child_key).unwrap();
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(!app.document_windows.contains_key(&child_key));
     assert!(!card_text_input_needs_repaint(&ctx, child));
 }
@@ -709,7 +880,7 @@ fn check_save_all_with_another_windows_input(input_already_queued: bool, close: 
     }
     let saved = thinoda_io::import_file(&path).unwrap();
     assert_eq!(saved.active().topic(id).unwrap().title, "Card title!");
-    assert_eq!(saved.active().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(saved.active().topic(id).unwrap().style.bold, None);
 }
 
 #[test]
@@ -754,10 +925,7 @@ fn asynchronous_open_waits_for_queued_input_in_its_origin_window() {
         .iter()
         .find(|doc| doc.key == original_key)
         .unwrap();
-    assert_eq!(
-        original.doc.sheet().topic(id).unwrap().style.bold,
-        Some(true)
-    );
+    assert_eq!(original.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(
         h.state()
             .docs
@@ -1391,11 +1559,6 @@ fn active_card_title_alignment_matches_the_saved_title() {
         let (app, id) = app_with_card(kind);
         let mut h = harness(app, vec2(1200.0, 700.0));
         open_toolbar(&mut h);
-        {
-            let doc = h.state_mut().doc_mut().unwrap();
-            doc.view.begin_edit(doc.doc.sheet(), id, false);
-        }
-        h.run_steps(5);
         let mut editing_positions = Vec::new();
         for (align, label) in [
             (TextAlign::Left, "Align Left"),
@@ -1405,6 +1568,22 @@ fn active_card_title_alignment_matches_the_saved_title() {
             h.get_by_role_and_label(Role::Button, label).click();
             h.run_steps(4);
             assert_eq!(style(&h, id).align, Some(align));
+            let saved = h
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .expect("saved title should be painted");
+            {
+                let doc = h.state_mut().doc_mut().unwrap();
+                doc.view.begin_edit(doc.doc.sheet(), id, false);
+            }
+            h.run_steps(5);
             let doc = h.state().doc().unwrap();
             assert_eq!(doc.view.editing_text(), Some("Card title"));
             assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title");
@@ -1420,6 +1599,12 @@ fn active_card_title_alignment_matches_the_saved_title() {
                 })
                 .expect("editing title should be painted");
             editing_positions.push(text.center().x);
+            assert!(
+                (saved.center().x - text.center().x).abs() < 3.0,
+                "{kind:?}: {align:?}"
+            );
+            h.state_mut().doc_mut().unwrap().view.cancel_edit();
+            h.run_steps(4);
         }
         assert!(
             editing_positions[0] + 10.0 < editing_positions[1]
@@ -1461,10 +1646,7 @@ fn keyboard_controls_use_theme_state_and_close_without_changing_selection() {
         })
         .unwrap();
     let mut h = harness(app, vec2(900.0, 600.0));
-    h.get_by_role_and_label(Role::Button, card_text_label())
-        .focus();
-    h.run_steps(2);
-    h.key_press(Key::Enter);
+    h.key_press_modifiers(Modifiers::ALT, Key::F10);
     h.run_steps(5);
     let bold = h.get_by_role_and_label(Role::Button, "Bold");
     assert!(bold.is_focused());
@@ -1510,12 +1692,18 @@ fn keyboard_can_choose_and_reset_color_and_choose_a_font() {
     let (app, id) = app_with_card(CardKind::Text);
     let mut h = harness(app, vec2(640.0, 360.0));
     open_toolbar(&mut h);
+    scroll_and_click(&mut h, Role::Button, "Text Color");
     h.get_by_role_and_label(Role::ColorWell, "Text Color #E8455C")
         .focus();
     h.run_steps(5);
     h.key_press(Key::Space);
     h.run_steps(3);
     assert_eq!(style(&h, id).text_color, Some(Color::rgb(0xE8, 0x45, 0x5C)));
+    if h.query_by_role_and_label(Role::Button, "Text Color · Auto")
+        .is_none()
+    {
+        scroll_and_click(&mut h, Role::Button, "Text Color");
+    }
     h.get_by_role_and_label(Role::Button, "Text Color · Auto")
         .focus();
     h.run_steps(5);
@@ -1537,7 +1725,7 @@ fn keyboard_can_choose_and_reset_color_and_choose_a_font() {
 }
 
 #[test]
-fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
+fn formatting_overlays_a_stationary_canvas_with_bounded_controls_in_compact_windows() {
     for dark in [false, true] {
         for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(960.0, 540.0)] {
             let (mut app, id) = app_with_card(CardKind::Text);
@@ -1560,14 +1748,76 @@ fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
             }
             let canvas = h.state().doc().unwrap().view.canvas_rect();
             let bold = h.get_by_role_and_label(Role::Button, "Bold").rect();
+            let menu = menu_rect(&h).unwrap();
+            assert!(canvas.contains_rect(menu), "{size:?}: {menu:?}");
+            for (role, label) in [
+                (Role::Button, "Text"),
+                (Role::Button, "Style"),
+                (Role::Button, "Actions"),
+                (Role::Button, "Bold"),
+                (Role::ComboBox, "Font Family"),
+                (Role::SpinButton, "Font Size"),
+                (Role::Button, "Text Color"),
+            ] {
+                let rect = h.get_by_role_and_label(role, label).rect();
+                assert!(
+                    menu.contains_rect(rect),
+                    "{size:?}: {label}: {rect:?} {menu:?}"
+                );
+            }
             assert_eq!(canvas, canvas_before, "opening formatting moved the canvas");
             assert!(canvas.contains_rect(bold), "{bold:?} {canvas:?}");
             assert!(h.ctx.content_rect().contains_rect(bold));
+            let family_before = h
+                .get_by_role_and_label(Role::ComboBox, "Font Family")
+                .rect();
+            let camera = {
+                let view = &h.state().doc().unwrap().view;
+                (view.offset, view.zoom)
+            };
+            h.hover_at(menu.center());
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(-400.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(4);
+            assert_eq!(
+                {
+                    let view = &h.state().doc().unwrap().view;
+                    (view.offset, view.zoom)
+                },
+                camera,
+                "a wheel over the selection menu must not pan or zoom the canvas"
+            );
+            assert_eq!(
+                h.get_by_role_and_label(Role::ComboBox, "Font Family")
+                    .rect()
+                    .translate(menu.min - menu_rect(&h).unwrap().min),
+                family_before
+            );
+            assert_eq!(
+                h.get_by_role_and_label(Role::Button, "Bold")
+                    .rect()
+                    .translate(menu.min - menu_rect(&h).unwrap().min),
+                bold
+            );
             let board = h
                 .ctx
                 .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")));
-            assert!(!board.unwrap().intersects(bold));
-            assert_eq!(board, board_before, "opening formatting moved the toolbox");
+            let visible = h.ctx.memory(|memory| {
+                memory
+                    .areas()
+                    .visible_layer_ids()
+                    .iter()
+                    .any(|layer| layer.id == egui::Id::unique("thinoda_board_toolbar"))
+            });
+            if visible {
+                assert!(!board.unwrap().intersects(bold));
+                assert_eq!(board, board_before, "opening formatting moved the toolbox");
+            }
 
             h.get_by_role_and_label(Role::ComboBox, "Font Family")
                 .focus();
@@ -1583,6 +1833,7 @@ fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
             h.run_steps(3);
             assert_eq!(style(&h, id).font_family.as_deref(), Some("monospace"));
 
+            scroll_and_click(&mut h, Role::Button, "Text Color");
             let color = h.get_by_role_and_label(Role::ColorWell, "Text Color #FFFFFF");
             color.focus();
             h.run_steps(6);
@@ -1606,7 +1857,7 @@ fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
 }
 
 #[test]
-fn formatting_and_ink_options_share_a_stationary_canvas() {
+fn selected_card_menu_takes_priority_over_creation_ink_options() {
     for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(1000.0, 700.0)] {
         let (app, id) = app_with_card(CardKind::Text);
         let mut h = harness(app, size);
@@ -1628,29 +1879,22 @@ fn formatting_and_ink_options_share_a_stationary_canvas() {
         h.run_steps(8);
         assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
         assert_eq!(h.ctx.memory(|memory| memory.area_rect(board_id)), board);
-        let (card, ink) = h.ctx.memory(|memory| {
-            (
-                memory.area_rect(egui::Id::unique((
-                    "thinoda_card_text_toolbar",
-                    egui::ViewportId::ROOT,
-                ))),
-                memory.area_rect(egui::Id::unique((
-                    "thinoda_ink_options",
-                    egui::ViewportId::ROOT,
-                ))),
-            )
-        });
-        let (card, ink) = (card.unwrap(), ink.unwrap());
-        assert!(canvas.contains_rect(card) && canvas.contains_rect(ink));
-        assert!(!card.intersects(ink), "{size:?}: {card:?} {ink:?}");
-        assert!(!board.unwrap().intersects(card));
-        assert!(!board.unwrap().intersects(ink));
+        let card = menu_rect(&h);
+        assert!(canvas.contains_rect(card.unwrap()));
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Ink width")
+                .is_none()
+        );
 
         h.get_by_role_and_label(Role::Button, "Bold").focus();
         h.run_steps(6);
         h.key_press(Key::Space);
         h.run_steps(4);
         assert_eq!(style(&h, id).bold, Some(true));
+        h.get_by_role_and_label(Role::Button, "Bold").focus();
+        h.key_press(Key::Escape);
+        h.run_steps(4);
+        assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
         h.get_by_role_and_label(Role::Button, "Ink width")
             .scroll_to_me();
         h.run_steps(6);
@@ -1679,7 +1923,7 @@ fn compact_formatting_keeps_insert_actions_without_covering_the_card() {
     let (app, id) = app_with_card(CardKind::Sticky);
     let mut h = harness(app, vec2(320.0, 240.0));
     open_toolbar_from_context(&mut h);
-    assert!(h.query_by_label("Whole-card text").is_some());
+    assert!(h.query_by_label("Selected object").is_some());
     assert!(
         !h.ctx.memory(|memory| {
             memory
@@ -1690,12 +1934,16 @@ fn compact_formatting_keeps_insert_actions_without_covering_the_card() {
         }),
         "the floating insert toolbar must not obscure the card while formatting"
     );
-    let action = h.get_by_role_and_label(Role::Button, "More insert actions");
+    scroll_and_click(&mut h, Role::Button, "Actions");
+    if h.query_by_role_and_label(Role::Button, "Add subtopic")
+        .is_none()
+    {
+        scroll_and_click(&mut h, Role::Button, "Actions");
+    }
+    let action = h.get_by_role_and_label(Role::Button, "Add subtopic");
     let canvas = h.state().doc().unwrap().view.canvas_rect();
     assert!(canvas.contains_rect(action.rect()));
     action.click();
-    h.run_steps(4);
-    h.get_by_role_and_label(Role::Button, "Subtopic").click();
     h.run_steps(4);
     assert_eq!(
         h.state()
@@ -1716,7 +1964,13 @@ fn formatting_overflow_keeps_marker_and_find_actions() {
     let (app, id) = app_with_card(CardKind::Sticky);
     let mut h = harness(app, vec2(320.0, 240.0));
     open_toolbar_from_context(&mut h);
-    h.get_by_role_and_label(Role::Button, "More insert actions")
+    scroll_and_click(&mut h, Role::Button, "Actions");
+    if h.query_by_role_and_label(Role::Button, "More actions")
+        .is_none()
+    {
+        scroll_and_click(&mut h, Role::Button, "Actions");
+    }
+    h.get_by_role_and_label(Role::Button, "More actions")
         .click();
     h.run_steps(4);
     scroll_and_click(&mut h, Role::Button, "Marker");
@@ -1735,7 +1989,13 @@ fn formatting_overflow_keeps_marker_and_find_actions() {
     );
     h.run_steps(4);
     open_toolbar_from_context(&mut h);
-    h.get_by_role_and_label(Role::Button, "More insert actions")
+    scroll_and_click(&mut h, Role::Button, "Actions");
+    if h.query_by_role_and_label(Role::Button, "More actions")
+        .is_none()
+    {
+        scroll_and_click(&mut h, Role::Button, "Actions");
+    }
+    h.get_by_role_and_label(Role::Button, "More actions")
         .click();
     h.run_steps(4);
     scroll_and_click(&mut h, Role::Button, "Find and Replace…");
@@ -1800,11 +2060,7 @@ fn stale_selection_document_and_locks_never_receive_an_edit() {
     assert_eq!(h.state().doc().unwrap().doc.state_id(), state);
     assert_eq!(style(&h, id).bold, None);
     assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
-    assert!(
-        h.get_by_role_and_label(Role::Button, card_text_label())
-            .accesskit_node()
-            .is_disabled()
-    );
+    assert!(h.query_by_role_and_label(Role::Button, "Text").is_none());
 
     h.state_mut()
         .new_doc(templates::instantiate("blank-canvas"));
@@ -1857,11 +2113,7 @@ fn locked_group_or_member_never_enables_single_card_formatting() {
         assert_eq!(app.doc().unwrap().doc.state_id(), state);
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
         let h = harness(app, vec2(1000.0, 700.0));
-        assert!(
-            h.get_by_role_and_label(Role::Button, card_text_label())
-                .accesskit_node()
-                .is_disabled()
-        );
+        assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
     }
 }
 
@@ -1978,7 +2230,6 @@ fn pointer_created_cards_keep_their_title_editor_focused() {
                     h.event(egui::Event::Text("Typed immediately".into()));
                 }
                 h.run_steps(5);
-
                 let doc = h.state().doc().unwrap();
                 let id = doc.doc.sheet().floating[0];
                 assert_eq!(
@@ -2190,6 +2441,18 @@ fn formatting_during_a_card_title_draft_preserves_the_draft() {
         assert_eq!(
             h.state().doc().unwrap().view.editing_text(),
             Some("Pending title")
+        );
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .style
+                .bold,
+            None
         );
         assert_eq!(
             h.state()
@@ -2800,7 +3063,7 @@ fn escaping_font_size_keeps_applied_style_and_title_draft() {
     assert_eq!(style(&h, id).font_size, Some(26.0));
     assert_eq!(
         h.ctx.data(|data| data
-            .get_temp::<bool>(card_text_slot(egui::ViewportId::ROOT).with("size_editing"))),
+            .get_temp::<bool>(card_text_slot(egui::ViewportId::ROOT).with("inline_size_editing"))),
         Some(true)
     );
     h.key_press(Key::Escape);
@@ -2835,7 +3098,15 @@ fn applied_font_size_and_another_control_are_both_preserved() {
         } else {
             Role::Button
         };
-        let pos = h.get_by_role_and_label(role, action).rect().center();
+        let target = if action == "Text Color #E8455C" {
+            "Text Color"
+        } else {
+            action
+        };
+        let pos = h
+            .get_by_role_and_label(Role::Button, target)
+            .rect()
+            .center();
         h.event(egui::Event::PointerMoved(pos));
         for pressed in [true, false] {
             h.event(egui::Event::PointerButton {
@@ -2846,6 +3117,9 @@ fn applied_font_size_and_another_control_are_both_preserved() {
             });
         }
         h.run_steps(4);
+        if role == Role::ColorWell {
+            scroll_and_click(&mut h, role, action);
+        }
         assert_eq!(style(&h, id).font_size, Some(27.0), "{action}");
         match action {
             "Bold" => assert_eq!(style(&h, id).bold, Some(true)),
@@ -2871,7 +3145,7 @@ fn saving_while_font_size_is_being_edited_keeps_the_entered_value() {
     let mut h = harness(app, vec2(1600.0, 700.0));
     {
         let doc = h.state_mut().doc_mut().unwrap();
-        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
         doc.view.set_editing_text("Save title");
     }
     h.run_steps(5);
@@ -2882,15 +3156,30 @@ fn saving_while_font_size_is_being_edited_keeps_the_entered_value() {
     h.key_press_modifiers(Modifiers::COMMAND, Key::S);
     h.run_steps(5);
     let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.font_size, None);
     assert_eq!(
-        doc.doc.sheet().topic(id).unwrap().style.font_size,
+        doc.doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.font_size),
         Some(27.0)
     );
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Save title");
     assert!(!doc.is_dirty());
     let saved = thinoda_io::import_file(&path).unwrap();
     assert_eq!(
-        saved.active().topic(id).unwrap().style.font_size,
+        saved
+            .active()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.font_size),
         Some(27.0)
     );
     assert_eq!(saved.active().topic(id).unwrap().title, "Save title");
@@ -2941,7 +3230,7 @@ fn last_font_size_keystroke_and_save_in_one_frame_are_preserved() {
     let mut h = harness(app, vec2(1600.0, 700.0));
     {
         let doc = h.state_mut().doc_mut().unwrap();
-        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
         doc.view.set_editing_text("Fast save");
     }
     h.run_steps(5);
@@ -2955,7 +3244,14 @@ fn last_font_size_keystroke_and_save_in_one_frame_are_preserved() {
     h.run_steps(5);
     let saved = thinoda_io::import_file(&path).unwrap();
     assert_eq!(
-        saved.active().topic(id).unwrap().style.font_size,
+        saved
+            .active()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.font_size),
         Some(27.0)
     );
     assert_eq!(saved.active().topic(id).unwrap().title, "Fast save");
@@ -3077,7 +3373,7 @@ fn active_font_size_input_continues_after_save_in_event_order() {
     let mut h = harness(app, vec2(1600.0, 700.0));
     {
         let doc = h.state_mut().doc_mut().unwrap();
-        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
         doc.view.set_editing_text("Size draft");
     }
     h.run_steps(5);
@@ -3092,7 +3388,17 @@ fn active_font_size_input_continues_after_save_in_event_order() {
     h.run_steps(8);
     let saved = thinoda_io::import_file(&path).unwrap();
     assert_eq!(saved.active().topic(id).unwrap().title, "Size draft");
-    assert_eq!(saved.active().topic(id).unwrap().style.font_size, Some(6.0));
+    assert_eq!(
+        saved
+            .active()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.font_size),
+        Some(6.0)
+    );
     assert_eq!(style(&h, id).font_size, Some(64.0));
     assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
 }
@@ -3516,7 +3822,7 @@ fn formatted_card_toolbar_applies_inline_run_and_list_formats_to_selection() {
         )));
     state.store(&h.ctx, editor_id);
     assert!(MapCanvas::title_has_selection(&h.ctx));
-    scroll_and_click(&mut h, Role::Button, "Inline superscript");
+    scroll_and_click(&mut h, Role::Button, "Superscript");
     let draft = h
         .state()
         .doc()
@@ -3528,7 +3834,7 @@ fn formatted_card_toolbar_applies_inline_run_and_list_formats_to_selection() {
         draft.runs[0].style.baseline,
         Some(thinoda_core::InlineBaseline::Superscript)
     );
-    scroll_and_click(&mut h, Role::Button, "Inline bulleted list");
+    scroll_and_click(&mut h, Role::Button, "Bulleted list");
     let draft = h
         .state()
         .doc()
@@ -3554,7 +3860,7 @@ fn formatted_card_toolbar_sets_typing_style_at_caret() {
     }
     h.run_steps(3);
     assert!(!MapCanvas::title_has_selection(&h.ctx));
-    scroll_and_click(&mut h, Role::Button, "Inline bold");
+    scroll_and_click(&mut h, Role::Button, "Bold");
     h.event(egui::Event::Text("!".into()));
     run_input_hook_steps(&mut h, 3);
     let doc = h.state().doc().unwrap();
@@ -3588,7 +3894,7 @@ fn formatted_card_toolbar_applies_inline_font_size_and_color() {
             egui::text::CCursor::new(0),
         )));
     state.store(&h.ctx, editor_id);
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     h.get_by_label("Monospace").click();
     h.run_steps(3);
     let doc = h.state().doc().unwrap();
@@ -3604,13 +3910,13 @@ fn formatted_card_toolbar_applies_inline_font_size_and_color() {
         doc.view.title_rich_formatting_draft(),
         doc.doc.sheet().topic(id).unwrap().style.font_family
     );
-    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    scroll_and_click(&mut h, Role::SpinButton, "Font Size");
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
-    h.get_by_role_and_label(Role::SpinButton, "Inline Font Size")
+    h.get_by_role_and_label(Role::SpinButton, "Font Size")
         .type_text("24");
     h.key_press(Key::Enter);
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::ColorWell, "Inline Text Color #E8455C");
+    scroll_and_click(&mut h, Role::ColorWell, "Text Color #E8455C");
     let doc = h.state().doc().unwrap();
     let draft = doc.view.title_rich_formatting_draft().unwrap();
     assert_eq!(doc.view.editing_topic(), Some(id));
@@ -3672,11 +3978,11 @@ fn last_inline_size_keystroke_and_color_click_in_one_frame_are_preserved() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    scroll_and_click(&mut h, Role::SpinButton, "Font Size");
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.run_steps(1);
     let color = h
-        .get_by_role_and_label(Role::ColorWell, "Inline Text Color #E8455C")
+        .get_by_role_and_label(Role::Button, "Text Color")
         .rect()
         .center();
     h.input_mut().events.push(egui::Event::Text("27".into()));
@@ -3690,6 +3996,7 @@ fn last_inline_size_keystroke_and_color_click_in_one_frame_are_preserved() {
         });
     }
     h.run_steps(4);
+    scroll_and_click(&mut h, Role::ColorWell, "Text Color #E8455C");
     let draft = h
         .state()
         .doc()
@@ -3717,7 +4024,7 @@ fn last_inline_size_keystroke_and_save_in_one_frame_are_preserved() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    scroll_and_click(&mut h, Role::SpinButton, "Font Size");
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.run_steps(1);
     h.input_mut().events.push(egui::Event::Text("27".into()));
@@ -3747,7 +4054,7 @@ fn inline_size_input_continues_after_save_in_event_order() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    scroll_and_click(&mut h, Role::SpinButton, "Font Size");
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.run_steps(1);
     h.input_mut().events.push(egui::Event::Text("6".into()));
@@ -3783,15 +4090,15 @@ fn inline_size_and_color_auto_restore_inherited_values() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::SpinButton, "Inline Font Size");
+    scroll_and_click(&mut h, Role::SpinButton, "Font Size");
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
-    h.get_by_role_and_label(Role::SpinButton, "Inline Font Size")
+    h.get_by_role_and_label(Role::SpinButton, "Font Size")
         .type_text("24");
     h.key_press(Key::Enter);
     h.run_steps(3);
-    scroll_and_click(&mut h, Role::ColorWell, "Inline Text Color #E8455C");
-    scroll_and_click(&mut h, Role::Button, "Inline Font Size Auto");
-    scroll_and_click(&mut h, Role::Button, "Inline Text Color Auto");
+    scroll_and_click(&mut h, Role::ColorWell, "Text Color #E8455C");
+    scroll_and_click(&mut h, Role::Button, "Font Size · Auto");
+    scroll_and_click(&mut h, Role::Button, "Text Color · Auto");
     let doc = h.state().doc().unwrap();
     assert_eq!(
         MapCanvas::title_inline_values(&h.ctx, &doc.doc, &doc.view),
@@ -3823,7 +4130,7 @@ fn inline_font_auto_clears_a_mixed_selection() {
             egui::text::CCursor::new(0),
         )));
     state.store(&h.ctx, editor);
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     h.get_by_label("Monospace").click();
     h.run_steps(4);
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
@@ -3835,7 +4142,7 @@ fn inline_font_auto_clears_a_mixed_selection() {
             .font_family,
         None
     );
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     h.get_by_label("Auto").click();
     h.run_steps(4);
     let doc = h.state().doc().unwrap();
@@ -3858,7 +4165,7 @@ fn inline_font_search_preserves_selection_and_filters_choices() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     h.get_by_label("Search fonts").click();
     h.run_steps(2);
     assert!(h.get_by_label("Search fonts").is_focused());
@@ -3882,7 +4189,7 @@ fn inline_font_search_preserves_selection_and_filters_choices() {
         Some("monospace")
     );
     assert_eq!(doc.view.editing_text(), Some("Card title"));
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     assert!(h.query_by_label("Auto").is_some());
     h.get_by_label("Search fonts").click();
     h.run_steps(2);
@@ -3891,14 +4198,14 @@ fn inline_font_search_preserves_selection_and_filters_choices() {
     h.key_press(Key::Escape);
     h.run_steps(4);
     assert!(
-        h.query_by_role_and_label(Role::ComboBox, "Inline Font Family")
+        h.query_by_role_and_label(Role::ComboBox, "Font Family")
             .is_some(),
         "draft={:?} topic={:?} toolbar={}",
         h.state().doc().unwrap().view.editing_text(),
         h.state().doc().unwrap().view.editing_topic(),
         h.query_by_role_and_label(Role::Button, "Bold").is_some()
     );
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     assert!(h.query_by_label("Auto").is_some());
 }
 
@@ -3912,7 +4219,7 @@ fn inline_font_search_ime_composition_cannot_apply_a_font() {
         doc.view.begin_edit(doc.doc.sheet(), id, true);
     }
     h.run_steps(4);
-    scroll_and_click(&mut h, Role::ComboBox, "Inline Font Family");
+    scroll_and_click(&mut h, Role::ComboBox, "Font Family");
     h.get_by_label("Search fonts").click();
     h.run_steps(2);
     assert!(h.get_by_label("Search fonts").is_focused());
@@ -3947,7 +4254,8 @@ fn canceled_and_multitouch_inline_color_keep_the_title_draft() {
             doc.view.begin_edit(doc.doc.sheet(), id, true);
         }
         h.run_steps(4);
-        let label = "Inline Text Color #E8455C";
+        let label = "Text Color #E8455C";
+        scroll_and_click(&mut h, Role::Button, "Text Color");
         h.get_by_role_and_label(Role::ColorWell, label)
             .scroll_to_me();
         h.run_steps(4);
@@ -4058,7 +4366,7 @@ fn queued_shortcut_input_is_processed_before_window_close() {
     run_input_hook_steps(&mut h, 8);
     let doc = h.state().doc().unwrap();
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title!");
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
     assert!(doc.is_dirty());
     assert!(h.state().dialogs.close.is_some());
 }
@@ -4372,12 +4680,12 @@ fn title_conflicts_do_not_allow_formatting_or_discard_the_draft() {
 }
 
 #[test]
-fn formatting_and_the_title_are_separate_undo_steps() {
+fn inline_formatting_and_title_commit_as_one_undo_step() {
     let (app, id) = app_with_card(CardKind::Text);
     let mut h = harness(app, vec2(1000.0, 700.0));
     {
         let doc = h.state_mut().doc_mut().unwrap();
-        doc.view.begin_edit(doc.doc.sheet(), id, false);
+        doc.view.begin_edit(doc.doc.sheet(), id, true);
         doc.view.set_editing_text("Undo title");
     }
     h.run_steps(5);
@@ -4387,20 +4695,40 @@ fn formatting_and_the_title_are_separate_undo_steps() {
     assert!(doc.has_pending_drafts());
     let snapshot = doc.document_with_drafts().unwrap();
     assert_eq!(snapshot.sheet().topic(id).unwrap().title, "Undo title");
-    assert_eq!(snapshot.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(snapshot.sheet().topic(id).unwrap().style.bold, None);
+    assert_eq!(
+        snapshot
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.bold),
+        Some(true)
+    );
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title");
     h.key_press(Key::Enter);
     h.run_steps(3);
     let doc = h.state_mut().doc_mut().unwrap();
     assert!(doc.doc.undo());
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title");
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
-    assert!(doc.doc.undo());
     assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
-    assert!(doc.doc.redo());
+    assert!(doc.doc.sheet().topic(id).unwrap().inline_text.is_empty());
     assert!(doc.doc.redo());
     assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Undo title");
-    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, Some(true));
+    assert_eq!(doc.doc.sheet().topic(id).unwrap().style.bold, None);
+    assert_eq!(
+        doc.doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .inline_text
+            .runs
+            .first()
+            .and_then(|run| run.style.bold),
+        Some(true)
+    );
 }
 
 #[test]
@@ -4523,8 +4851,8 @@ fn floating_insert_toolbar_never_covers_an_active_card_title() {
             h.run_steps(3);
             assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
             let visible = assert_insert_toolbar_clears_title(&h);
+            assert!(!visible, "the unified menu replaces the insert toolbar");
             if size.x > 1000.0 {
-                assert!(visible, "the toolbar should remain available when it fits");
                 for resized in [vec2(320.0, 240.0), vec2(640.0, 360.0), size] {
                     h.set_size(resized);
                     h.run_steps(1);
@@ -4554,7 +4882,7 @@ fn floating_insert_toolbar_never_covers_an_active_card_title() {
                     .title,
                 "Edited"
             );
-            assert!(h.ctx.memory(|memory| {
+            assert!(!h.ctx.memory(|memory| {
                 memory
                     .areas()
                     .visible_layer_ids()
@@ -4582,10 +4910,9 @@ fn blank_canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
     let mut app = ThinodaApp::headless();
     app.settings.ai.enabled = false;
     app.new_doc(Workbook::new(Sheet::new("Board", "Root")));
-    let root = app.doc().unwrap().doc.sheet().root;
-    app.doc_mut().unwrap().view.select_only(root);
+    app.doc_mut().unwrap().view.selection.clear();
     let mut h = harness(app, vec2(520.0, 320.0));
-    let pos = h.state().doc().unwrap().view.canvas_rect().right_bottom() - vec2(8.0, 8.0);
+    let pos = h.state().doc().unwrap().view.canvas_rect().right_top() + vec2(-20.0, 20.0);
     h.event(egui::Event::PointerMoved(pos));
     for pressed in [true, false] {
         h.event(egui::Event::PointerButton {
@@ -4682,7 +5009,7 @@ fn sheet_replacement_and_undo_invalidate_the_old_toolbar_owner() {
     );
     assert_eq!(style(&h, id).bold, None);
     h.run_steps(4);
-    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
     open_toolbar(&mut h);
     h.get_by_role_and_label(Role::Button, "Bold").click();
     h.run_steps(3);
@@ -4690,7 +5017,7 @@ fn sheet_replacement_and_undo_invalidate_the_old_toolbar_owner() {
     assert!(h.state_mut().doc_mut().unwrap().doc.undo());
     h.run_steps(3);
     assert_eq!(style(&h, id).bold, None);
-    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
     open_toolbar(&mut h);
     let unchanged = h.state().doc().unwrap().doc.state_id();
     let align = {
@@ -4709,7 +5036,7 @@ fn sheet_replacement_and_undo_invalidate_the_old_toolbar_owner() {
     assert!(h.state_mut().doc_mut().unwrap().doc.redo());
     h.run_steps(3);
     assert_eq!(style(&h, id).bold, Some(true));
-    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
     open_toolbar(&mut h);
     assert_eq!(
         h.get_by_role_and_label(Role::Button, "Bold")
@@ -4736,7 +5063,7 @@ fn quick_style_and_formatting_preserve_each_others_fields() {
     };
     h.state_mut().apply_quick_style(quick.clone());
     h.run_steps(4);
-    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_some());
     open_toolbar(&mut h);
     for label in ["Bold", "Italic", "Underline", "Align Right"] {
         assert_eq!(
@@ -4784,6 +5111,9 @@ fn canceled_and_multitouch_releases_do_not_format_cards() {
             let (app, id) = app_with_card(CardKind::Sticky);
             let mut h = harness(app, vec2(1000.0, 700.0));
             open_toolbar(&mut h);
+            if role == Role::ColorWell {
+                scroll_and_click(&mut h, Role::Button, "Text Color");
+            }
             h.get_by_role_and_label(role, label).scroll_to_me();
             h.run_steps(4);
             let pos = h.get_by_role_and_label(role, label).rect().center();
@@ -4946,11 +5276,7 @@ fn pending_ink_invalidates_the_formatting_target() {
     assert_eq!(h.state().doc().unwrap().doc.state_id(), before);
     assert_eq!(style(&h, id).bold, None);
     h.run_steps(2);
-    assert!(
-        h.get_by_role_and_label(Role::Button, "Bold")
-            .accesskit_node()
-            .is_disabled()
-    );
+    assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
     let end = pos + vec2(40.0, 20.0);
     h.event(egui::Event::PointerMoved(end));
     h.run_steps(2);
@@ -5074,11 +5400,11 @@ fn pending_inspector_draft_is_preserved_and_blocks_formatting() {
         doc.inspector_edit.as_ref().unwrap().text,
         "Pending note draft"
     );
-    assert!(
-        h.get_by_role_and_label(Role::Button, "Bold")
-            .accesskit_node()
-            .is_disabled()
-    );
+    if let Some(bold) = h.query_by_role_and_label(Role::Button, "Bold") {
+        assert!(bold.accesskit_node().is_disabled());
+    } else {
+        assert!(h.query_by_role_and_label(Role::Button, "Text").is_none());
+    }
 }
 
 #[test]
@@ -5266,6 +5592,7 @@ fn card_text_visual_previews() {
                 .expect("formatting toolbar render")
                 .save(directory.join(format!("card-text-{theme}-{width}.png")))
                 .unwrap();
+            scroll_and_click(&mut h, Role::Button, "Text Color");
             h.get_by_role_and_label(Role::ColorWell, "Text Color #FFFFFF")
                 .scroll_to_me();
             h.run_steps(5);

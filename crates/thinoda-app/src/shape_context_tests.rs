@@ -64,7 +64,38 @@ fn shape_kind(app: &ThinodaApp, id: CanvasObjectId) -> ShapeKind {
     shape
 }
 
+fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let id = thinoda_canvas::format_menu::area_id(&h.ctx);
+    h.ctx.memory(|memory| memory.area_rect(id))
+}
+
+fn popup_containing(h: &Harness<'_, ThinodaApp>, rect: egui::Rect) -> (egui::Id, egui::Rect) {
+    let menu = thinoda_canvas::format_menu::area_id(&h.ctx);
+    h.ctx.memory(|memory| {
+        memory
+            .areas()
+            .visible_layer_ids()
+            .iter()
+            .filter(|layer| layer.id != menu && layer.order == egui::Order::Foreground)
+            .filter_map(|layer| memory.area_rect(layer.id).map(|area| (layer.id, area)))
+            .filter(|(_, area)| area.contains_rect(rect))
+            .min_by(|(_, a), (_, b)| a.area().total_cmp(&b.area()))
+            .expect("visible bounded popup containing its controls")
+    })
+}
+
 fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
+    if h.query_by_role_and_label(role, label).is_none() {
+        let section = if matches!(label, "Edit label" | "More formatting options") {
+            "Actions"
+        } else if label == "Text Color" {
+            "Text"
+        } else {
+            "Style"
+        };
+        h.get_by_role_and_label(Role::Button, section).click();
+        h.run_steps(4);
+    }
     h.get_by_role_and_label(role, label).scroll_to_me();
     h.run_steps(4);
     h.get_by_role_and_label(role, label).click();
@@ -72,13 +103,99 @@ fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
 }
 
 fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
-    h.key_press(Key::Escape);
-    h.run_steps(3);
+    if egui::Popup::is_any_open(&h.ctx) {
+        h.key_press(Key::Escape);
+        h.run_steps(3);
+    }
+}
+
+fn expand_custom_color(h: &mut Harness<'_, ThinodaApp>) {
+    h.get_by_label("Custom color").scroll_to_me();
+    h.run_steps(4);
+    h.get_by_label("Custom color").click();
+    h.run_steps(6);
 }
 
 fn undo(h: &mut Harness<'_, ThinodaApp>) {
     assert!(h.state_mut().doc_mut().unwrap().doc.undo());
     h.run_steps(2);
+}
+
+#[test]
+fn shape_sections_are_bounded_and_reset_for_a_new_selection_owner() {
+    for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
+        let (mut app, first) = app_with_shape();
+        let second = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Ellipse,
+                BoardRect::from_center_size(Vec2::new(220.0, 0.0), Vec2::new(100.0, 70.0)),
+            ))
+            .unwrap();
+        let mut h = harness_with_size(app, size);
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Change shape")
+                .is_some()
+        );
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Text Color")
+                .is_none()
+        );
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        click(&mut h, Role::Button, "Change shape");
+        h.get_by_role_and_label(Role::Button, "Text").focus();
+        h.key_press(egui::Key::Space);
+        h.run_steps(4);
+        assert!(h.query_by_role_and_label(Role::Button, "Diamond").is_none());
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Change shape")
+                .is_none()
+        );
+        let menu = menu_rect(&h).unwrap();
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .view
+                .canvas_rect()
+                .contains_rect(menu)
+        );
+        for (role, label) in [
+            (Role::Button, "Text"),
+            (Role::Button, "Style"),
+            (Role::Button, "Arrange"),
+            (Role::Button, "Actions"),
+            (Role::Button, "Bold"),
+            (Role::ComboBox, "Font Family"),
+            (Role::SpinButton, "Font Size"),
+            (Role::Button, "Text Color"),
+        ] {
+            let rect = h.get_by_role_and_label(role, label).rect();
+            assert!(
+                menu.contains_rect(rect),
+                "{size:?}: {label}: {rect:?} {menu:?}"
+            );
+        }
+        click(&mut h, Role::Button, "Text Color");
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .select_board_object(second);
+        h.run_steps(6);
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Text Color · Auto")
+                .is_none()
+        );
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Change shape")
+                .is_some()
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(object(h.state(), first).style.text_color, None);
+    }
 }
 
 #[test]
@@ -136,19 +253,29 @@ fn selected_shape_options_overlay_a_stationary_canvas_and_toolbox() {
             .view
             .select_board_object(id);
         h.run_steps(8);
-        let strip = h
-            .ctx
-            .memory(|memory| {
-                memory.area_rect(egui::Id::unique((
-                    "thinoda_shape_options",
-                    egui::ViewportId::ROOT,
-                )))
-            })
-            .expect("selected shape has its own options strip");
+        let strip = menu_rect(&h).expect("selected shape uses the shared selection menu");
         assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
-        assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        let visible = h.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == rail_id)
+        });
+        if visible {
+            assert!(
+                !h.ctx
+                    .memory(|memory| memory.area_rect(rail_id))
+                    .unwrap()
+                    .intersects(strip)
+            );
+        } else {
+            assert_eq!(size.x, 320.0);
+        }
         assert!(canvas.contains_rect(strip), "{size:?}: {strip:?}");
-        assert!(!rail.intersects(strip), "{size:?}: {rail:?} {strip:?}");
+        if size.x > 320.0 {
+            assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        }
         let shape_button = h.get_by_role_and_label(Role::Button, "Change shape").rect();
         assert!(
             strip.contains_rect(shape_button),
@@ -194,17 +321,12 @@ fn armed_shape_tool_keeps_contextual_actions_and_repeat_placement() {
     );
     assert_eq!(h.state().doc().unwrap().view.board_tool, tool);
     assert_eq!(h.state().doc().unwrap().doc.sheet().canvas.objects.len(), 1);
+    if h.query_by_label("Text Color · Auto").is_none() {
+        click(&mut h, Role::Button, "Text Color");
+    }
     assert!(h.query_by_label("Text Color · Auto").is_some());
 
-    let strip = h
-        .ctx
-        .memory(|memory| {
-            memory.area_rect(egui::Id::unique((
-                "thinoda_shape_options",
-                egui::ViewportId::ROOT,
-            )))
-        })
-        .unwrap();
+    let strip = menu_rect(&h).unwrap();
     for (point, expected_objects) in [
         (egui::pos2(strip.right() - 8.0, strip.top() + 5.0), 1),
         (egui::pos2(canvas.right() - 60.0, canvas.bottom() - 60.0), 2),
@@ -239,7 +361,7 @@ fn armed_shape_tool_keeps_contextual_actions_and_repeat_placement() {
     assert_eq!(shape_kind(h.state(), selected), ShapeKind::Ellipse);
     assert!(h.query_by_label("Text Color · Auto").is_none());
     assert!(
-        h.query_by_role_and_label(Role::Button, "Text Color")
+        h.query_by_role_and_label(Role::Button, "Change shape")
             .is_some()
     );
 }
@@ -261,10 +383,10 @@ fn shape_options_keep_their_popup_on_a_tiny_canvas() {
         })
     };
     assert!(!rail_visible(&h));
-    click(&mut h, Role::Button, "Text Color");
+    click(&mut h, Role::Button, "Fill color");
     click(&mut h, Role::ColorWell, "#2E7CF6");
     assert_eq!(
-        object(h.state(), id).style.text_color,
+        object(h.state(), id).style.fill,
         Some(Color::rgb(0x2e, 0x7c, 0xf6))
     );
     assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
@@ -288,16 +410,7 @@ fn text_color_menu_initially_exposes_its_custom_picker() {
         click(&mut h, Role::Button, "Text Color");
         h.run_steps(12);
         let header = h.get_by_label("Custom color").rect();
-        let popups = h
-            .ctx
-            .data(|data| {
-                data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
-            })
-            .unwrap();
-        let popup = h
-            .ctx
-            .memory(|memory| memory.area_rect(popups.ids[4]))
-            .unwrap();
+        let (_, popup) = popup_containing(&h, header);
         assert!(
             popup.contains_rect(header),
             "{size:?}: custom picker header {header:?} is clipped by {popup:?}"
@@ -324,13 +437,16 @@ fn expanded_shape_color_mixers_fit_roomy_viewports_without_scrolling() {
         let revision = h.state().doc().unwrap().doc.state_id();
         click(&mut h, Role::Button, label);
         assert_eq!(object(h.state(), id), before, "{label}: opening menu");
-        let popup_id = h
-            .ctx
-            .data(|data| {
-                data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
-            })
-            .unwrap()
-            .ids[popup_index];
+        let popup_id = if label == "Text Color" {
+            popup_containing(&h, h.get_by_label("Custom color").rect()).0
+        } else {
+            h.ctx
+                .data(|data| {
+                    data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
+                })
+                .unwrap()
+                .ids[popup_index]
+        };
         let collapsed = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
         h.get_by_label("Custom color").click();
         h.run_steps(20);
@@ -587,7 +703,7 @@ fn shape_toolbar_history_shortcuts_do_not_undo_document_behind_color_draft() {
         .unwrap();
     let mut h = harness(app);
     click(&mut h, Role::Button, "Text Color");
-    h.get_by_label("Custom color").click();
+    expand_custom_color(&mut h);
     h.run_steps(5);
     h.query_all_by_role(Role::SpinButton)
         .find(|control| control.value().is_some_and(|value| value.starts_with("R ")))
@@ -618,7 +734,7 @@ fn custom_shape_text_color_keyboard_edit_is_atomic_and_escape_cancels() {
             .unwrap();
         let mut h = harness(app);
         click(&mut h, Role::Button, "Text Color");
-        h.get_by_label("Custom color").click();
+        expand_custom_color(&mut h);
         h.run_steps(5);
         h.query_all_by_role(Role::SpinButton)
             .find(|control| control.value().is_some_and(|value| value.starts_with("R ")))
@@ -657,7 +773,7 @@ fn custom_shape_color_can_explicitly_choose_the_automatic_value() {
     let (app, id) = app_with_shape();
     let mut h = harness(app);
     click(&mut h, Role::Button, "Outline color");
-    h.get_by_label("Custom color").click();
+    expand_custom_color(&mut h);
     h.run_steps(5);
     let channels: [u8; 4] = ["R ", "G ", "B ", "A "].map(|prefix| {
         h.query_all_by_role(Role::SpinButton)
@@ -813,6 +929,7 @@ fn shape_text_color_is_keyboard_reachable_in_compact_light_and_dark_windows() {
             };
             let mut h = harness_with_size(app, size);
             let canvas = h.state().doc().unwrap().view.canvas_rect();
+            click(&mut h, Role::Button, "Text");
             h.get_by_role_and_label(Role::Button, "Text Color").focus();
             h.run_steps(6);
             let rect = h.get_by_role_and_label(Role::Button, "Text Color").rect();
@@ -845,10 +962,6 @@ fn automatic_shape_text_picker_matches_canvas_contrast_without_changing_the_docu
                 object.style.fill = Some(fill);
             })
             .unwrap();
-        assert_eq!(
-            app.shape_context().unwrap().properties.auto_text_color,
-            expected
-        );
         let mut h = harness(app);
         let before = h.state().doc().unwrap().doc.state_id();
         click(&mut h, Role::Button, "Text Color");
@@ -858,7 +971,7 @@ fn automatic_shape_text_picker_matches_canvas_contrast_without_changing_the_docu
                 .toggled(),
             Some(Toggled::True)
         );
-        h.get_by_label("Custom color").click();
+        expand_custom_color(&mut h);
         h.run_steps(6);
         let red = h
             .query_all_by_role(Role::SpinButton)
@@ -941,9 +1054,11 @@ fn shape_text_color_survives_native_clipboard_drawio_and_svg() {
 
 #[test]
 fn every_shape_kind_accepts_text_color_even_when_the_label_is_empty() {
-    let (mut app, id) = app_with_shape();
+    let (app, id) = app_with_shape();
+    let mut h = harness(app);
     for kind in ShapeKind::ALL {
-        app.doc_mut()
+        h.state_mut()
+            .doc_mut()
             .unwrap()
             .doc
             .update_canvas_object("Set kind", id, |object| {
@@ -954,15 +1069,13 @@ fn every_shape_kind_accepts_text_color_even_when_the_label_is_empty() {
                 object.style.text_color = None;
             })
             .unwrap();
-        let context = app.shape_context().unwrap();
-        app.apply_shape_change(
-            &context.target,
-            ShapeChange::TextColor(Some(Color::rgb(20, 40, 60))),
-        )
-        .unwrap();
-        let current = object(&app, id);
+        h.run_steps(3);
+        click(&mut h, Role::Button, "Text Color");
+        click(&mut h, Role::ColorWell, "#2E7CF6");
+        let current = object(h.state(), id);
         assert_eq!(current.label(), "", "{kind:?}");
-        assert_eq!(current.style.text_color, Some(Color::rgb(20, 40, 60)));
+        assert_eq!(current.style.text_color, Some(Color::rgb(0x2e, 0x7c, 0xf6)));
+        close_popup(&mut h);
     }
 }
 
@@ -1120,10 +1233,13 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
         assert!(app.edit_board_label(&context.target).is_err());
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
         let h = harness(app);
-        for label in ["Change shape", "Fill color", "Text Color", "Edit label"] {
-            let control = h.get_by_role_and_label(Role::Button, label);
-            assert!(control.accesskit_node().is_disabled(), "{case}: {label}");
+        for label in ["Change shape", "Fill color", "Text", "Edit label"] {
+            assert!(
+                h.query_by_role_and_label(Role::Button, label).is_none(),
+                "{case}: {label}"
+            );
         }
+        assert!(h.query_by_role_and_label(Role::Button, "Actions").is_some());
     }
 }
 
@@ -1164,14 +1280,24 @@ fn shape_options_edit_every_selected_shape_with_one_undo() {
             .is_err()
     );
 
-    let h = harness(app);
+    let mut h = harness(app);
     h.get_by_label("Shape options (2)");
-    for label in ["Change shape", "Fill color", "Outline color", "Text Color"] {
+    for label in ["Change shape", "Fill color", "Outline color"] {
         let control = h.get_by_role_and_label(Role::Button, label);
         assert!(!control.accesskit_node().is_disabled(), "{label}");
     }
-    let edit = h.get_by_role_and_label(Role::Button, "Edit label");
-    assert!(edit.accesskit_node().is_disabled());
+    click(&mut h, Role::Button, "Text");
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Text Color")
+            .accesskit_node()
+            .is_disabled()
+    );
+    click(&mut h, Role::Button, "Actions");
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Edit label")
+            .accesskit_node()
+            .is_disabled()
+    );
 }
 
 #[test]
@@ -1247,7 +1373,7 @@ fn stale_shape_targets_are_rejected() {
             .is_err()
     );
     assert!(
-        app.apply_shape_change(&target, ShapeChange::TextColor(Some(Color::WHITE)))
+        app.apply_shape_change(&target, ShapeChange::Fill(Some(Color::WHITE)))
             .is_err()
     );
     assert!(app.edit_board_label(&target).is_err());

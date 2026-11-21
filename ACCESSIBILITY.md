@@ -87,6 +87,14 @@ accessible as it was. In practice:
 Currently there is no automated check that catches a missing name or keyboard
 path on its own, so reviewers check these by hand.
 
+Canvas selection actions and formatting share one nearby menu for nodes,
+cards and board objects, including draw.io stencils. Only applicable sections
+and actions are shown. Text controls announce their property name and show
+whether they affect selected objects, selected text or new typing. The main
+menu wraps rather than requiring horizontal scrolling. Card Alt+F10, label F6,
+formatting shortcuts and named colour/font popovers retain keyboard access.
+See [Nearby selection menu](docs/CONTEXT-FORMATTING.md).
+
 ## Reporting accessibility issues
 
 If something in Thinoda is hard or impossible for you to use, please tell us.

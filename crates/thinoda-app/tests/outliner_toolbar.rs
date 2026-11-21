@@ -23,15 +23,12 @@ fn click(h: &mut Harness<'_, ThinodaApp>, label: &'static str) {
 fn assert_outline_controls(h: &Harness<'_, ThinodaApp>) {
     assert_eq!(h.state().mode, CenterMode::Outliner);
     assert!(
-        h.query_by_role_and_label(Role::Button, t("More insert actions"))
+        h.query_by_role_and_label(Role::Button, t("More actions"))
             .is_none()
     );
+    let nearby = thinoda_canvas::format_menu::area_id(&h.ctx);
     let visible = h.ctx.memory(|memory| memory.areas().visible_layer_ids());
-    assert!(
-        !visible
-            .iter()
-            .any(|layer| { layer.id == egui::Id::unique("thinoda_editing_toolbar") })
-    );
+    assert!(!visible.iter().any(|layer| layer.id == nearby));
     let viewport = h.ctx.content_rect();
     let panel = h
         .query_by_role_and_label(Role::Tab, t("Style"))
@@ -207,7 +204,6 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                 h.run_steps(4);
                 let before = h.state().doc().unwrap().doc.sheet().clone();
                 let revision = h.state().doc().unwrap().doc.state_id();
-                h.get_by_role_and_label(Role::Button, t("More insert actions"));
                 click(&mut h, "Outliner");
                 assert_outline_controls(&h);
                 assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
@@ -336,12 +332,16 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                 assert_outline_controls(&h);
                 click(&mut h, "Outliner");
                 assert_eq!(h.state().mode, CenterMode::Map);
-                h.get_by_role_and_label(Role::Button, t("More insert actions"));
                 assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
 
-                click(&mut h, "More insert actions");
+                click(&mut h, "More actions");
                 assert!(egui::Popup::is_any_open(&h.ctx));
-                click(&mut h, "Outliner");
+                // The open More actions menu also lists Outliner; use the mode toggle.
+                h.query_all_by_role_and_label(Role::Button, t("Outliner"))
+                    .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+                    .unwrap()
+                    .click();
+                h.run_steps(4);
                 assert_outline_controls(&h);
                 assert!(!egui::Popup::is_any_open(&h.ctx));
                 click(&mut h, "Outliner");
@@ -350,7 +350,11 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                     click(&mut h, "Outliner");
                     click(&mut h, "Format Panel");
                     assert!(h.state().settings.show_format_panel);
-                    h.get_by_role_and_label(Role::Tab, t("Style"));
+                    assert!(
+                        h.query_all_by_role_and_label(Role::Tab, t("Style"))
+                            .next()
+                            .is_some()
+                    );
                     click(&mut h, "Format Panel");
                     assert!(!h.state().settings.show_format_panel);
                     click(&mut h, "Symbols");

@@ -6,6 +6,7 @@ use egui::{
 };
 use thinoda_canvas::{
     Action, BoardTool, CardTitleFormat, CardTitleStyle, MapCanvas, MapView, ObjectSelection,
+    format_menu::{self, Section as ContextSection},
 };
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
@@ -156,6 +157,19 @@ impl CardTextChange {
             Self::Family(value) => style.font_family = value.clone(),
             Self::Size(value) => style.font_size = Some(*value),
             Self::Color(value) => style.text_color = *value,
+        }
+    }
+
+    fn clear_override(&self, style: &mut thinoda_core::InlineTextStyle) {
+        match self {
+            Self::Bold(_) => style.bold = None,
+            Self::Italic(_) => style.italic = None,
+            Self::Underline(_) => style.underline = None,
+            Self::Strikethrough(_) => style.strikethrough = None,
+            Self::Family(_) => style.font_family = None,
+            Self::Size(_) => style.font_size = None,
+            Self::Color(_) => style.color = None,
+            Self::Align(_) => {}
         }
     }
 }
@@ -455,11 +469,7 @@ fn prepare_card_text_input(ctx: &Context, input: &mut egui::RawInput) {
 }
 
 fn card_text_label() -> &'static str {
-    t("Format whole card text")
-}
-
-fn card_text_icon(ui: &mut Ui, icon: &str, label: &str, selected: bool, focus: bool) -> bool {
-    card_text_icon_response(ui, icon, label, selected, focus).0
+    t("Text formatting")
 }
 
 fn card_text_owned_icon(
@@ -564,6 +574,67 @@ fn card_text_swatch(
         && ((widgets::touch_activation_allowed(ui.ctx()) && response.clicked()) || keyboard);
     response.on_hover_text(label);
     activated
+}
+
+fn card_text_color_menu(
+    ui: &mut Ui,
+    target: &CardTextTarget,
+    current: Option<Option<Color>>,
+    inherited: Color,
+    owned: &mut Vec<egui::Id>,
+) -> (egui::Response, Option<Option<Color>>) {
+    let mut picked = None;
+    let menu = ui.menu_button(t("Text Color"), |ui| {
+        scroll_menu(ui, |ui| {
+            ui.set_width(232.0);
+            let auto = ui
+                .selectable_label(current == Some(None), t("Auto"))
+                .accessible_name(format!("{} · {}", t("Text Color"), t("Auto")));
+            owned.push(auto.id);
+            if auto.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
+                picked = Some(None);
+            }
+            ui.horizontal_wrapped(|ui| {
+                let custom = current
+                    .flatten()
+                    .filter(|color| !SWATCHES.contains(&from_color(*color)));
+                for color in custom
+                    .into_iter()
+                    .chain(SWATCHES.iter().copied().map(to_color))
+                {
+                    if card_text_swatch(
+                        ui,
+                        color,
+                        current == Some(Some(color)),
+                        t("Text Color"),
+                        owned,
+                    ) {
+                        picked = Some(Some(color));
+                    }
+                }
+            });
+            ui.collapsing(t("Custom color"), |ui| {
+                if let Some(color) = crate::board_ui::custom_color_picker(
+                    ui,
+                    "card-text-color",
+                    target,
+                    current.flatten().unwrap_or(inherited),
+                ) {
+                    picked = Some(Some(color));
+                }
+            });
+            if let Some(focus) = ui.memory(|memory| memory.focused())
+                && ui
+                    .ctx()
+                    .read_response(focus)
+                    .is_some_and(|response| response_is_within(ui, &response))
+            {
+                owned.push(focus);
+            }
+        });
+    });
+    owned.push(menu.response.id);
+    (menu.response, picked)
 }
 
 fn fim_hierarchy_shortcut(action: &Action) -> bool {
@@ -747,7 +818,7 @@ fn card_inline_size_control(
                         )
                         .speed(0.5),
                 )
-                .accessible_name(t("Inline Font Size"));
+                .accessible_name(t("Font Size"));
             if let Some(pointer) = pointer {
                 ctx.input_mut(|input| input.pointer = pointer);
             }
@@ -1495,6 +1566,26 @@ pub(crate) fn font_selector(
     default_label: &str,
 ) -> egui::Response {
     font_choice(ui, fonts, value, default_label, true, None)
+}
+
+pub(crate) fn font_selector_mixed(
+    ui: &mut Ui,
+    fonts: &mut thinoda_ui::fonts::SystemFonts,
+    value: &mut Option<String>,
+    mixed: bool,
+) -> (egui::Response, bool) {
+    font_choice_with_mixed(
+        ui,
+        fonts,
+        value,
+        t("Default"),
+        true,
+        None,
+        FontChoiceMode {
+            mixed,
+            searchable: false,
+        },
+    )
 }
 
 fn sheet_font_families(sheet: &thinoda_core::Sheet) -> impl Iterator<Item = &String> {
@@ -2500,9 +2591,10 @@ impl ThinodaApp {
             });
         self.finish_card_text_focus_handoff(&ctx);
         self.finish_deferred_card_text_commands(&ctx);
+        self.finish_card_context_section(&ctx);
 
         let (board_toolbar, editing_toolbar, options_toolbar) = if show_board_controls {
-            let ink_toolbar = if show_ink_options {
+            let ink_toolbar = if show_ink_options && !card_text_open && !show_object_options {
                 self.ink_options_toolbar(&ctx, center.response.rect, card_text_open)
             } else {
                 Self::close_ink_option_popups(&ctx, self.current_viewport);
@@ -2518,17 +2610,26 @@ impl ThinodaApp {
                 ctx.request_repaint();
             }
             let options_toolbar = ink_toolbar.or(object_toolbar);
-            let editing_toolbar = if card_text_open || options_toolbar.is_some() {
-                None
-            } else {
-                self.editing_toolbar(&ctx, center.response.rect)
-            };
+            let editing_toolbar = None;
             let board_toolbar = if (card_text_open || options_toolbar.is_some())
                 && !crate::board_ui::board_toolbar_fits_below_context(center.response.rect)
             {
                 None
             } else {
-                self.board_toolbar(&ctx, center.response.rect, editing_toolbar)
+                let selection_menu = if card_text_open
+                    || self
+                        .doc()
+                        .is_some_and(|doc| doc.view.editing_board_object().is_some())
+                {
+                    ctx.memory(|memory| memory.area_rect(format_menu::area_id(&ctx)))
+                } else {
+                    options_toolbar
+                };
+                self.board_toolbar(
+                    &ctx,
+                    center.response.rect,
+                    editing_toolbar.or(selection_menu),
+                )
             };
             self.board_layers_panel(&ctx, center.response.rect);
             self.armed_shape_hint(&ctx, center.response.rect);
@@ -2546,17 +2647,12 @@ impl ThinodaApp {
             && !self.palette.open
             && !self.any_modal_open()
             && !self.dialogs.settings
+            && !card_text_open
+            && options_toolbar.is_none()
+            && !self.has_board_object_options()
+            && !self.other_selection_menu(&ctx, center.response.rect)
         {
-            let context_strip = (card_text_open || options_toolbar.is_some()).then(|| {
-                egui::Rect::from_min_size(
-                    center.response.rect.min,
-                    vec2(
-                        center.response.rect.width(),
-                        crate::board_ui::CONTEXT_STRIP_HEIGHT.min(center.response.rect.height()),
-                    ),
-                )
-            });
-            self.topic_toolbar(&ctx, board_toolbar, editing_toolbar, context_strip);
+            self.topic_toolbar(&ctx, board_toolbar, editing_toolbar, None);
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
@@ -3041,195 +3137,6 @@ impl ThinodaApp {
         ui.data_mut(|data| data.insert_temp(slot, (doc.key.clone(), visible)));
     }
 
-    fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) -> Option<egui::Rect> {
-        let d = self.doc()?;
-        let has_selection = !d.view.selection.is_empty();
-        let toolbar_id = egui::Id::unique("thinoda_editing_toolbar");
-        let editing_card = d
-            .view
-            .editing_topic()
-            .and_then(|id| d.doc.sheet().topic(id))
-            .and_then(|topic| topic.card)
-            .is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text));
-        let editor_id = if editing_card {
-            Some(MapCanvas::title_editor_id())
-        } else {
-            d.view
-                .editing_board_object()
-                .map(|_| MapCanvas::board_label_editor_id())
-        };
-        if let Some(editor_id) = editor_id {
-            let editor = ctx.read_response(editor_id)?.rect;
-            let size = ctx.memory(|memory| memory.area_rect(toolbar_id))?.size();
-            if size.x > canvas.width() || size.y > canvas.height() {
-                return None;
-            }
-            let left =
-                (canvas.center().x - size.x * 0.5).clamp(canvas.left(), canvas.right() - size.x);
-            let top = (canvas.top() + 12.0).clamp(canvas.top(), canvas.bottom() - size.y);
-            let clearance = 2.0 / ctx.pixels_per_point() + 1.0;
-            if egui::Rect::from_min_size(egui::pos2(left, top), size)
-                .expand(clearance)
-                .intersects(editor)
-            {
-                return None;
-            }
-        }
-        let mut cmd = None;
-        let rect = egui::Area::new(toolbar_id)
-            .order(egui::Order::Middle)
-            .pivot(egui::Align2::CENTER_TOP)
-            .fixed_pos(canvas.center_top() + vec2(0.0, 12.0))
-            .constrain_to(canvas)
-            .movable(false)
-            .show(ctx, |ui| {
-                widgets::card(ui).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_enabled_ui(has_selection, |ui| {
-                            for (icon, label, action) in [
-                                (icons::TOPIC, "Topic", Action::InsertSibling),
-                                (icons::SUBTOPIC, "Subtopic", Action::InsertChild),
-                                (
-                                    icons::RELATIONSHIP,
-                                    "Relationship",
-                                    Action::StartRelationship,
-                                ),
-                                (icons::BOUNDARY, "Boundary", Action::AddBoundary),
-                                (icons::SUMMARY, "Summary", Action::AddSummary),
-                            ] {
-                                if widgets::icon_button(ui, icon, t(label), false).clicked() {
-                                    cmd = Some(Cmd::Canvas(action));
-                                }
-                            }
-                        });
-                        widgets::vdivider(ui);
-                        menu_button(ui, icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
-                            .response
-                            .accessible_name(t("Marker"))
-                            .on_hover_text(t("Marker"));
-                        menu_button(
-                            ui,
-                            format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
-                            |ui| self.more_insert_actions(ui, &mut cmd, has_selection),
-                        )
-                        .response
-                        .accessible_name(t("More insert actions"))
-                        .on_hover_text(t("More insert actions"));
-                    });
-                });
-            })
-            .response
-            .rect;
-        if let Some(command) = cmd {
-            self.exec(ctx, command);
-        }
-        Some(rect)
-    }
-
-    fn more_insert_actions(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>, has_selection: bool) {
-        ui.set_min_width(190.0);
-        for (icon, label, enabled, command) in [
-            (
-                icons::NOTE,
-                "Notes",
-                self.command_available(&Cmd::EditField(FocusField::Notes)),
-                Cmd::EditField(FocusField::Notes),
-            ),
-            (
-                icons::LINK,
-                "Hyperlink",
-                self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
-                Cmd::EditField(FocusField::Hyperlink),
-            ),
-            (
-                icons::LABEL,
-                "Labels",
-                self.command_available(&Cmd::Labels),
-                Cmd::Labels,
-            ),
-            (
-                icons::IMAGE,
-                "Local Image",
-                self.command_available(&Cmd::LocalImage),
-                Cmd::LocalImage,
-            ),
-            (
-                icons::NEW_FILE,
-                "Attachment",
-                self.command_available(&Cmd::Attachment),
-                Cmd::Attachment,
-            ),
-            (
-                icons::SAVE_AS,
-                "Save/Download attachment",
-                self.command_available(&Cmd::SaveAttachment),
-                Cmd::SaveAttachment,
-            ),
-            (
-                icons::TODO,
-                "To-Do",
-                has_selection,
-                Cmd::Canvas(Action::ToggleTodo),
-            ),
-            (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
-        ] {
-            if ui
-                .add_enabled(enabled, egui::Button::new(format!("{icon} {}", t(label))))
-                .accessible_name(t(label))
-                .clicked()
-                && widgets::touch_activation_allowed(ui.ctx())
-            {
-                *cmd = Some(command);
-                ui.close();
-            }
-        }
-        ui.separator();
-        if ui.button(t("Find and Replace…")).clicked()
-            && widgets::touch_activation_allowed(ui.ctx())
-        {
-            *cmd = Some(Cmd::FindReplace);
-            ui.close();
-        }
-    }
-
-    fn formatting_insert_actions(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
-        let has_selection = self.doc().is_some_and(|doc| !doc.view.selection.is_empty());
-        for (icon, label, action) in [
-            (icons::TOPIC, "Topic", Action::InsertSibling),
-            (icons::SUBTOPIC, "Subtopic", Action::InsertChild),
-            (
-                icons::RELATIONSHIP,
-                "Relationship",
-                Action::StartRelationship,
-            ),
-            (icons::BOUNDARY, "Boundary", Action::AddBoundary),
-            (icons::SUMMARY, "Summary", Action::AddSummary),
-        ] {
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(format!("{icon} {}", t(label))),
-                )
-                .accessible_name(t(label))
-                .clicked()
-                && widgets::touch_activation_allowed(ui.ctx())
-            {
-                *cmd = Some(Cmd::Canvas(action));
-                ui.close();
-            }
-        }
-        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
-        ui.add_enabled_ui(touch_allowed, |ui| {
-            menu_button(ui, format!("{} {}", icons::MARKER, t("Marker")), |ui| {
-                self.marker_menu(ui, cmd);
-            })
-            .response
-            .accessible_name(t("Marker"));
-        });
-        ui.separator();
-        self.more_insert_actions(ui, cmd, has_selection);
-    }
-
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         if self.palette.open || self.any_modal_open() || self.dialogs.settings || self.dialogs.about
@@ -3445,6 +3352,12 @@ impl ThinodaApp {
                 self.set_fim_node_name(text);
             }
         }
+        if out.selection_menu_context_requested() {
+            // A forwarded menu right-click targets the selection, not a stale marker.
+            if let Some(doc) = self.doc_mut() {
+                doc.view.context_marker = None;
+            }
+        }
         let mut cmd = None;
         out.context_menu(|ui| {
             scroll_menu(ui, |ui| {
@@ -3522,6 +3435,8 @@ impl ThinodaApp {
             data.insert_temp(slot.with("focus"), true);
             data.insert_temp(slot.with("size_editing"), false);
             data.insert_temp(slot.with("inline_size_editing"), false);
+            data.insert_temp(slot.with("text_requested"), true);
+            data.remove::<egui::Id>(slot.with("dismissed"));
         });
         ctx.request_repaint();
     }
@@ -3539,7 +3454,14 @@ impl ThinodaApp {
         }
         let doc = self.doc_mut()?;
         let result = doc.doc.edit_sheet(change.label(), |sheet| {
-            sheet.update_style(&[target.topic], |style| change.apply(style))
+            sheet.update_style(&[target.topic], |style| change.apply(style))?;
+            if let Some(topic) = sheet.topic_mut(target.topic) {
+                for run in &mut topic.inline_text.runs {
+                    change.clear_override(&mut run.style);
+                }
+                topic.inline_text.runs.retain(|run| !run.style.is_empty());
+            }
+            Ok(())
         });
         match result {
             Ok(()) => Some(CardTextTarget {
@@ -3756,10 +3678,37 @@ impl ThinodaApp {
         }
     }
 
-    fn card_text_toolbar(&mut self, ui: &mut Ui, options_open: bool) -> bool {
+    fn card_text_toolbar(&mut self, ui: &mut Ui, _options_open: bool) -> bool {
         let ctx = ui.ctx().clone();
         let viewport = self.current_viewport;
         let slot = card_text_slot(viewport);
+        if let Some((target, true)) = self.card_text_target()
+            && self
+                .doc()
+                .is_some_and(|doc| doc.view.editing_topic().is_none())
+            && !ctx.text_edit_focused()
+            && !egui::Popup::is_any_open(&ctx)
+            && ctx.input_mut(|input| input.consume_key(Modifiers::ALT, Key::F10))
+        {
+            Self::open_card_text_toolbar(&ctx, viewport, target);
+        }
+        if let Some((current, _)) = self.card_text_target()
+            && let Some(doc) = self.doc()
+        {
+            let owner = format_menu::owner(&doc.doc, &doc.view);
+            if ctx.data(|data| data.get_temp::<egui::Id>(slot.with("dismissed"))) != Some(owner)
+                && ctx
+                    .data(|data| data.get_temp::<CardTextTarget>(slot))
+                    .as_ref()
+                    != Some(&current)
+            {
+                Self::open_card_text_toolbar(&ctx, viewport, current);
+                ctx.data_mut(|data| {
+                    data.insert_temp(slot.with("focus"), false);
+                    data.remove::<bool>(slot.with("text_requested"));
+                });
+            }
+        }
         if let Some(restore) =
             ctx.data(|data| data.get_temp::<CardTitleRestore>(slot.with("restore_title")))
             && restore.frame < ctx.cumulative_frame_nr()
@@ -3848,7 +3797,15 @@ impl ThinodaApp {
             return false;
         };
         let Some((current, mut enabled)) = self.card_text_target() else {
-            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            ctx.data_mut(|data| {
+                data.remove::<CardTextTarget>(slot);
+                if let Some(doc) = self.doc() {
+                    data.insert_temp(
+                        slot.with("dismissed"),
+                        format_menu::owner(&doc.doc, &doc.view),
+                    );
+                }
+            });
             return false;
         };
         if current != target {
@@ -3856,24 +3813,22 @@ impl ThinodaApp {
             return false;
         }
         let doc = self.doc().unwrap();
+        let context_owner = format_menu::owner(&doc.doc, &doc.view);
+        format_menu::prepare(&ctx, context_owner);
         let title_active = doc.view.editing_topic() == Some(target.topic);
         let inline_formats = [
-            ("Inline bold", icons::BOLD, CardTitleFormat::Bold),
-            ("Inline italic", icons::ITALIC, CardTitleFormat::Italic),
+            ("Bold", icons::BOLD, CardTitleFormat::Bold),
+            ("Italic", icons::ITALIC, CardTitleFormat::Italic),
+            ("Underline", icons::UNDERLINE, CardTitleFormat::Underline),
             (
-                "Inline underline",
-                icons::UNDERLINE,
-                CardTitleFormat::Underline,
-            ),
-            (
-                "Inline strikethrough",
+                "Strikethrough",
                 icons::STRIKE,
                 CardTitleFormat::Strikethrough,
             ),
-            ("Inline subscript", "x₂", CardTitleFormat::Subscript),
-            ("Inline superscript", "x²", CardTitleFormat::Superscript),
-            ("Inline bulleted list", "•", CardTitleFormat::Bulleted),
-            ("Inline numbered list", "1.", CardTitleFormat::Numbered),
+            ("Subscript", "x₂", CardTitleFormat::Subscript),
+            ("Superscript", "x²", CardTitleFormat::Superscript),
+            ("Bulleted list", "•", CardTitleFormat::Bulleted),
+            ("Numbered list", "1.", CardTitleFormat::Numbered),
         ];
         let inline_format_active = if title_active {
             inline_formats.map(|(_, _, format)| {
@@ -3886,7 +3841,7 @@ impl ThinodaApp {
             .then(|| MapCanvas::title_inline_values(&ctx, &doc.doc, &doc.view))
             .flatten();
         let ime_active = title_active && doc.view.title_ime_active(&ctx);
-        enabled &= !ime_active;
+        enabled &= !ime_active && widgets::touch_activation_allowed(&ctx);
         let size_was_editing = ctx
             .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
             .unwrap_or(false);
@@ -3915,7 +3870,10 @@ impl ThinodaApp {
             && (!title_active || toolbar_focused)
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
-            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            ctx.data_mut(|data| {
+                data.remove::<CardTextTarget>(slot);
+                data.insert_temp(slot.with("dismissed"), context_owner);
+            });
             ctx.memory_mut(|memory| {
                 memory.request_focus(if title_active {
                     MapCanvas::title_editor_id()
@@ -3954,76 +3912,222 @@ impl ThinodaApp {
         let popup_was_open = ctx
             .data(|data| data.get_temp::<bool>(slot.with("font_popup")))
             .unwrap_or(false);
-        let palette = Palette::of(&ctx);
         let canvas = ui.available_rect_before_wrap();
-        let strip = crate::board_ui::context_strip_rects(canvas, true, options_open)
-            .0
-            .expect("card text strip was requested");
-        let panel = egui::Area::new(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
-            .order(egui::Order::Middle)
+        let anchor = doc.view.selected_topic_rect(&doc.doc).or_else(|| {
+            ctx.data(|data| data.get_temp::<(egui::Id, egui::Rect)>(slot.with("anchor")))
+                .filter(|(owner, _)| *owner == context_owner)
+                .map(|(_, rect)| rect)
+        });
+        let Some(anchor) = anchor else { return false };
+        if !anchor.intersects(canvas) || (!title_active && doc.view.has_active_canvas_gesture()) {
+            return false;
+        }
+        ctx.data_mut(|data| data.insert_temp(slot.with("anchor"), (context_owner, anchor)));
+        let text_requested = ctx.data_mut(|data| {
+            let requested = data
+                .get_temp::<bool>(slot.with("text_requested"))
+                .unwrap_or(false);
+            data.remove::<bool>(slot.with("text_requested"));
+            requested
+        });
+        let mut section = format_menu::section(&ctx, context_owner, ContextSection::Actions);
+        if title_active || text_requested && enabled {
+            section = ContextSection::Text;
+        }
+        let mut sections = vec![(ContextSection::Actions, t("Actions"))];
+        if enabled || title_active {
+            sections.extend([
+                (ContextSection::Text, t("Text")),
+                (ContextSection::Style, t("Style")),
+            ]);
+        }
+        if enabled && self.has_context_arrange_controls() {
+            sections.push((ContextSection::Arrange, t("Arrange")));
+        }
+        if !sections.iter().any(|(value, _)| *value == section) {
+            section = ContextSection::Actions;
+        }
+        format_menu::set_section(&ctx, context_owner, section);
+        let size = format_menu::desired_size(&ctx, context_owner, section, canvas.width());
+        let mut avoid = vec![egui::Rect::from_min_size(
+            canvas.min,
+            vec2(76.0, canvas.height()),
+        )];
+        let mut protected_title = anchor;
+        let board_id = egui::Id::unique("thinoda_board_toolbar");
+        if let Some(board) = ctx.memory(|memory| memory.area_rect(board_id)) {
+            avoid[0] = board.expand(4.0);
+        }
+        if let Some(doc) = self.doc_mut() {
+            let origin = canvas.center() + doc.view.offset;
+            let layout = doc.view.layout_for(&doc.doc);
+            if let Some(topic) = layout.topics.get(&target.topic)
+                && doc
+                    .doc
+                    .sheet()
+                    .topic(target.topic)
+                    .and_then(|topic| topic.card)
+                    .is_some_and(|card| card.rotation == 0.0)
+            {
+                protected_title = board_screen_rect(topic.title_rect, origin, doc.view.zoom);
+            }
+            avoid.extend(board_card_obstacles(
+                doc.doc.sheet(),
+                &layout,
+                origin,
+                doc.view.zoom,
+                canvas,
+            ));
+            for zone in &doc.doc.sheet().zones {
+                if zone.name.is_empty() {
+                    continue;
+                }
+                let frame = board_screen_rect(zone.frame, origin, doc.view.zoom);
+                let height = ctx.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(
+                            zone.name.clone(),
+                            egui::FontId::proportional(12.0),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .y
+                });
+                avoid.push(egui::Rect::from_min_size(
+                    frame.min,
+                    vec2(frame.width(), (height + 6.0).max(24.0)),
+                ));
+            }
+        }
+        let mut measure_owner = context_owner;
+        let mut expected_height = size.y;
+        let mut measured =
+            format_menu::has_measurement(&ctx, measure_owner, section, canvas.width());
+        let preferred = format_menu::place(canvas, anchor, size, &avoid);
+        let mut clear = nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &avoid, 3.0);
+        let compact_actions = clear.is_none() && measured && section == ContextSection::Actions;
+        if compact_actions {
+            measure_owner = context_owner.with("compact_actions");
+            measured = format_menu::has_measurement(&ctx, measure_owner, section, canvas.width());
+            let height = if measured {
+                format_menu::desired_size(&ctx, measure_owner, section, canvas.width()).y
+            } else {
+                40.0
+            };
+            expected_height = height;
+            let preferred = format_menu::place(canvas, anchor, vec2(size.x, height), &avoid);
+            let compact_avoid: Vec<_> = avoid
+                .iter()
+                .enumerate()
+                .filter(|(index, obstacle)| {
+                    *index == 0 || !anchor.expand(6.0).contains_rect(**obstacle)
+                })
+                .map(|(_, rect)| *rect)
+                .collect();
+            clear = nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &compact_avoid, 3.0);
+        } else if clear.is_none() && section != ContextSection::Actions {
+            let editor = title_active
+                .then(|| ctx.read_response(MapCanvas::title_editor_id()))
+                .flatten()
+                .map(|response| response.rect)
+                .filter(|rect| rect.intersects(anchor))
+                .unwrap_or(protected_title);
+            let preferred = format_menu::place(canvas, editor, size, &[avoid[0]]);
+            clear =
+                nearest_clear_toolbar_rect(preferred, canvas.shrink(4.0), &[editor, avoid[0]], 3.0)
+                    .or(Some(preferred));
+        }
+        if measured && clear.is_none() {
+            return false;
+        }
+        let strip = clear.unwrap_or(preferred);
+        let mut requested_section = None;
+        if !format_menu::claim(&ctx, format_menu::Producer::Card) {
+            return false;
+        }
+        let panel = egui::Area::new(format_menu::area_id(&ctx))
+            .order(format_menu::ORDER)
             .fixed_pos(strip.min)
-            .constrain_to(strip)
+            .constrain_to(canvas)
             .movable(false)
+            .sizing_pass(!measured)
             .show(&ctx, |ui| {
-                ui.set_min_size(strip.size());
                 ui.set_max_width(strip.width());
-                ui.shrink_clip_rect(strip);
-                egui::Frame::new()
-                    .fill(palette.surface)
-                    .inner_margin(Margin::symmetric(6, 3))
-                    .show(ui, |ui| {
-                        ui.set_width((strip.width() - 12.0).max(0.0));
-                        ui.set_min_height((strip.height() - 6.0).max(0.0));
-                        ui.add_enabled_ui(enabled, |ui| {
-                            ui.push_id(
-                                (
-                                    &target.document,
-                                    target.instance,
-                                    target.sheet,
-                                    target.root,
-                                    target.topic,
-                                ),
-                                |ui| {
-                                    ui.horizontal_centered(|ui| {
-                                        close = card_text_owned_icon(
-                                            ui,
-                                            icons::CLOSE,
-                                            t("Close"),
-                                            false,
-                                            false,
-                                            &mut owned_focus,
-                                        );
-                                        ui.add_enabled_ui(!title_active, |ui| {
-                                            guarded_menu_button(
-                                                ui,
-                                                format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
-                                                |ui| {
-                                                    self.formatting_insert_actions(ui, &mut command)
-                                                },
-                                            )
-                                            .response
-                                            .accessible_name(t("More insert actions"))
-                                            .on_hover_text(t("More insert actions"));
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.set_width((strip.width() - 16.0).max(1.0));
+                    ui.add_enabled_ui(enabled || section == ContextSection::Actions, |ui| {
+                        ui.push_id(
+                            (
+                                &target.document,
+                                target.instance,
+                                target.sheet,
+                                target.root,
+                                target.topic,
+                            ),
+                            |ui| {
+                                ui.horizontal(|ui| {
+                                    close = card_text_owned_icon(
+                                        ui,
+                                        icons::CLOSE,
+                                        t("Close"),
+                                        false,
+                                        false,
+                                        &mut owned_focus,
+                                    );
+                                    let mut next = section;
+                                    let sections: Vec<_> = sections
+                                        .iter()
+                                        .copied()
+                                        .filter(|(value, _)| {
+                                            !compact_actions || *value != ContextSection::Actions
+                                        })
+                                        .collect();
+                                    owned_focus.extend(
+                                        format_menu::tabs(ui, &mut next, &sections, enabled)
+                                            .into_iter()
+                                            .map(|response| response.id),
+                                    );
+                                    if next != section {
+                                        if title_active {
+                                            requested_section = Some(next);
+                                        } else {
+                                            section = next;
+                                            format_menu::set_section(&ctx, context_owner, next);
+                                        }
+                                    }
+                                    if compact_actions {
+                                        let actions = ui.menu_button(t("Actions"), |ui| {
+                                            command = self.selection_context_actions(ui)
                                         });
-                                        let width = ui.available_width().max(0.0);
-                                        egui::ScrollArea::horizontal()
-                                    .id_salt("card_text_controls")
-                                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
-                                    .scroll_bar_visibility(
-                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
-                                    )
-                                    .max_width(width)
-                                    .min_scrolled_width(0.0)
-                                    .max_height(42.0)
-                                    .min_scrolled_height(Tokens::ICON_BUTTON)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        ui.horizontal_centered(|ui| {
-                                            ui.label(RichText::new(t("Whole-card text")).small())
-                                                .on_hover_text(format!(
-                                                    "{} · Alt+F10",
-                                                    card_text_label()
-                                                ));
+                                        owned_focus.push(actions.response.id);
+                                    }
+                                });
+                                if compact_actions && section == ContextSection::Actions {
+                                    return;
+                                }
+                                if section == ContextSection::Style {
+                                    self.context_card_style_properties(ui);
+                                } else if section == ContextSection::Arrange {
+                                    command = self.context_arrange_controls(ui);
+                                } else if section == ContextSection::Actions {
+                                    command = self.selection_context_actions(ui);
+                                } else {
+                                    ui.label(
+                                        RichText::new(t(if title_active {
+                                            if MapCanvas::title_has_selection(&ctx) {
+                                                "Selected text"
+                                            } else {
+                                                "New text"
+                                            }
+                                        } else {
+                                            "Selected object"
+                                        }))
+                                        .small(),
+                                    );
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        if !title_active {
                                             for (icon, label, on, next, focus) in [
                                                 (
                                                     icons::BOLD,
@@ -4222,153 +4326,160 @@ impl ThinodaApp {
                                             {
                                                 size_change = Some(CardTextChange::Size(size));
                                             }
-                                            widgets::vdivider(ui);
-                                            ui.label(t("Text Color"));
-                                            let auto = ui
-                                                .selectable_label(
-                                                    style.text_color.is_none(),
-                                                    t("Auto"),
-                                                )
-                                                .accessible_name(format!(
-                                                    "{} · {}",
-                                                    t("Text Color"),
-                                                    t("Auto")
-                                                ));
-                                            owned_focus.push(auto.id);
-                                            if auto.gained_focus() {
-                                                auto.scroll_to_me(None);
+                                            let (response, picked) = card_text_color_menu(
+                                                ui,
+                                                &target,
+                                                Some(style.text_color),
+                                                text_color,
+                                                &mut owned_focus,
+                                            );
+                                            font_popups.push((
+                                                response.id,
+                                                egui::Popup::is_id_open(
+                                                    &ctx,
+                                                    egui::Popup::menu(&response).get_id(),
+                                                ),
+                                            ));
+                                            if let Some(color) = picked {
+                                                change = Some(CardTextChange::Color(color));
                                             }
-                                            if auto.clicked()
-                                                && widgets::touch_activation_allowed(&ctx)
-                                                && style.text_color.is_some()
+                                        }
+                                        if let Some(values) = &inline_values {
+                                            for (index, (label, icon, format)) in
+                                                inline_formats.into_iter().enumerate()
                                             {
-                                                change = Some(CardTextChange::Color(None));
-                                            }
-                                            let custom = (!SWATCHES
-                                                .contains(&from_color(text_color)))
-                                            .then_some(text_color);
-                                            for color in custom
-                                                .into_iter()
-                                                .chain(SWATCHES.iter().copied().map(to_color))
-                                            {
-                                                if card_text_swatch(
+                                                if card_text_owned_icon(
                                                     ui,
-                                                    color,
-                                                    color == text_color,
-                                                    t("Text Color"),
+                                                    icon,
+                                                    t(label),
+                                                    inline_format_active[index],
+                                                    request_focus && index == 0,
                                                     &mut owned_focus,
                                                 ) {
-                                                    change =
-                                                        Some(CardTextChange::Color(Some(color)));
+                                                    inline_format_change = Some(format);
+                                                }
+                                                if index == 0 {
+                                                    bold_control = owned_focus.last().copied();
                                                 }
                                             }
-                                            if let Some(values) = &inline_values {
-                                                ui.add_enabled_ui(!ime_active, |ui| {
-                                                    widgets::vdivider(ui);
-                                                    ui.label(RichText::new(t("Inline formatting")).small());
-                                                    for (index, (label, icon, format)) in
-                                                        inline_formats.into_iter().enumerate()
-                                                    {
-                                                        if card_text_owned_icon(
-                                                            ui,
-                                                            icon,
-                                                            t(label),
-                                                            inline_format_active[index],
-                                                            false,
-                                                            &mut owned_focus,
-                                                        ) {
-                                                            inline_format_change = Some(format);
-                                                        }
-                                                    }
-                                                    widgets::vdivider(ui);
-                                                    let mut family = values.font_family.clone().flatten();
-                                                    let mut family_chosen = false;
+                                            let mut family = values.font_family.clone().flatten();
+                                            let mut family_chosen = false;
+                                            let family_width =
+                                                if canvas.width() < 400.0 { 96.0 } else { 120.0 };
+                                            ui.allocate_ui_with_layout(
+                                                vec2(family_width, Tokens::ICON_BUTTON),
+                                                Layout::left_to_right(Align::Center),
+                                                |ui| {
                                                     ui.push_id("inline-card-font-family", |ui| {
-                                                        ui.allocate_ui_with_layout(
-                                                            vec2(120.0, Tokens::ICON_BUTTON),
-                                                            Layout::left_to_right(Align::Center),
-                                                            |ui| {
-                                                                ui.set_max_width(120.0);
-                                                                let (response, chosen) = font_choice_with_mixed(
-                                                                    ui,
-                                                                    &mut self.fonts,
-                                                                    &mut family,
-                                                                    t("Auto"),
-                                                                    true,
-                                                                    Some(&mut owned_focus),
-                                                                    FontChoiceMode {
-                                                                        mixed: values.font_family.is_none(),
-                                                                        searchable: true,
-                                                                    },
-                                                                );
-                                                                let response = response.accessible_name(t("Inline Font Family"));
-                                                                family_chosen = chosen;
-                                                                font_popups.push((
-                                                                    response.id,
-                                                                    egui::ComboBox::is_open(&ctx, response.id),
-                                                                ));
-                                                                if response.gained_focus() {
-                                                                    response.scroll_to_me(None);
-                                                                }
-                                                            },
-                                                        );
-                                                    });
-                                                    if family_chosen && widgets::touch_activation_allowed(&ctx) {
-                                                        inline_style_change =
-                                                            Some(CardTitleStyle::FontFamily(family));
-                                                    }
-                                                    let size = values.font_size.flatten().unwrap_or(resolved.font_size);
-                                                    if values.font_size.is_none() {
-                                                        ui.label(t("Mixed"));
-                                                    }
-                                                    let (size, editing) = card_inline_size_control(
-                                                        ui, slot, numeric_owner.with("inline"), size, &mut owned_focus,
-                                                    );
-                                                    inline_size_is_editing = editing;
-                                                    if let Some(size) = size
-                                                        && (values.font_size.is_none()
-                                                            || values.font_size.flatten() != Some(size))
-                                                        && size.is_finite()
-                                                    {
-                                                        inline_size_change =
-                                                            Some(CardTitleStyle::FontSize(Some(size)));
-                                                    }
-                                                    let auto_size = ui.button(t("Auto"))
-                                                        .accessible_name(t("Inline Font Size Auto"));
-                                                    owned_focus.push(auto_size.id);
-                                                    if auto_size.clicked() && widgets::touch_activation_allowed(&ctx) {
-                                                        inline_style_change = Some(CardTitleStyle::FontSize(None));
-                                                    }
-                                                    widgets::vdivider(ui);
-                                                    ui.label(t("Inline Text Color"));
-                                                    let auto = ui.selectable_label(values.color == Some(None), t("Auto"))
-                                                        .accessible_name(t("Inline Text Color Auto"));
-                                                    owned_focus.push(auto.id);
-                                                    if auto.clicked() && widgets::touch_activation_allowed(&ctx) {
-                                                        inline_style_change = Some(CardTitleStyle::Color(None));
-                                                    }
-                                                    let custom = values.color.flatten().filter(|color| {
-                                                        !SWATCHES.contains(&from_color(*color))
-                                                    });
-                                                    for color in custom.into_iter().chain(SWATCHES.iter().copied().map(to_color)) {
-                                                        if card_text_swatch(
-                                                            ui, color, values.color == Some(Some(color)),
-                                                            t("Inline Text Color"), &mut owned_focus,
-                                                        ) {
-                                                            inline_style_change = Some(CardTitleStyle::Color(Some(color)));
+                                                        ui.set_max_width(family_width);
+                                                        let (response, chosen) =
+                                                            font_choice_with_mixed(
+                                                                ui,
+                                                                &mut self.fonts,
+                                                                &mut family,
+                                                                t("Auto"),
+                                                                true,
+                                                                Some(&mut owned_focus),
+                                                                FontChoiceMode {
+                                                                    mixed: values
+                                                                        .font_family
+                                                                        .is_none(),
+                                                                    searchable: true,
+                                                                },
+                                                            );
+                                                        let response = response
+                                                            .accessible_name(t("Font Family"));
+                                                        family_chosen = chosen;
+                                                        font_popups.push((
+                                                            response.id,
+                                                            egui::ComboBox::is_open(
+                                                                &ctx,
+                                                                response.id,
+                                                            ),
+                                                        ));
+                                                        if response.gained_focus() {
+                                                            response.scroll_to_me(None);
                                                         }
-                                                    }
-                                                });
+                                                    });
+                                                },
+                                            );
+                                            if family_chosen
+                                                && widgets::touch_activation_allowed(&ctx)
+                                            {
+                                                inline_style_change =
+                                                    Some(CardTitleStyle::FontFamily(family));
                                             }
-                                        });
-                                        reveal_changed_focus(ui);
+                                            let size = values
+                                                .font_size
+                                                .flatten()
+                                                .unwrap_or(resolved.font_size);
+                                            if values.font_size.is_none() {
+                                                ui.label(t("Mixed"));
+                                            }
+                                            let (size, editing) = card_inline_size_control(
+                                                ui,
+                                                slot,
+                                                numeric_owner.with("inline"),
+                                                size,
+                                                &mut owned_focus,
+                                            );
+                                            inline_size_is_editing = editing;
+                                            if let Some(size) = size
+                                                && (values.font_size.is_none()
+                                                    || values.font_size.flatten() != Some(size))
+                                                && size.is_finite()
+                                            {
+                                                inline_size_change =
+                                                    Some(CardTitleStyle::FontSize(Some(size)));
+                                            }
+                                            let auto_size = widgets::icon_button(
+                                                ui,
+                                                icons::RESET,
+                                                &format!("{} · {}", t("Font Size"), t("Auto")),
+                                                false,
+                                            );
+                                            owned_focus.push(auto_size.id);
+                                            if auto_size.clicked()
+                                                && widgets::touch_activation_allowed(&ctx)
+                                            {
+                                                inline_style_change =
+                                                    Some(CardTitleStyle::FontSize(None));
+                                            }
+                                            let (response, picked) = card_text_color_menu(
+                                                ui,
+                                                &target,
+                                                values.color,
+                                                text_color,
+                                                &mut owned_focus,
+                                            );
+                                            font_popups.push((
+                                                response.id,
+                                                egui::Popup::is_id_open(
+                                                    &ctx,
+                                                    egui::Popup::menu(&response).get_id(),
+                                                ),
+                                            ));
+                                            if let Some(color) = picked {
+                                                inline_style_change =
+                                                    Some(CardTitleStyle::Color(color));
+                                            }
+                                        }
                                     });
-                                    });
-                                },
-                            );
-                        });
+                                    reveal_changed_focus(ui);
+                                }
+                            },
+                        );
                     });
+                });
             });
+        format_menu::measured(
+            &ctx,
+            measure_owner,
+            section,
+            canvas.width(),
+            expected_height,
+            panel.response.rect,
+        );
         let popup_open = font_popups.iter().any(|(_, open)| *open);
         let popup_rects: Vec<_> = font_popups
             .iter()
@@ -4472,7 +4583,10 @@ impl ThinodaApp {
             self.toasts.warning(error);
         }
         if close {
-            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            ctx.data_mut(|data| {
+                data.remove::<CardTextTarget>(slot);
+                data.insert_temp(slot.with("dismissed"), context_owner);
+            });
             ctx.memory_mut(|memory| {
                 memory.request_focus(if title_active {
                     MapCanvas::title_editor_id()
@@ -4512,7 +4626,609 @@ impl ThinodaApp {
         if let Some(command) = command {
             self.exec(&ctx, command);
         }
+        if let Some(section) = requested_section {
+            ctx.data_mut(|data| {
+                data.insert_temp(slot.with("section_after_editor"), (context_owner, section))
+            });
+        }
         true
+    }
+
+    fn finish_card_context_section(&mut self, ctx: &Context) {
+        let slot = card_text_slot(self.current_viewport);
+        let request = ctx.data_mut(|data| {
+            let request =
+                data.get_temp::<(egui::Id, ContextSection)>(slot.with("section_after_editor"));
+            data.remove::<(egui::Id, ContextSection)>(slot.with("section_after_editor"));
+            request
+        });
+        let Some((owner, section)) = request else {
+            return;
+        };
+        let Some(doc) = self.doc_mut() else { return };
+        if format_menu::owner(&doc.doc, &doc.view) != owner || doc.view.title_ime_active(ctx) {
+            return;
+        }
+        match doc.view.try_commit_edit(&mut doc.doc) {
+            Ok(_) => {
+                format_menu::set_section(ctx, owner, section);
+                ctx.request_repaint();
+            }
+            Err(error) => {
+                self.toasts.error(error.to_string());
+            }
+        }
+    }
+
+    pub(crate) fn context_arrange_controls(&mut self, ui: &mut Ui) -> Option<Cmd> {
+        use thinoda_canvas::BoardAction;
+        use thinoda_core::board::{Band, ZOrder};
+        let mut picked = None;
+        ui.horizontal_wrapped(|ui| {
+            for (label, action) in [
+                ("Bring to front", BoardAction::ZOrder(ZOrder::Front)),
+                ("Bring forward", BoardAction::ZOrder(ZOrder::Forward)),
+                ("Send backward", BoardAction::ZOrder(ZOrder::Backward)),
+                ("Send to back", BoardAction::ZOrder(ZOrder::Back)),
+                ("Above map", BoardAction::SetBand(Band::Above)),
+                ("Below map", BoardAction::SetBand(Band::Below)),
+            ] {
+                let command = Cmd::BoardAction(action);
+                if self.command_available(&command)
+                    && ui.button(t(label)).clicked()
+                    && widgets::touch_activation_allowed(ui.ctx())
+                {
+                    picked = Some(command);
+                }
+            }
+        });
+        picked
+    }
+
+    pub(crate) fn has_context_arrange_controls(&self) -> bool {
+        use thinoda_canvas::BoardAction;
+        use thinoda_core::{Band, ZOrder};
+        [
+            BoardAction::ZOrder(ZOrder::Front),
+            BoardAction::ZOrder(ZOrder::Forward),
+            BoardAction::ZOrder(ZOrder::Backward),
+            BoardAction::ZOrder(ZOrder::Back),
+            BoardAction::SetBand(Band::Above),
+            BoardAction::SetBand(Band::Below),
+        ]
+        .into_iter()
+        .any(|action| self.command_available(&Cmd::BoardAction(action)))
+    }
+
+    pub(crate) fn selection_context_actions(&mut self, ui: &mut Ui) -> Option<Cmd> {
+        fn applicable(app: &ThinodaApp, entries: Vec<CtxEntry>) -> Vec<CtxEntry> {
+            entries
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    CtxEntry::Command { ref command, .. } => {
+                        app.command_available(command).then_some(entry)
+                    }
+                    CtxEntry::Submenu {
+                        label,
+                        icon,
+                        entries,
+                    } => {
+                        let entries = applicable(app, entries);
+                        (!entries.is_empty()).then_some(CtxEntry::Submenu {
+                            label,
+                            icon,
+                            entries,
+                        })
+                    }
+                    CtxEntry::Caption(_) | CtxEntry::Separator | CtxEntry::CardText => None,
+                })
+                .collect()
+        }
+        let (_, entries) = self.canvas_context_menu();
+        let entries = applicable(self, entries);
+        let mut picked = None;
+        let topics = self.doc().is_some_and(|doc| {
+            !doc.view.selection.is_empty() && doc.view.board_selection.is_empty()
+        });
+        ui.horizontal_wrapped(|ui| {
+            if topics {
+                for (icon, label, command) in [
+                    (
+                        icons::SUBTOPIC,
+                        "Add subtopic",
+                        Cmd::Canvas(Action::InsertChild),
+                    ),
+                    (
+                        icons::RELATIONSHIP,
+                        "Connect topics",
+                        Cmd::Canvas(Action::StartRelationship),
+                    ),
+                    (
+                        icons::LINK,
+                        "Edit hyperlink",
+                        Cmd::EditField(FocusField::Hyperlink),
+                    ),
+                    (icons::NOTE, "Edit notes", Cmd::EditField(FocusField::Notes)),
+                    (icons::LABEL, "Edit labels", Cmd::Labels),
+                    (icons::TODO, "Toggle to-do", Cmd::Canvas(Action::ToggleTodo)),
+                ] {
+                    if self.command_available(&command)
+                        && widgets::icon_button(ui, icon, t(label), false).clicked()
+                    {
+                        picked = Some(command);
+                    }
+                }
+                let command = Cmd::Ai(crate::ai::AiCommand::Brainstorm);
+                if self.settings.ai.enabled
+                    && self.command_available(&command)
+                    && ui.button(t("Expand ideas")).clicked()
+                {
+                    picked = Some(command);
+                }
+            }
+            if !topics {
+                for (label, action) in [
+                    ("Copy", Action::Copy),
+                    ("Duplicate", Action::Duplicate),
+                    ("Delete", Action::Delete),
+                ] {
+                    let command = Cmd::Canvas(action);
+                    if self.command_available(&command) && ui.button(t(label)).clicked() {
+                        picked = Some(command);
+                    }
+                }
+            }
+            if !entries.is_empty() {
+                ui.menu_button(t("More actions"), |ui| {
+                    scroll_menu(ui, |ui| {
+                        let mut card_text = false;
+                        if topics
+                            && self.command_available(&Cmd::Canvas(Action::ToggleMarker(
+                                "priority-1".into(),
+                            )))
+                        {
+                            ui.menu_button(t("Marker"), |ui| {
+                                scroll_menu(ui, |ui| self.marker_menu(ui, &mut picked));
+                            });
+                        }
+                        if self.command_available(&Cmd::FindReplace)
+                            && ui.button(t("Find and Replace…")).clicked()
+                        {
+                            picked = Some(Cmd::FindReplace);
+                            ui.close();
+                        }
+                        self.context_entries(ui, &entries, &mut picked, &mut card_text);
+                    });
+                });
+            }
+        });
+        if !widgets::touch_activation_allowed(ui.ctx()) {
+            return None;
+        }
+        picked
+    }
+
+    fn other_selection_menu(&mut self, ctx: &Context, canvas: egui::Rect) -> bool {
+        let Some(doc) = self.doc() else { return false };
+        if doc.view.board_selection.is_empty()
+            && doc.view.selected_object.is_none()
+            && doc.view.selection.len() <= 1
+        {
+            return false;
+        }
+        if doc.view.editing_board_object().is_some()
+            || doc.view.editing_topic().is_some()
+            || doc.view.has_active_canvas_gesture()
+            || self.zen
+            || self.search.open
+            || self.any_modal_open()
+            || self.palette.open
+        {
+            return true;
+        }
+        let owner = format_menu::owner(&doc.doc, &doc.view);
+        format_menu::prepare(ctx, owner);
+        let topics = !doc.view.selection.is_empty()
+            && doc.view.board_selection.is_empty()
+            && doc.view.selected_object.is_none();
+        let editable = topics
+            && StyleTargets::from_view(doc.doc.sheet(), &doc.view)
+                .is_some_and(|targets| !targets.locked)
+            && !doc.has_inspector_changes()
+            && doc.fim_edit.is_none();
+        let text = editable
+            && doc.view.selection.iter().all(|id| {
+                doc.doc.sheet().topic(*id).is_some_and(|topic| {
+                    topic
+                        .card
+                        .is_none_or(|card| card.kind != thinoda_core::board::CardKind::Image)
+                })
+            });
+        let style = editable
+            && (doc.view.selection.iter().all(|id| {
+                doc.doc
+                    .sheet()
+                    .topic(*id)
+                    .is_some_and(|topic| topic.card.is_none())
+            }) || doc.view.selection.iter().all(|id| {
+                doc.doc
+                    .sheet()
+                    .topic(*id)
+                    .is_some_and(|topic| topic.card.is_some())
+            }));
+        let cards = topics
+            && doc.view.selection.iter().all(|id| {
+                doc.doc
+                    .sheet()
+                    .topic(*id)
+                    .is_some_and(|topic| topic.card.is_some())
+            });
+        let arrange = self.has_context_arrange_controls();
+        let Some(doc) = self.doc_mut() else {
+            return true;
+        };
+        let Some(anchor) = doc.view.selected_board_rect(&doc.doc) else {
+            return true;
+        };
+        if !anchor.intersects(canvas) {
+            return true;
+        }
+        let id = format_menu::area_id(ctx);
+        let size = format_menu::desired_size(
+            ctx,
+            owner,
+            format_menu::section(ctx, owner, ContextSection::Actions),
+            canvas.width(),
+        );
+        let rect = format_menu::place(
+            canvas,
+            anchor,
+            size,
+            &[egui::Rect::from_min_size(
+                canvas.min,
+                vec2(76.0, canvas.height()),
+            )],
+        );
+        let mut sections = vec![(ContextSection::Actions, t("Actions"))];
+        if text {
+            sections.push((ContextSection::Text, t("Text")));
+        }
+        if style {
+            sections.push((ContextSection::Style, t("Style")));
+        }
+        if arrange {
+            sections.push((ContextSection::Arrange, t("Arrange")));
+        }
+        let mut section = format_menu::section(ctx, owner, ContextSection::Actions);
+        if !sections.iter().any(|(value, _)| *value == section) {
+            section = ContextSection::Actions;
+        }
+        let mut command = None;
+        if !format_menu::claim(ctx, format_menu::Producer::Selection) {
+            return true;
+        }
+        let menu = egui::Area::new(id)
+            .order(format_menu::ORDER)
+            .fixed_pos(rect.min)
+            .constrain_to(canvas)
+            .movable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width((rect.width() - 16.0).max(1.0));
+                    format_menu::tabs(ui, &mut section, &sections, true);
+                    format_menu::set_section(ctx, owner, section);
+                    match section {
+                        ContextSection::Actions => command = self.selection_context_actions(ui),
+                        ContextSection::Text => self.context_topic_text_properties(ui),
+                        ContextSection::Style => {
+                            if cards {
+                                self.context_card_style_properties(ui)
+                            } else {
+                                self.context_topic_style_properties(ui)
+                            }
+                        }
+                        ContextSection::Arrange => command = self.context_arrange_controls(ui),
+                    }
+                });
+            });
+        format_menu::measured(
+            ctx,
+            owner,
+            section,
+            canvas.width(),
+            size.y,
+            menu.response.rect,
+        );
+        if let Some(command) = command {
+            self.exec(ctx, command);
+        }
+        true
+    }
+
+    fn context_topic_text_properties(&mut self, ui: &mut Ui) {
+        let Some(doc) = self.doc() else { return };
+        let Some(id) = doc.view.primary() else { return };
+        let Some(topic) = doc.doc.sheet().topic(id) else {
+            return;
+        };
+        let ids = doc.view.selection.clone();
+        let style = topic.style.clone();
+        let mut resolved = thinoda_core::theme::resolve_style(doc.doc.sheet(), id, doc.view.dark);
+        let styles: Vec<_> = ids
+            .iter()
+            .map(|id| thinoda_core::theme::resolve_style(doc.doc.sheet(), *id, doc.view.dark))
+            .collect();
+        let mixed = styles.iter().any(|style| *style != resolved);
+        let family_mixed = styles
+            .iter()
+            .any(|style| style.font_family != resolved.font_family);
+        resolved.bold = styles.iter().all(|style| style.bold);
+        resolved.italic = styles.iter().all(|style| style.italic);
+        resolved.underline = styles.iter().all(|style| style.underline);
+        resolved.strikethrough = styles.iter().all(|style| style.strikethrough);
+        let target = CardTextTarget {
+            document: doc.key.clone(),
+            instance: doc.doc.instance_id(),
+            sheet: doc.doc.active_index(),
+            root: doc.doc.sheet().root,
+            topic: id,
+            revision: doc.doc.state_id(),
+        };
+        let mut change = None;
+        let mut owned = Vec::new();
+        ui.label(
+            RichText::new(if mixed {
+                format!("{} · {}", t("Selected objects"), t("Mixed"))
+            } else {
+                t(if ids.len() > 1 {
+                    "Selected objects"
+                } else {
+                    "Selected object"
+                })
+                .to_owned()
+            })
+            .small(),
+        );
+        ui.horizontal_wrapped(|ui| {
+            for (icon, label, on, next) in [
+                (
+                    icons::BOLD,
+                    "Bold",
+                    resolved.bold,
+                    CardTextChange::Bold(!resolved.bold),
+                ),
+                (
+                    icons::ITALIC,
+                    "Italic",
+                    resolved.italic,
+                    CardTextChange::Italic(!resolved.italic),
+                ),
+                (
+                    icons::UNDERLINE,
+                    "Underline",
+                    resolved.underline,
+                    CardTextChange::Underline(!resolved.underline),
+                ),
+                (
+                    icons::STRIKE,
+                    "Strikethrough",
+                    resolved.strikethrough,
+                    CardTextChange::Strikethrough(!resolved.strikethrough),
+                ),
+            ] {
+                if card_text_owned_icon(ui, icon, t(label), on, false, &mut owned) {
+                    change = Some(next);
+                }
+            }
+            for (align, icon, label) in [
+                (TextAlign::Left, icons::TEXT_ALIGN_LEFT, "Align Left"),
+                (TextAlign::Center, icons::TEXT_ALIGN_CENTER, "Align Center"),
+                (TextAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align Right"),
+            ] {
+                if card_text_owned_icon(
+                    ui,
+                    icon,
+                    t(label),
+                    align == resolved.align,
+                    false,
+                    &mut owned,
+                ) {
+                    change = Some(CardTextChange::Align(align));
+                }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            let mut family = style.font_family.clone();
+            let picked = ui
+                .allocate_ui(vec2(120.0, 22.0), |ui| {
+                    let (response, picked) =
+                        font_selector_mixed(ui, &mut self.fonts, &mut family, family_mixed);
+                    response.accessible_name(t("Font Family"));
+                    picked
+                })
+                .inner;
+            if picked {
+                change = Some(CardTextChange::Family(family));
+            }
+            let owner = Some(egui::Id::unique(&target));
+            let mut size = resolved.font_size;
+            let (_, commit) =
+                touch_numeric_value(ui, &mut size, "context-topic-size", owner, |ui, value| {
+                    ui.add(egui::DragValue::new(value).range(6.0..=96.0).speed(0.5))
+                        .accessible_name(t("Font Size"))
+                });
+            if commit && size != resolved.font_size {
+                change = Some(CardTextChange::Size(size));
+            }
+            if let (_, Some(color)) = card_text_color_menu(
+                ui,
+                &target,
+                Some(style.text_color),
+                resolved.text_color,
+                &mut owned,
+            ) {
+                change = Some(CardTextChange::Color(color));
+            }
+        });
+        if let Some(change) = change
+            && let Some(doc) = self.doc_mut()
+        {
+            let result = doc.doc.edit_sheet(change.label(), |sheet| {
+                sheet.update_style(&ids, |style| change.apply(style))?;
+                for id in &ids {
+                    if let Some(topic) = sheet.topic_mut(*id) {
+                        for run in &mut topic.inline_text.runs {
+                            change.clear_override(&mut run.style);
+                        }
+                        topic.inline_text.runs.retain(|run| !run.style.is_empty());
+                    }
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.toasts.error(error.to_string());
+            }
+        }
+    }
+
+    fn context_card_style_properties(&mut self, ui: &mut Ui) {
+        let Some(doc) = self.doc() else { return };
+        let Some(targets) = StyleTargets::from_view(doc.doc.sheet(), &doc.view)
+            .filter(|targets| !targets.locked && targets.shapes.is_empty())
+        else {
+            return;
+        };
+        let ids = targets.topics;
+        let Some(cards) = ids
+            .iter()
+            .map(|id| doc.doc.sheet().topic(*id).and_then(|topic| topic.card))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
+        let Some(card) = cards.first().copied() else {
+            return;
+        };
+        let common = cards.iter().all(|value| value.color == card.color);
+        let target =
+            egui::Id::unique((format_menu::owner(&doc.doc, &doc.view), doc.doc.state_id()));
+        let mut picked = None;
+        ui.horizontal_wrapped(|ui| {
+            if !common {
+                ui.label(t("Mixed"));
+            }
+            ui.menu_button(t("Fill"), |ui| {
+                scroll_menu(ui, |ui| {
+                    ui.set_width(232.0);
+                    if ui
+                        .selectable_label(common && card.color.is_none(), t("Auto"))
+                        .clicked()
+                    {
+                        picked = Some(None);
+                    }
+                    if let Some(color) = widgets::color_swatches(
+                        ui,
+                        &SWATCHES,
+                        card.color.filter(|_| common).map(from_color),
+                    ) {
+                        picked = Some(Some(to_color(color)));
+                    }
+                    ui.collapsing(t("Custom color"), |ui| {
+                        if let Some(color) = crate::board_ui::custom_color_picker(
+                            ui,
+                            "card-fill",
+                            &target,
+                            card.color.unwrap_or(Color::WHITE),
+                        ) {
+                            picked = Some(Some(color));
+                        }
+                    });
+                });
+            });
+            if ids.len() == 1 {
+                ui.menu_button(t("More style options"), |ui| {
+                    self.board_card_geometry_properties(ui)
+                });
+            }
+        });
+        if let Some(color) = picked
+            && widgets::touch_activation_allowed(ui.ctx())
+            && let Some(doc) = self.doc_mut()
+        {
+            let result = doc.doc.edit_sheet("Fill", |sheet| {
+                for (id, mut card) in ids.into_iter().zip(cards) {
+                    card.color = color;
+                    sheet
+                        .set_topic_card(id, Some(card))
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.toasts.error(error.to_string());
+            }
+        }
+    }
+
+    fn context_topic_style_properties(&mut self, ui: &mut Ui) {
+        let Some(doc) = self.doc() else { return };
+        let Some(id) = doc.view.primary() else { return };
+        let resolved = thinoda_core::theme::resolve_style(doc.doc.sheet(), id, doc.view.dark);
+        let ids = doc.view.selection.clone();
+        let owner = egui::Id::unique((doc.doc.instance_id(), doc.doc.state_id(), &ids));
+        let mut shape = resolved.shape;
+        egui::ComboBox::from_id_salt("context-topic-shape")
+            .selected_text(t(shape.label()))
+            .show_ui(ui, |ui| {
+                for value in TopicShape::ALL {
+                    ui.selectable_value(&mut shape, value, t(value.label()));
+                }
+            })
+            .response
+            .accessible_name(t("Shape"));
+        let mut width = resolved.border_width;
+        let (_, commit) = touch_numeric_value(
+            ui,
+            &mut width,
+            "context-border-width",
+            Some(owner),
+            |ui, value| {
+                ui.add(egui::DragValue::new(value).range(0.0..=8.0).speed(0.5))
+                    .accessible_name(t("Width"))
+            },
+        );
+        let mut color = None;
+        for (label, field, current) in [
+            ("Fill", StyleColor::Fill, resolved.fill),
+            ("Border", StyleColor::Border, resolved.border_color),
+        ] {
+            ui.menu_button(t(label), |ui| {
+                if let Some(value) = widgets::color_swatches(ui, &SWATCHES, current.map(from_color))
+                {
+                    color = Some((field, to_color(value)));
+                }
+            });
+        }
+        if (shape != resolved.shape || commit && width != resolved.border_width)
+            && let Some(doc) = self.doc_mut()
+        {
+            let result = doc.doc.edit_sheet("Shape", |sheet| {
+                sheet.update_style(&ids, |style| {
+                    if shape != resolved.shape {
+                        style.shape = Some(shape);
+                    }
+                    if commit && width != resolved.border_width {
+                        style.border_width = Some(width);
+                    }
+                })
+            });
+            if let Err(error) = result {
+                self.toasts.error(error.to_string());
+            }
+        }
+        if let Some((field, color)) = color {
+            self.apply_style_color(field, color);
+        }
     }
 
     fn topic_toolbar(
@@ -4525,19 +5241,48 @@ impl ThinodaApp {
         if !self.settings.show_topic_toolbar {
             return;
         }
-        let viewport = self.current_viewport;
         let text_target = self.card_text_target();
-        let text_open = text_target.as_ref().is_some_and(|(target, _)| {
-            ctx.data(|data| data.get_temp::<CardTextTarget>(card_text_slot(viewport)))
-                .as_ref()
-                == Some(target)
-        });
+        if text_target.is_some() {
+            return;
+        }
+        let Some(doc) = self.doc() else { return };
+        // Title editing opens Text and remembers its section separately.
+        let editing_title = doc.view.editing_topic().is_some();
+        let owner = format_menu::owner(&doc.doc, &doc.view);
+        // Entering title editing must not close unrelated popups via prepare.
+        let section_owner = if editing_title {
+            owner.with("title")
+        } else {
+            owner
+        };
+        format_menu::prepare(ctx, owner);
+        if ctx.data(|data| {
+            data.get_temp::<egui::Id>(card_text_slot(self.current_viewport).with("dismissed"))
+        }) == Some(owner)
+        {
+            return;
+        }
+        let mut section = format_menu::section(
+            ctx,
+            section_owner,
+            if editing_title {
+                ContextSection::Text
+            } else {
+                ContextSection::Actions
+            },
+        );
+        let enabled = StyleTargets::from_view(doc.doc.sheet(), &doc.view)
+            .is_some_and(|targets| !targets.locked)
+            && !doc.view.has_active_canvas_gesture()
+            && !doc.has_inspector_changes();
+        let can_arrange = self.has_context_arrange_controls();
         let ai_enabled = self.settings.ai.enabled;
         let Some(d) = self.doc_mut() else { return };
         if d.view.selection.len() != 1
-            || d.view.editing_topic().is_some()
+            || !d.view.board_selection.is_empty()
             || d.view.editing_board_object().is_some()
             || d.view.relationship_from.is_some()
+            || d.view.has_active_canvas_gesture()
         {
             return;
         }
@@ -4577,7 +5322,7 @@ impl ThinodaApp {
                 rect.top() - 12.0
             },
         );
-        let toolbar_id = egui::Id::unique("thinoda_topic_toolbar");
+        let toolbar_id = format_menu::area_id(ctx);
         let mut available = canvas.shrink(4.0);
         if let Some(strip) = context_strip {
             available.min.y = available.min.y.max(strip.bottom() + 4.0);
@@ -4589,7 +5334,11 @@ impl ThinodaApp {
         let previous_size = ctx
             .memory(|memory| memory.area_rect(toolbar_id))
             .map(|rect| rect.size());
-        let measure_id = toolbar_id.with(("board_measure_key", ctx.viewport_id()));
+        let measure_id = toolbar_id.with((
+            "board_measure_key",
+            ctx.viewport_id(),
+            format!("{section:?}"),
+        ));
         let measure_key = is_board.then(|| {
             topic_toolbar_measure_key(
                 ctx,
@@ -4684,10 +5433,8 @@ impl ThinodaApp {
             if !clearance.is_finite() {
                 return;
             }
-            let Some(clear) = nearest_clear_toolbar_rect(desired, available, &obstacles, clearance)
-            else {
-                return;
-            };
+            let clear = nearest_clear_toolbar_rect(desired, available, &obstacles, clearance)
+                .unwrap_or_else(|| format_menu::place(available, rect, size, &obstacles));
             // Preserve the card frame's shadow where it fits; do not move the
             // toolbar farther away merely to make room for the shadow.
             let shadow_clip = clear.expand(8.0 + clearance * 0.5);
@@ -4726,15 +5473,22 @@ impl ThinodaApp {
             if board.expand(6.0).intersects(desired) {
                 let left = board.right() + 8.0;
                 if available.right() - left < size.x {
-                    return;
+                    let clear = format_menu::place(available, rect, size, &[board]);
+                    position = egui::pos2(
+                        clear.center().x,
+                        if below { clear.top() } else { clear.bottom() },
+                    );
+                } else {
+                    available.min.x = left;
                 }
-                available.min.x = left;
             }
         }
         let mut cmd = None;
-        let mut toggle_text = false;
+        if !format_menu::claim(ctx, format_menu::Producer::Selection) {
+            return;
+        }
         let shown = egui::Area::new(toolbar_id)
-            .order(egui::Order::Middle)
+            .order(format_menu::ORDER)
             .pivot(if below {
                 egui::Align2::CENTER_TOP
             } else {
@@ -4748,78 +5502,47 @@ impl ThinodaApp {
                 if let Some(clip) = safe_clip {
                     ui.shrink_clip_rect(clip);
                 }
-                widgets::card(ui).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if self.settings.ai.enabled {
-                            if ui
-                                .add_enabled(
-                                    self.command_available(&Cmd::Ai(
-                                        crate::ai::AiCommand::Brainstorm,
-                                    )),
-                                    egui::Button::new(format!(
-                                        "{} {}",
-                                        icons::BRAINSTORM,
-                                        t("Expand ideas")
-                                    )),
-                                )
-                                .clicked()
-                            {
-                                cmd = Some(Cmd::Ai(crate::ai::AiCommand::Brainstorm));
-                            }
-                            widgets::vdivider(ui);
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(308.0_f32.min(available.width() - 16.0).max(1.0));
+                    let mut sections = vec![(ContextSection::Actions, t("Actions"))];
+                    let image =
+                        card.is_some_and(|card| card.kind == thinoda_core::board::CardKind::Image);
+                    if !image && enabled {
+                        sections.push((ContextSection::Text, t("Text")));
+                    }
+                    if enabled {
+                        sections.push((ContextSection::Style, t("Style")));
+                    }
+                    if can_arrange {
+                        sections.push((ContextSection::Arrange, t("Arrange")));
+                    }
+                    if !sections.iter().any(|(value, _)| *value == section) {
+                        section = ContextSection::Actions;
+                    }
+                    let before = section;
+                    format_menu::tabs(ui, &mut section, &sections, true);
+                    if section != before {
+                        format_menu::set_section(ctx, section_owner, section);
+                    }
+                    match section {
+                        ContextSection::Actions => cmd = self.selection_context_actions(ui),
+                        ContextSection::Text => {
+                            ui.add_enabled_ui(enabled, |ui| self.context_topic_text_properties(ui));
                         }
-                        for (icon, label, selected, command) in [
-                            (
-                                icons::SUBTOPIC,
-                                "Add subtopic",
-                                false,
-                                Cmd::Canvas(Action::InsertChild),
-                            ),
-                            (
-                                icons::RELATIONSHIP,
-                                "Connect topics",
-                                false,
-                                Cmd::Canvas(Action::StartRelationship),
-                            ),
-                            (
-                                icons::LINK,
-                                "Edit hyperlink",
-                                has_link,
-                                Cmd::EditField(FocusField::Hyperlink),
-                            ),
-                            (
-                                icons::NOTE,
-                                "Edit notes",
-                                false,
-                                Cmd::EditField(FocusField::Notes),
-                            ),
-                            (icons::LABEL, "Edit labels", false, Cmd::Labels),
-                            (
-                                icons::TODO,
-                                "Toggle to-do",
-                                todo,
-                                Cmd::Canvas(Action::ToggleTodo),
-                            ),
-                            (icons::FORMAT, "Topic style", false, Cmd::TopicStyle),
-                        ] {
-                            if widgets::icon_button(ui, icon, t(label), selected).clicked() {
-                                cmd = Some(command);
-                            }
+                        ContextSection::Style => {
+                            ui.add_enabled_ui(enabled, |ui| {
+                                if card.is_some() {
+                                    self.board_card_properties(ui);
+                                    if image {
+                                        self.image_properties(ui);
+                                    }
+                                } else {
+                                    self.context_topic_style_properties(ui);
+                                }
+                            });
                         }
-                        if let Some((_, enabled)) = &text_target {
-                            toggle_text = ui
-                                .add_enabled_ui(*enabled, |ui| {
-                                    card_text_icon(
-                                        ui,
-                                        icons::BOARD_TEXT,
-                                        card_text_label(),
-                                        text_open,
-                                        false,
-                                    )
-                                })
-                                .inner;
-                        }
-                    });
+                        ContextSection::Arrange => cmd = self.context_arrange_controls(ui),
+                    }
                 });
             });
         if let Some(measure_key) = measure_key {
@@ -4835,7 +5558,7 @@ impl ThinodaApp {
                     ctx.memory_mut(|memory| {
                         memory
                             .areas_mut()
-                            .set_state(egui::LayerId::new(egui::Order::Middle, toolbar_id), state);
+                            .set_state(egui::LayerId::new(format_menu::ORDER, toolbar_id), state);
                     });
                 }
                 ctx.request_discard("board topic toolbar size changed");
@@ -4845,13 +5568,6 @@ impl ThinodaApp {
         }
         if let Some(command) = cmd {
             self.exec(ctx, command);
-        }
-        if toggle_text && let Some((target, true)) = text_target {
-            if text_open {
-                ctx.data_mut(|data| data.remove::<CardTextTarget>(card_text_slot(viewport)));
-            } else {
-                Self::open_card_text_toolbar(ctx, viewport, target);
-            }
         }
     }
 
@@ -8993,6 +9709,10 @@ fn track_inspector_edit(
 mod card_text_tests;
 
 #[cfg(test)]
+#[path = "selection_menu_tests.rs"]
+mod selection_menu_tests;
+
+#[cfg(test)]
 mod font_family_tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
@@ -9166,26 +9886,11 @@ mod font_family_tests {
                 editor.store(&harness.ctx, editor_id);
                 harness.run_steps(2);
             }
-            let more = format!(
-                "{} / {} / {}",
-                t("Font Size"),
-                t("Text Color"),
-                t("Font Family")
-            );
-            harness
-                .get_by_role_and_label(egui::Role::Button, &more)
-                .click();
-            harness.run_steps(3);
-            assert_eq!(
-                harness.state().doc().unwrap().view.editing_board_object(),
-                Some(id),
-                "opening typography must not finish the label draft"
-            );
             assert!(
                 harness
                     .query_by_role_and_label(egui::Role::Button, &format!("{} +", t("Font Size")))
                     .is_some(),
-                "typography page did not open"
+                "typography controls must be in the flat Text section"
             );
             harness
                 .get_by_role_and_label(egui::Role::Button, t("Font Family"))

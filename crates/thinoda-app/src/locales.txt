@@ -1293,6 +1293,14 @@ Edit notes|Editar notas|Modifier les notes|Rediger noter|Notities bewerken|Edita
 Toggle to-do|Alternar tarea|Activer/désactiver la tâche|Slå opgave til/fra|Taak omschakelen|Alternar tarefa|Attiva/disattiva attività|Przełącz zadanie
 Topic style|Estilo del tema|Style du sujet|Emnestil|Onderwerpstijl|Estilo do tópico|Stile del nodo|Styl węzła
 Format whole card text|Formatear todo el texto de la tarjeta|Mettre en forme tout le texte de la carte|Formatér hele kortets tekst|Alle tekst op de kaart opmaken|Formatar todo o texto do cartão|Formatta tutto il testo della scheda|Formatuj cały tekst karty
+Text formatting|Formato de texto|Mise en forme du texte|Tekstformatering|Tekstopmaak|Formatação de texto|Formattazione testo|Formatowanie tekstu
+Selected text|Texto seleccionado|Texte sélectionné|Markeret tekst|Geselecteerde tekst|Texto selecionado|Testo selezionato|Zaznaczony tekst
+New text|Texto nuevo|Nouveau texte|Ny tekst|Nieuwe tekst|Novo texto|Nuovo testo|Nowy tekst
+Selected object|Objeto seleccionado|Objet sélectionné|Valgt objekt|Geselecteerd object|Objeto selecionado|Oggetto selezionato|Zaznaczony obiekt
+Selected objects|Objetos seleccionados|Objets sélectionnés|Valgte objekter|Geselecteerde objecten|Objetos selecionados|Oggetti selezionati|Zaznaczone obiekty
+More actions|Más acciones|Autres actions|Flere handlinger|Meer acties|Mais ações|Altre azioni|Więcej działań
+More text options|Más opciones de texto|Autres options de texte|Flere tekstindstillinger|Meer tekstopties|Mais opções de texto|Altre opzioni di testo|Więcej opcji tekstu
+More style options|Más opciones de estilo|Autres options de style|Flere stilindstillinger|Meer stijlopties|Mais opções de estilo|Altre opzioni di stile|Więcej opcji stylu
 Whole-card text|Texto de toda la tarjeta|Texte de toute la carte|Hele kortets tekst|Alle kaarttekst|Texto de todo o cartão|Testo dell'intera scheda|Cały tekst karty
 More insert actions|Más acciones de inserción|Autres actions d'insertion|Flere indsættelseshandlinger|Meer invoegacties|Mais ações de inserção|Altre azioni di inserimento|Więcej opcji wstawiania
 Find and Replace…|Buscar y reemplazar…|Rechercher et remplacer…|Find og erstat…|Zoeken en vervangen…|Localizar e substituir…|Trova e sostituisci…|Znajdź i zamień…

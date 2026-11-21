@@ -16,7 +16,7 @@ use thinoda_core::{
     layout_sheet,
     navigation::Direction,
     rich_text::InlineText,
-    rich_text_draft::{DraftSelection, RichTextDraft},
+    rich_text_draft::{DraftOperation, DraftSelection, RichTextDraft},
     scene::{Scene, SceneHit, SceneId, build_scene, topic_clip_rect},
 };
 
@@ -219,6 +219,9 @@ pub struct BoardLabels {
     pub label_edit_armed_hint: String,
     pub label_placeholder: String,
     pub label_formatting: String,
+    pub format_sections: [String; 4],
+    pub format_arrange_available: bool,
+    pub text_scopes: [String; 2],
     pub label_bold: String,
     pub label_italic: String,
     pub label_underline: String,
@@ -293,6 +296,9 @@ impl Default for BoardLabels {
             label_edit_armed_hint: "Clicking or tapping empty canvas also adds the armed shape.".into(),
             label_placeholder: "Type a label".into(),
             label_formatting: "Label formatting (F6)".into(),
+            format_sections: ["Text", "Style", "Arrange", "Actions"].map(String::from),
+            format_arrange_available: true,
+            text_scopes: ["Selected text", "New text"].map(String::from),
             label_bold: "Bold".into(),
             label_italic: "Italic".into(),
             label_underline: "Underline".into(),
@@ -358,7 +364,7 @@ fn consume_ime_candidate_keys(ctx: &egui::Context, editor_id: Id) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectSelection {
     Relationship(RelationshipId),
     Boundary(BoundaryId),
@@ -1115,7 +1121,62 @@ impl MapView {
         if doc.sheet().topic(topic).is_none() || !doc.sheet().is_visible(topic) {
             return None;
         }
-        cache.layout.rect(topic).map(|r| self.xf().rect(r))
+        let rotation = doc
+            .sheet()
+            .topic(topic)?
+            .card
+            .map_or(0.0, |card| card.rotation);
+        cache.layout.rect(topic).map(|r| {
+            self.xf()
+                .rect(thinoda_core::board::rotated_bounds(r, rotation))
+        })
+    }
+
+    /// Bounds of selected scene objects, including routed connectors and rotation.
+    pub fn selected_board_rect(&mut self, doc: &Document) -> Option<Rect> {
+        if self.has_active_canvas_gesture() {
+            return None;
+        }
+        let layout = self.layout_for(doc);
+        let scene = build_scene(doc.sheet(), &layout);
+        let members = self
+            .board_selection
+            .iter()
+            .filter_map(|id| scene.item(SceneId::Object(*id))?.visible_bounds())
+            .chain(
+                self.selection
+                    .iter()
+                    .filter_map(|id| scene.item(SceneId::Topic(*id))?.visible_bounds()),
+            );
+        let annotation = self.selected_object.and_then(|selected| match selected {
+            ObjectSelection::Zone(id) => doc
+                .sheet()
+                .zones
+                .iter()
+                .find(|zone| zone.id == id)
+                .map(|zone| zone.frame),
+            ObjectSelection::Boundary(id) => layout
+                .boundaries
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.rect),
+            ObjectSelection::Summary(id) => layout
+                .summaries
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.range_rect),
+            ObjectSelection::Relationship(id) => layout
+                .relationships
+                .iter()
+                .find(|item| item.id == id)
+                .and_then(|item| {
+                    thinoda_core::board::points_bounds(&[item.start, item.c1, item.c2, item.end])
+                }),
+        });
+        members
+            .chain(annotation)
+            .map(|rect| self.xf().rect(rect))
+            .reduce(|a, b| a.union(b))
     }
 
     /// Laid-out bounds of the supplied topics and their visible descendants.
@@ -1414,6 +1475,26 @@ impl MapView {
 
     pub fn set_editing_text(&mut self, text: &str) {
         if let Some(e) = &mut self.editing {
+            if let Some(history) = &mut e.rich_history {
+                let end = text.chars().count();
+                match history.apply(
+                    &[DraftOperation::Replace {
+                        range: 0..history.text().chars().count(),
+                        text: text.to_owned(),
+                        style: Default::default(),
+                    }],
+                    DraftSelection {
+                        anchor: end,
+                        focus: end,
+                    },
+                ) {
+                    Ok(_) => e.inline_text = history.formatting().clone(),
+                    Err(error) => {
+                        self.title_error = Some(error);
+                        return;
+                    }
+                }
+            }
             e.plain_text_history_active |= e.rich_history.is_none() && e.text != text;
             e.text = text.to_string();
         }
@@ -1848,9 +1929,18 @@ pub struct CanvasOutput {
 }
 
 impl CanvasOutput {
+    /// A right-click on the nearby selection menu opens the selection's context menu.
+    pub fn selection_menu_context_requested(&self) -> bool {
+        self.context_menu_allowed
+            && crate::format_menu::secondary_clicked_selection_menu(&self.response.ctx)
+    }
+
     /// Show context actions without interpreting canceled or multitouch holds as clicks.
     pub fn context_menu(&self, content: impl FnOnce(&mut Ui)) -> Option<egui::InnerResponse<()>> {
         let mut popup = egui::Popup::context_menu(&self.response);
+        if self.selection_menu_context_requested() {
+            popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+        }
         if !self.context_menu_allowed {
             popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(false)));
         }
@@ -4153,51 +4243,16 @@ fn show_editor_pass(
     layout: &Layout,
     out: &mut CanvasOutput,
 ) {
-    let format_request = ui.memory(|memory| memory.has_focus(MapCanvas::title_editor_id()))
-        && TextEdit::load_state(ui.ctx(), MapCanvas::title_editor_id())
-            .and_then(|state| state.cursor.char_range())
-            .is_some()
-        && ui.input(|input| {
-            input
-                .events
-                .iter()
-                .any(|event| card_title_format_shortcut(event).is_some())
-        });
     let rich_card_title = view
         .editing
         .as_ref()
-        .and_then(|edit| doc.sheet().topic(edit.topic).map(|topic| (edit, topic)))
-        .is_some_and(|(edit, topic)| {
+        .and_then(|edit| doc.sheet().topic(edit.topic))
+        .is_some_and(|topic| {
             matches!(
                 topic.card.as_ref().map(|card| card.kind),
                 Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
-            ) && (topic.inline_text != InlineText::default()
-                || (format_request
-                    && !edit.plain_text_history_active
-                    && edit.text == edit.original))
+            )
         });
-    if format_request
-        && !rich_card_title
-        && view.editing.as_ref().is_some_and(|edit| {
-            edit.rich_history.is_none()
-                && (edit.plain_text_history_active || edit.text != edit.original)
-                && doc.sheet().topic(edit.topic).is_some_and(|topic| {
-                    matches!(
-                        topic.card.as_ref().map(|card| card.kind),
-                        Some(thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text)
-                    )
-                })
-        })
-    {
-        ui.input_mut(|input| {
-            input
-                .events
-                .retain(|event| card_title_format_shortcut(event).is_none())
-        });
-        view.title_error = Some(
-            "Finish and reopen this card title before applying inline formatting; its plain-text undo history is active".into(),
-        );
-    }
     if rich_card_title {
         let owner = doc.instance_id();
         let Some(edit) = view.editing.as_mut() else {
@@ -4587,7 +4642,7 @@ fn show_editor_pass(
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let bold_underlay =
         (rich_layout || (text_card && style.bold)).then(|| child.painter().add(egui::Shape::Noop));
-    let pointer = pending_before_outside_pointer
+    let pointer = (pending_before_outside_pointer || (companion.is_some() && ime_active))
         .then(|| ui.input_mut(|input| std::mem::take(&mut input.pointer)));
     let output = te.show(&mut child);
     if edit.rich_history.is_none() && output.response.changed() {
@@ -4709,6 +4764,7 @@ fn show_editor_pass(
     if let Some(index) = bold_underlay {
         if rich_layout
             && !rich_bold_sections.is_empty()
+            && rich_bold_sections.iter().any(|bold| *bold)
             && rich_bold_sections.len() == output.galley.job.sections.len()
         {
             let mut job = (*output.galley.job).clone();
@@ -6317,20 +6373,10 @@ mod tests {
             state.store(&h.ctx, editor_id);
             h.key_press_modifiers(Modifiers::COMMAND, Key::B);
             h.run_steps(1);
-            if edit_mode != 0 {
-                assert_eq!(
-                    h.state().view.editing_text(),
-                    Some(if edit_mode == 1 { "abx" } else { "ab" })
-                );
-                assert!(h.state().view.title_rich_formatting_draft().is_none());
-                assert!(
-                    h.state_mut()
-                        .view
-                        .take_title_error()
-                        .unwrap()
-                        .contains("reopen")
-                );
-            } else {
+            {
+                let expected = if edit_mode == 1 { "abx" } else { "ab" };
+                assert_eq!(h.state().view.editing_text(), Some(expected));
+                assert!(h.state_mut().view.take_title_error().is_none());
                 let rich = h.state().view.title_rich_formatting_draft().unwrap();
                 assert_eq!(rich.runs[0].style.bold, Some(true));
                 h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
@@ -6342,6 +6388,7 @@ mod tests {
                         .unwrap()
                         .is_empty()
                 );
+                assert_eq!(h.state().view.editing_text(), Some(expected));
                 h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
                 h.run_steps(1);
                 assert_eq!(h.state().view.title_rich_formatting_draft().unwrap(), rich);

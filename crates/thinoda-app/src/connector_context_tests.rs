@@ -63,6 +63,12 @@ fn connector(app: &ThinodaApp, id: CanvasObjectId) -> CanvasConnector {
 }
 
 fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
+    if matches!(label, "Edit label" | "More formatting options")
+        && h.query_by_role_and_label(role, label).is_none()
+    {
+        h.get_by_role_and_label(Role::Button, "Actions").click();
+        h.run_steps(4);
+    }
     h.get_by_role_and_label(role, label).scroll_to_me();
     h.run_steps(4);
     h.get_by_role_and_label(role, label).click();
@@ -70,8 +76,63 @@ fn click(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) {
 }
 
 fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
-    h.key_press(Key::Escape);
-    h.run_steps(3);
+    if egui::Popup::is_any_open(&h.ctx) {
+        h.key_press(Key::Escape);
+        h.run_steps(3);
+    }
+}
+
+fn menu_rect(h: &Harness<'_, ThinodaApp>) -> Option<egui::Rect> {
+    let id = thinoda_canvas::format_menu::area_id(&h.ctx);
+    h.ctx.memory(|memory| memory.area_rect(id))
+}
+
+#[test]
+fn connector_section_handover_closes_route_popup_and_keeps_controls_bounded() {
+    for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
+        let (app, id) = app_with_connector();
+        let mut h = harness(app, size);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        click(&mut h, Role::Button, "Connector route");
+        h.get_by_role_and_label(Role::Button, "Text").focus();
+        h.key_press(Key::Space);
+        h.run_steps(4);
+        assert!(h.query_by_role_and_label(Role::Button, "Curve").is_none());
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Connector route")
+                .is_none()
+        );
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Text Color")
+                .is_some()
+        );
+        click(&mut h, Role::Button, "Style");
+        let menu = menu_rect(&h).unwrap();
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .view
+                .canvas_rect()
+                .contains_rect(menu)
+        );
+        for label in [
+            "Text",
+            "Style",
+            "Arrange",
+            "Actions",
+            "Connector route",
+            "Arrow at start",
+        ] {
+            let rect = h.get_by_role_and_label(Role::Button, label).rect();
+            assert!(
+                menu.contains_rect(rect),
+                "{size:?}: {label}: {rect:?} {menu:?}"
+            );
+        }
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+    }
 }
 
 #[test]
@@ -110,19 +171,29 @@ fn selected_connector_properties_overlay_above_stationary_toolbox() {
             .select_board_object(id);
         h.run_steps(8);
 
-        let strip = h
-            .ctx
-            .memory(|memory| {
-                memory.area_rect(egui::Id::unique((
-                    "thinoda_connector_options",
-                    egui::ViewportId::ROOT,
-                )))
-            })
-            .expect("selected connector has its own options strip");
+        let strip = menu_rect(&h).expect("selected connector uses the shared selection menu");
         assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
-        assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        let visible = h.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == rail_id)
+        });
+        if visible {
+            assert!(
+                !h.ctx
+                    .memory(|memory| memory.area_rect(rail_id))
+                    .unwrap()
+                    .intersects(strip)
+            );
+        } else {
+            assert_eq!(size.x, 320.0);
+        }
         assert!(canvas.contains_rect(strip), "{size:?}: {strip:?}");
-        assert!(!rail.intersects(strip), "{size:?}: {rail:?} {strip:?}");
+        if size.x > 320.0 {
+            assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        }
         let route = h
             .get_by_role_and_label(Role::Button, "Connector route")
             .rect();
@@ -292,7 +363,10 @@ fn selected_connector_controls_change_only_existing_properties_and_round_trip() 
     for expanded in [false, true] {
         let (app, id) = app_with_connector();
         let mut h = harness(app, vec2(1000.0, 700.0));
-        if expanded {
+        if expanded
+            && h.query_by_role_and_label(Role::Button, "Expand board toolbar")
+                .is_some()
+        {
             click(&mut h, Role::Button, "Expand board toolbar");
         }
         let canvas = h.state().doc().unwrap().view.canvas_rect();
@@ -686,7 +760,10 @@ fn connector_controls_remain_reachable_in_compact_light_and_dark_windows() {
                 };
                 let mut h = harness(app, size);
                 let canvas = h.state().doc().unwrap().view.canvas_rect();
-                if expanded {
+                if expanded
+                    && h.query_by_role_and_label(Role::Button, "Expand board toolbar")
+                        .is_some()
+                {
                     click(&mut h, Role::Button, "Expand board toolbar");
                 }
                 for (menu, choice) in [
@@ -1620,9 +1697,8 @@ fn connector_drag_disables_controls_and_escape_cancels_the_canvas_gesture() {
             .is_err()
     );
     assert!(
-        h.get_by_role_and_label(Role::Button, "Arrow at start")
-            .accesskit_node()
-            .is_disabled()
+        h.query_by_role_and_label(Role::Button, "Arrow at start")
+            .is_none()
     );
     assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
     h.key_press(Key::Escape);

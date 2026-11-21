@@ -37,6 +37,7 @@
 mod actions;
 #[cfg(test)]
 mod font_tests;
+pub mod format_menu;
 pub mod ink_controller;
 pub mod ink_input;
 mod label_text;
