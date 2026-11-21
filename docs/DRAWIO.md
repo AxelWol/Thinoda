@@ -417,11 +417,11 @@ other D13 format gaps or establish draw.io visual parity.
 - [x] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
 - [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
-- [ ] Fuzz and size budgets for the bundle decoder and catalog
+- [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
   - [x] Add a production-path catalog and decoder fuzz target with a real bundled seed, corruption tests and CI campaigns
-  - [ ] Complete and retain a sanitized 30-minute acceptance campaign for the committed candidate
+  - [x] Complete and retain a sanitized 30-minute acceptance campaign for the committed candidate
 
 **Bundle-fuzz rubber-duck critique:** Fuzzing a second parser would not protect
 the shipped bundle, so the feature-gated harness uses the production catalog
@@ -434,7 +434,15 @@ long namespace across thousands of aliases; a preflight now rejects more than
 4 MiB of aggregate alias-key bytes before constructing the index. Duplicate
 keys count conservatively, and this bound does not claim to limit all allocator
 overhead. The shipped keys total about 79 KiB. A smoke run or a configured CI
-job is not the 30-minute sanitized acceptance campaign, which remains open.
+job is not the acceptance campaign. That campaign ran on Linux (nightly
+`cargo fuzz`, default AddressSanitizer, the CI limits: 1,800 s, 2 GiB RSS,
+1 MiB inputs, 5 s per input) against an immutable `git archive` of commit
+`5fb194fefc1ec82a35313ed79c8ed5a9577d62b6`: 17,302,468 executions, no crash,
+leak or timeout artifact, peak RSS 498 MB, 3,443 corpus entries. The log and
+corpus are retained outside the repository with the session evidence. Duck
+check: this is one local campaign of one target, not the hosted CI workflow
+run, and fuzzing finds no proof of absence; the deterministic tests remain the
+regression gate.
 
 **Document-tab rubber-duck critique:** Putting New Tab inside the scrolling
 content made it unreachable until the last file was revealed, while the
