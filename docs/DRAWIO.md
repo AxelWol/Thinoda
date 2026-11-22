@@ -70,8 +70,9 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | Save back in place to `.drawio` | Missing (Save As/export only) | D10 |
 | Files | PDF with embedded diagram | Missing | D13 |
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
-| Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over black, with no editable diagram data | — |
+| Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over the sheet background, with no editable diagram data | — |
 | Files | WebP/GIF export | Native visual export: lossless WebP; static GIF with palette/transparency preflight; neither embeds an editable diagram | — |
+| Images | Inline PNG/JPEG, GIF, WebP, SVG | PNG/JPEG remain original; bounded static GIF/WebP and SVG convert to PNG with a resource warning; animated, malformed and external images are not recovered | D13 |
 | Files | VSDX export | Missing | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
@@ -432,7 +433,17 @@ the main Edit menu.
   - [x] Flatten requested JPEG transparency onto the selected sheet's theme background and disclose that loss
 - [x] Lossless WebP visual export through the shared raster renderer
 - [x] Static GIF visual export through the shared raster renderer, with palette and transparency disclosure
+- [x] Recover bounded static inline GIF/WebP images on draw.io images and image cards; warn on conversion and failed recovery, including rasterized SVG
 - [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX export
+
+**Inline image rubber-duck critique:** Converting a static GIF or WebP to PNG
+retains decoded pixels but not the original encoding or metadata; SVG
+rasterization also loses the editable vector source. All three therefore
+require resource-loss consent and source protection. Animation is rejected,
+not silently flattened, and malformed, oversized or unavailable images warn
+on both image and image-card paths. The shared bounded decoders and existing
+per-sheet resource limits apply; animated image support and preserving
+original image encodings remain open.
 
 **GIF rubber-duck critique:** GIF is a static, flattened image, not an
 animation or editable diagram. Its limited palette and binary transparency
@@ -448,7 +459,7 @@ Other D13 formats remain open.
 **WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
 and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
 export-loss disclosure follow PNG rather than a second renderer. This is a
-flattened visual export, not an editable draw.io container or WebP import.
+flattened visual export, not an editable draw.io container.
 Pixel-for-pixel comparisons cover transparent and opaque output; a Chromium
 test exercises consent, download and rendering of a mixed board. Other D13
 formats and cross-browser verification remain open.
