@@ -12033,6 +12033,102 @@ fn connector_labels_import_positioned_and_round_trip() {
 }
 
 #[test]
+fn absolute_edge_children_keep_inline_formatting_when_folded() {
+    let xml = page(concat!(
+        r#"<mxCell id="e" value="&lt;b&gt;Ä&lt;/b&gt;" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+        r#"<mxCell id="c" value="&lt;i&gt;猫&lt;/i&gt;" style="html=1;" vertex="1" parent="e"><mxGeometry x="10" y="10" width="5" height="5" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(object.label(), "Ä\n猫");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!((rich.runs[1].start, rich.runs[1].end), (2, 3));
+    assert_eq!(rich.runs[1].style.italic, Some(true));
+    let reopened = import(&export(&report.workbook).unwrap()).unwrap();
+    let restored = reopened
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+}
+
+#[test]
+fn folded_edge_child_lists_keep_paragraph_offsets_and_truncated_styles() {
+    use thinoda_core::ListKind;
+
+    let parent = format!("<b>{}</b>", "a".repeat(9995));
+    let child = "<ul><li><i>猫🙂</i></li><li>last</li></ul>";
+    let xml = page(&format!(
+        r#"<mxCell id="e" value="{}" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="c" value="{}" style="html=1;" vertex="1" parent="e"><mxGeometry width="5" height="5" as="geometry"/></mxCell>"#,
+        esc(&parent),
+        esc(child),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(object.label().chars().count(), 10_000);
+    assert!(object.label().ends_with("\n猫🙂\nl"));
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert!(rich.validate(object.label()).is_ok());
+    assert_eq!((rich.runs[1].start, rich.runs[1].end), (9996, 9998));
+    assert_eq!(rich.runs[1].style.italic, Some(true));
+    assert_eq!(
+        rich.paragraphs
+            .iter()
+            .map(|p| (p.index, p.list))
+            .collect::<Vec<_>>(),
+        vec![(1, ListKind::Bulleted), (2, ListKind::Bulleted)]
+    );
+}
+
+#[test]
+fn folded_edge_child_exceeding_run_limit_keeps_primary_formatting() {
+    let parent = "<b>a</b><i>b</i>".repeat(512);
+    let xml = page(&format!(
+        r#"<mxCell id="e" value="{}" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="c" value="{}" style="html=1;" vertex="1" parent="e"><mxGeometry width="5" height="5" as="geometry"/></mxCell>"#,
+        esc(&parent),
+        esc("<b>child</b>"),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert!(object.label().ends_with("\nchild"));
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs.len(), 1024);
+    assert_eq!(rich.runs.last().unwrap().end, 1024);
+    assert!(rich.validate(object.label()).is_ok());
+}
+
+#[test]
 fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip() {
     let xml = concat!(
         r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,

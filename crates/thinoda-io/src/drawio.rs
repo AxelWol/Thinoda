@@ -2983,6 +2983,79 @@ impl<'a> PageImport<'a> {
         (text, rich)
     }
 
+    fn append_folded_label(
+        &mut self,
+        label: &mut String,
+        formatting: &mut Option<thinoda_core::InlineText>,
+        text: &str,
+        child_formatting: Option<thinoda_core::InlineText>,
+    ) {
+        let separator = !label.is_empty()
+            || formatting
+                .as_ref()
+                .is_some_and(|rich| !rich.paragraphs.is_empty());
+        let mut available = MAX_BOARD_TEXT_CHARS.saturating_sub(label.chars().count());
+        if separator {
+            if available == 0 {
+                self.warn(ImportWarning::Other);
+                return;
+            }
+            label.push('\n');
+            available -= 1;
+        }
+        let char_offset = label.chars().count();
+        let paragraph_offset = label.chars().filter(|ch| *ch == '\n').count();
+        let appended: String = text.chars().take(available).collect();
+        let appended_chars = appended.chars().count();
+        if appended_chars < text.chars().count() {
+            self.warn(ImportWarning::Other);
+        }
+        let appended_paragraphs = appended.chars().filter(|ch| *ch == '\n').count();
+        label.push_str(&appended);
+        let Some(child) = child_formatting else {
+            return;
+        };
+        let (Ok(char_offset), Ok(paragraph_offset), Ok(appended_chars), Ok(appended_paragraphs)) = (
+            u32::try_from(char_offset),
+            u32::try_from(paragraph_offset),
+            u32::try_from(appended_chars),
+            u32::try_from(appended_paragraphs),
+        ) else {
+            self.warn(ImportWarning::Formatting);
+            return;
+        };
+        let mut candidate = formatting.clone().unwrap_or_default();
+        for mut run in child.runs {
+            if run.start >= appended_chars {
+                continue;
+            }
+            if candidate.runs.len() >= thinoda_core::MAX_INLINE_TEXT_RUNS {
+                self.warn(ImportWarning::Formatting);
+                break;
+            }
+            run.end = run.end.min(appended_chars) + char_offset;
+            run.start += char_offset;
+            candidate.runs.push(run);
+        }
+        if appended_chars > 0 || text.is_empty() {
+            for mut paragraph in child.paragraphs {
+                if paragraph.index <= appended_paragraphs {
+                    if candidate.paragraphs.len() >= thinoda_core::MAX_INLINE_TEXT_PARAGRAPHS {
+                        self.warn(ImportWarning::Formatting);
+                        break;
+                    }
+                    paragraph.index += paragraph_offset;
+                    candidate.paragraphs.push(paragraph);
+                }
+            }
+        }
+        if candidate.validate(label).is_ok() {
+            *formatting = (!candidate.is_empty()).then_some(candidate);
+        } else {
+            self.warn(ImportWarning::Formatting);
+        }
+    }
+
     fn translated_point(&mut self, origin: Vec2, point: Vec2) -> Option<Vec2> {
         let point = origin + point;
         if valid_board_position(point) {
@@ -5003,14 +5076,7 @@ impl<'a> PageImport<'a> {
                 } else {
                     // Absolute children have no edge-relative position; fold them.
                     self.warn(ImportWarning::Formatting);
-                    if !label.is_empty()
-                        || rich_label
-                            .as_ref()
-                            .is_some_and(|rich| !rich.paragraphs.is_empty())
-                    {
-                        label.push('\n');
-                    }
-                    label.push_str(&text);
+                    self.append_folded_label(&mut label, &mut rich_label, &text, rich_text);
                 }
             }
         }

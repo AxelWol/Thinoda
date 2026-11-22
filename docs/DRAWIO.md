@@ -349,6 +349,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
 - [x] Warn when nested non-vertex structural cells are flattened, retaining their representable descendants and protecting the source
 - [x] Warn when hidden or empty edge-child vertices are skipped, retaining their connector and protecting the source
+- [x] Preserve supported inline runs and list paragraphs when folding absolute connector child labels, within text and formatting limits
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
 - [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
@@ -1456,6 +1457,15 @@ are not represented as connector labels and now require conversion consent.
 Their connector remains usable, but the omitted cells and their source
 identities are not preserved. Visible nonempty supported labels retain their
 existing warning-free path; opaque preservation remains open.
+
+**D10 absolute edge-child rich text (partial).** Folding an absolute child
+into its connector label now retains supported inline styles and list
+paragraphs, including Unicode offsets and bounded truncation. Existing
+formatting is retained when the combined formatting exceeds model limits.
+Duck check: folding still loses the child's independent position and identity,
+and exceeding limits loses text or formatting; import warnings continue to
+protect the source. This does not establish round-trip fidelity for in-place
+save.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot
