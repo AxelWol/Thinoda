@@ -429,6 +429,7 @@ the main Edit menu.
 ### D13 — Other formats
 
 - [x] JPEG visual export through the shared raster renderer
+  - [x] Flatten requested JPEG transparency onto the selected sheet's theme background and disclose that loss
 - [x] Lossless WebP visual export through the shared raster renderer
 - [x] Static GIF visual export through the shared raster renderer, with palette and transparency disclosure
 - [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX export
@@ -454,9 +455,11 @@ formats and cross-browser verification remain open.
 
 **JPEG rubber-duck critique:** JPEG is already available through the normal
 visual export path, so treating it as missing would duplicate existing work.
-It is a lossy, opaque image rather than an editable draw.io container;
-transparent pixels currently composite over black. This does not close the
-other D13 format gaps or establish draw.io visual parity.
+It is a lossy, opaque image rather than an editable draw.io container.
+When transparency is requested, render the sheet background instead of
+silently compositing over black, and disclose the loss in preflight. This
+preserves light, dark and custom-background contrast, but is not transparent
+output. Other D13 gaps and draw.io visual parity remain open.
 
 ### D14 — Appearance and effects
 

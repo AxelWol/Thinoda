@@ -879,6 +879,7 @@ JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG
 WebP|WebP|WebP|WebP|WebP|WebP|WebP|WebP
 GIF|GIF|GIF|GIF|GIF|GIF|GIF|GIF
 GIF reduces colors and supports only fully transparent or opaque pixels.|GIF reduce los colores y solo admite píxeles totalmente transparentes u opacos.|GIF réduit les couleurs et ne prend en charge que les pixels totalement transparents ou opaques.|GIF reducerer farver og understøtter kun helt gennemsigtige eller uigennemsigtige pixels.|GIF vermindert kleuren en ondersteunt alleen volledig transparante of ondoorzichtige pixels.|GIF reduz as cores e suporta apenas píxeis totalmente transparentes ou opacos.|GIF riduce i colori e supporta solo pixel completamente trasparenti o opachi.|GIF ogranicza kolory i obsługuje tylko całkowicie przezroczyste lub nieprzezroczyste piksele.
+JPEG cannot preserve transparency; the sheet background will be used.|JPEG no admite transparencia; se usará el fondo de la hoja.|JPEG ne prend pas en charge la transparence ; l'arrière-plan de la feuille sera utilisé.|JPEG understøtter ikke gennemsigtighed; arkets baggrund bruges.|JPEG ondersteunt geen transparantie; de achtergrond van het blad wordt gebruikt.|JPEG não suporta transparência; será utilizado o fundo da folha.|JPEG non supporta la trasparenza; verrà usato lo sfondo del foglio.|JPEG nie obsługuje przezroczystości; zostanie użyte tło arkusza.
 PDF|PDF|PDF|PDF|PDF|PDF|PDF|PDF
 Word|Word|Word|Word|Word|Word|Word|Word
 Excel|Excel|Excel|Excel|Excel|Excel|Excel|Excel

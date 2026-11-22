@@ -9,6 +9,21 @@ fn shape() -> CanvasObject {
 }
 
 #[test]
+fn jpeg_transparency_loss_is_disclosed() {
+    let message = "JPEG cannot preserve transparency; the sheet background will be used.";
+    assert!(i18n::has_translations(message));
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    let report = export_loss_report(&Workbook::default(), Format::Jpeg, &options);
+    assert_eq!(
+        loss_lines(&report, Format::Jpeg),
+        vec![t(message).to_owned()]
+    );
+}
+
+#[test]
 fn powerpoint_rich_card_warning_describes_flattening() {
     let report = LossReport {
         losses: vec![ExportLoss::InlineTextDropped(1)],

@@ -756,6 +756,7 @@ PNG/JPEG only. Resizing keeps the aspect ratio.|Apenas PNG/JPEG. O redimensionam
 WebP|WebP
 GIF|GIF
 GIF reduces colors and supports only fully transparent or opaque pixels.|GIF reduz as cores e permite apenas pixels totalmente transparentes ou opacos.
+JPEG cannot preserve transparency; the sheet background will be used.|JPEG não suporta transparência; o fundo da folha será usado.
 Could not insert image|Não foi possível inserir a imagem
 Image request expired. Select a topic and try again.|A solicitação de imagem expirou. Selecione um tópico e tente novamente.
 Attachment|Anexo

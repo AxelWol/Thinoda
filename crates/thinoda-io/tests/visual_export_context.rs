@@ -420,6 +420,64 @@ fn webp_export_matches_png_with_transparency_and_visual_context() {
 }
 
 #[test]
+fn jpeg_transparency_uses_the_selected_sheet_background_and_reports_loss() {
+    let mut workbook = Workbook::new(fixture().sheet);
+    workbook.sheets.push(fixture().sheet);
+    workbook.sheets[0].theme.background = Some(Color::rgb(250, 10, 10));
+    let visual =
+        VisualExportContext::default().with_automatic_board_stroke(Color::rgb(255, 0, 180));
+    for (dark, background) in [
+        (false, None),
+        (true, None),
+        (false, Some(Color::rgba(40, 100, 160, 128))),
+    ] {
+        workbook.sheets[1].theme.background = background;
+        let opaque = ExportOptions {
+            dark,
+            sheet: Some(1),
+            ..Default::default()
+        };
+        let transparent = ExportOptions {
+            transparent: true,
+            ..opaque.clone()
+        };
+        let jpeg = export_bytes_with_visual_context(&workbook, Format::Jpeg, &transparent, visual)
+            .unwrap();
+        assert_eq!(
+            jpeg,
+            export_bytes_with_visual_context(&workbook, Format::Jpeg, &opaque, visual).unwrap()
+        );
+        let jpeg = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        let png = image::load_from_memory(
+            &export_bytes_with_visual_context(&workbook, Format::Png, &opaque, visual).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        let theme = &workbook.sheets[1].theme;
+        let expected = thinoda_core::theme::Theme::for_settings(theme).background(theme, dark);
+        assert_eq!(png.get_pixel(0, 0).0, [expected.r, expected.g, expected.b]);
+        for (actual, expected) in jpeg.get_pixel(0, 0).0.iter().zip(png.get_pixel(0, 0).0) {
+            assert!(
+                actual.abs_diff(expected) <= 20,
+                "{dark}: {actual} vs {expected}"
+            );
+        }
+        assert!(
+            thinoda_io::export_losses(&workbook, Format::Jpeg, &transparent)
+                .contains(&thinoda_io::ExportLoss::JpegTransparencyDropped)
+        );
+        assert!(
+            !thinoda_io::export_losses(&workbook, Format::Jpeg, &opaque)
+                .contains(&thinoda_io::ExportLoss::JpegTransparencyDropped)
+        );
+        assert!(
+            !thinoda_io::export_losses(&workbook, Format::Png, &transparent)
+                .contains(&thinoda_io::ExportLoss::JpegTransparencyDropped)
+        );
+    }
+}
+
+#[test]
 fn gif_export_warns_about_palette_and_has_binary_transparency() {
     let workbook = Workbook::new(fixture().sheet);
     let visual =

@@ -1710,7 +1710,11 @@ pub(crate) fn raster(
     fmt: image::ImageFormat,
     visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
-    let source = svg(w, o, visual)?;
+    let mut options = o.clone();
+    if fmt == image::ImageFormat::Jpeg {
+        options.transparent = false;
+    }
+    let source = svg(w, &options, visual)?;
     raster_svg(&source, o.scale, fmt)
 }
 
