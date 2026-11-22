@@ -206,7 +206,7 @@ pub fn place(canvas: Rect, anchor: Rect, desired: Vec2, avoid: &[Rect]) -> Rect 
         ]);
     }
     let mut best = Rect::from_min_size(safe.min, size);
-    let mut best_overlap = f32::INFINITY;
+    let mut best_score = (f32::INFINITY, f32::INFINITY);
     for candidate in candidates {
         let min = candidate.clamp(safe.min, (safe.max - size).max(safe.min));
         let rect = Rect::from_min_size(min, size);
@@ -226,15 +226,23 @@ pub fn place(canvas: Rect, anchor: Rect, desired: Vec2, avoid: &[Rect]) -> Rect 
             } else {
                 0.0
             };
-        if overlap < best_overlap {
+        // Among equally clear positions prefer the one nearest the selection;
+        // the canvas corners are only a last resort, never preferred to a
+        // clear spot beside the selection.
+        let score = (overlap, gap(rect, anchor));
+        if score.0 < best_score.0 || (score.0 == best_score.0 && score.1 < best_score.1) {
             best = rect;
-            best_overlap = overlap;
-        }
-        if overlap == 0.0 {
-            break;
+            best_score = score;
         }
     }
     best
+}
+
+/// Distance between two rectangles; zero when they touch or overlap.
+fn gap(a: Rect, b: Rect) -> f32 {
+    let dx = (b.left() - a.right()).max(a.left() - b.right()).max(0.0);
+    let dy = (b.top() - a.bottom()).max(a.top() - b.bottom()).max(0.0);
+    dx.hypot(dy)
 }
 
 /// Whether `menu` covers the visible centre of the selection, where pointer
