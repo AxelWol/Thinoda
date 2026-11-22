@@ -4439,7 +4439,10 @@ impl<'a> PageImport<'a> {
             }
             Kind::Image => {
                 let source = style.get("image").unwrap_or_default();
-                if let Some((resource, pixels)) = inline_image(source, rect.size) {
+                if let Some((resource, pixels, converted)) = inline_image(source, rect.size) {
+                    if converted {
+                        self.warn(ImportWarning::Resources);
+                    }
                     let keep_aspect = style.get("imageAspect") != Some("0");
                     let (card_rect, size) = image_card_rect(rect, pixels, &label, keep_aspect);
                     let image = CardImage {
@@ -4504,26 +4507,29 @@ impl<'a> PageImport<'a> {
                 object
             }
             Kind::Card(card_kind) => {
-                let image = (card_kind == CardKind::Image)
+                let source = (card_kind == CardKind::Image)
                     .then(|| style.get("image"))
-                    .flatten()
-                    .and_then(|source| inline_image(source, rect.size))
-                    .map(|(resource, pixels)| {
-                        let stored = Vec2::new(
-                            style.num("thinodaImageWidth").unwrap_or(0.0),
-                            style.num("thinodaImageHeight").unwrap_or(0.0),
-                        );
-                        let size = if images::valid_size(stored) {
-                            stored
-                        } else {
-                            image_card_rect(rect, pixels, &label, true).1
-                        };
-                        CardImage {
-                            resource,
-                            size,
-                            plain: false,
-                        }
-                    });
+                    .flatten();
+                let decoded = source.and_then(|source| inline_image(source, rect.size));
+                if source.is_some() && decoded.as_ref().is_none_or(|(_, _, converted)| *converted) {
+                    self.warn(ImportWarning::Resources);
+                }
+                let image = decoded.map(|(resource, pixels, _)| {
+                    let stored = Vec2::new(
+                        style.num("thinodaImageWidth").unwrap_or(0.0),
+                        style.num("thinodaImageHeight").unwrap_or(0.0),
+                    );
+                    let size = if images::valid_size(stored) {
+                        stored
+                    } else {
+                        image_card_rect(rect, pixels, &label, true).1
+                    };
+                    CardImage {
+                        resource,
+                        size,
+                        plain: false,
+                    }
+                });
                 return self.card(index, card_kind, rect, label, context, image, rich_label);
             }
         };
@@ -5151,8 +5157,6 @@ impl<'a> PageImport<'a> {
 /// Longest image source kept as alt text on a placeholder.
 const MAX_IMAGE_ALT_CHARS: usize = 500;
 /// Longest side, in pixels, of a rasterised inline SVG image.
-const MAX_SVG_RASTER: f32 = 1024.0;
-
 /// An embedded image for an imported image card.
 struct CardImage {
     resource: Resource,
@@ -5162,9 +5166,8 @@ struct CardImage {
 }
 
 /// Decodes a draw.io inline image (`data:<type>,<base64>`) into a PNG/JPEG resource and
-/// its pixel size. SVG is rasterised; other types and every non-`data:` source (remote
-/// URLs, draw.io library paths) are rejected, so nothing is ever fetched.
-fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2)> {
+/// its pixel size. Converted formats report loss; non-`data:` sources are never fetched.
+fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2, bool)> {
     let (media, payload) = source.strip_prefix("data:")?.split_once(',')?;
     let media = media.strip_suffix(";base64").unwrap_or(media);
     if payload.len() > MAX_RESOURCE_BYTES / 3 * 4 + 4 {
@@ -5184,60 +5187,38 @@ fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2)> {
                 _ => "draw.io image.jpg",
             };
             let pixels = Vec2::new(decoded.width as f32, decoded.height as f32);
-            Some((Resource::new(name, decoded.media_type, bytes).ok()?, pixels))
+            Some((
+                Resource::new(name, decoded.media_type, bytes).ok()?,
+                pixels,
+                false,
+            ))
         }
-        "image/svg+xml" => {
-            let svg = base64().or_else(|| percent_decode(payload).map(String::into_bytes))?;
-            let (png, pixels) = rasterize_svg(&svg, display)?;
+        "image/webp" | "image/gif" => {
+            let bytes = base64()?;
+            let png = if media.eq_ignore_ascii_case("image/webp") {
+                images::transcode_static_webp(&bytes).ok()?
+            } else {
+                images::transcode_static_gif(&bytes).ok()?
+            };
+            let decoded = images::decode(&png).ok()?;
+            let pixels = Vec2::new(decoded.width as f32, decoded.height as f32);
             Some((
                 Resource::new("draw.io image.png", "image/png", png).ok()?,
                 pixels,
+                true,
+            ))
+        }
+        "image/svg+xml" => {
+            let svg = base64().or_else(|| percent_decode(payload).map(String::into_bytes))?;
+            let (png, pixels) = crate::render::rasterize_svg(&svg, Some(display))?;
+            Some((
+                Resource::new("draw.io image.png", "image/png", png).ok()?,
+                pixels,
+                true,
             ))
         }
         _ => None,
     }
-}
-
-/// Renders untrusted SVG to PNG at about twice its display size. External and file
-/// references are refused; compressed SVGZ is rejected to rule out inflation bombs.
-fn rasterize_svg(svg: &[u8], display: Vec2) -> Option<(Vec<u8>, Vec2)> {
-    use image::ImageEncoder;
-    use resvg::{tiny_skia, usvg};
-    if svg.starts_with(&[0x1f, 0x8b]) {
-        return None;
-    }
-    let mut options = usvg::Options {
-        fontdb: crate::fonts::database(),
-        ..Default::default()
-    };
-    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-    let tree = usvg::Tree::from_data(svg, &options).ok()?;
-    let size = tree.size();
-    let longest = size.width().max(size.height());
-    let target = (display.x.max(display.y) * 2.0).clamp(64.0, MAX_SVG_RASTER);
-    if !longest.is_finite() || longest <= 0.0 || !target.is_finite() {
-        return None;
-    }
-    let scale = target / longest;
-    let width = (size.width() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
-    let height = (size.height() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(
-            width as f32 / size.width(),
-            height as f32 / size.height(),
-        ),
-        &mut pixmap.as_mut(),
-    );
-    // tiny-skia stores premultiplied alpha; PNG expects straight alpha.
-    let mut rgba = pixmap.take();
-    crate::render::unpremultiply_rgba(&mut rgba);
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
-        .ok()?;
-    Some((png, Vec2::new(width as f32, height as f32)))
 }
 
 /// Image card geometry for a draw.io image cell: the image keeps the cell size (fitted to

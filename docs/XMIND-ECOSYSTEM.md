@@ -110,7 +110,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Ancillary manifest entries (thumbnails) | ✅ | — | Keep (#136). |
 | Missing `manifest.json` with images | ❌ hard error | Third-party writers omit it. | Use the archive inventory (X1). |
 | Resources present but unreferenced | ❌ hard error | Note images and attachments leave bytes that the map does not reference. | Ignore them (still path- and size-checked) and record a warning (X1). |
-| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | SVG and animated GIF/WebP remain unsupported. | Static GIF and WebP pictures in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
+| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | Full SVG and animated GIF/WebP remain unsupported. | Static GIF, WebP and a bounded SVG subset in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
 | Attachment topics (`href: xap:resources/...`) | ❌ verbatim inert link | — | Import as an opaque Thinoda attachment (X2). |
 | Other `attachment(s)`, `resourceRefs`, note images | ❌ hard error | The whole map fails. | Drop the payload and warn under Resources (X1). |
 | Import warnings and consent | ❌ none for XMind | Lossy conversions are silent or fatal. | `xmind::import_with_report` plus the existing localized consent dialog (X1). |
@@ -417,8 +417,13 @@ undocumented XMind payload.
   original attachment and caching conversions across sheets.
 - [x] Recover static GIF pictures in modern and legacy packages, retaining
   transparency and any shared attachment under the same resource budgets.
-- [ ] Preserve GIF/WebP metadata and animation; support SVG pictures; validate
-  interoperability in installed XMind.
+- [x] Recover a bounded static SVG subset in modern and legacy packages,
+  rasterizing to PNG with a resource-loss warning and preserving shared
+  attachments.
+- [x] Recover SVG pictures containing embedded static PNG/JPEG data URLs, with
+  per-picture limits on image count and total decoded pixels.
+- [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
+  beyond the bounded static subset; validate interoperability in installed XMind.
 
 **Rubber-duck critique:** Converting a picture is not a lossless package
 round-trip even when its pixels survive, so warning and source protection are
@@ -441,4 +446,26 @@ looks like a complete picture. Recovery decodes at most two bounded frames and
 rejects multi-frame or malformed streams rather than silently flattening them;
 the Resources warning protects the source because GIF metadata and encoding
 are not preserved. Transparency is retained as decoded, and shared attachments
-remain byte-for-byte unchanged. SVG and animation remain open.
+remain byte-for-byte unchanged. Full SVG and animation support remain open.
+
+**Static SVG critique:** SVG is not a native editable image resource, so
+rasterization loses vector content and requires the same consent and source
+protection as GIF/WebP conversion. A shared bounded renderer preserves intrinsic
+size up to 1024 pixels on the longest side and never fetches external images.
+The XMind subset permits simple static CSS and local fragment references
+(for example gradients), including presentation attributes such as `fill` and
+`filter`. It validates those attributes as well as stylesheets so external URLs
+and CSS escapes cannot silently bypass the conversion guard. Embedded image
+elements are limited to 16 base64 PNG/JPEG images and four megapixels in total; APNG,
+invalid images and external references are rejected. Image links must use
+unqualified `href` or the XLink namespace, including its alternate prefixes.
+Images with orientation metadata requiring transformation are rejected because
+the SVG renderer may not apply it.
+SVGs combining embedded
+images with `use` are rejected to avoid unbounded image replication. It also
+rejects external CSS URLs, escapes, imports, variables and animation,
+scripts, foreign objects, animation elements, external links,
+SVGZ, malformed XML and excessive XML events rather than silently dropping
+their content. More SVG features, original vector
+preservation and animation remain open; the package and attachment budgets
+remain unchanged.

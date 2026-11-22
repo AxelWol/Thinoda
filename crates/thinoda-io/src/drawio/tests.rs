@@ -9979,7 +9979,13 @@ fn inline_png_and_svg_images_become_transparent_image_cards() {
         "#,
         b64(&png)
     ));
-    let sheet = clean(&xml);
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Resources]);
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings)) if warnings.contains(&ImportWarning::Resources)
+    ));
+    let sheet = report.workbook.sheets.into_iter().next().unwrap();
     let cards = image_cards(&sheet);
     assert_eq!(cards.len(), 2);
     let logo = cards.iter().find(|t| t.title == "Logo").unwrap();
@@ -10011,6 +10017,105 @@ fn inline_png_and_svg_images_become_transparent_image_cards() {
         "edges still attach to image cards"
     );
     sheet.validate().unwrap();
+}
+
+#[test]
+fn inline_static_gif_and_webp_are_recovered_on_images_and_image_cards() {
+    for (media, format) in [
+        ("image/gif", image::ImageFormat::Gif),
+        ("image/webp", image::ImageFormat::WebP),
+    ] {
+        let pixels = image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 30, 30, 255]));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        pixels.write_to(&mut encoded, format).unwrap();
+        let bytes = encoded.into_inner();
+        let expected = image::load_from_memory(&bytes).unwrap().to_rgba8();
+        let data = b64(&bytes);
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="shape=image;image=data:{media},{data};" vertex="1" parent="1"><mxGeometry width="40" height="20" as="geometry"/></mxCell>
+            <mxCell id="b" style="shape=image;thinodaCard=image;image=data:{media},{data};" vertex="1" parent="1"><mxGeometry x="50" width="40" height="20" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Resources),
+            "{media}"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings)) if warnings.contains(&ImportWarning::Resources)
+        ));
+        let sheet = &report.workbook.sheets[0];
+        let cards = image_cards(sheet);
+        assert_eq!(cards.len(), 2, "{media}");
+        for card in cards {
+            let resource = sheet.resources.get(card.image.as_deref().unwrap()).unwrap();
+            assert_eq!(resource.media_type, "image/png");
+            assert_eq!(
+                image::load_from_memory(resource.bytes())
+                    .unwrap()
+                    .to_rgba8(),
+                expected
+            );
+        }
+        sheet.validate().unwrap();
+    }
+}
+
+#[test]
+fn invalid_and_animated_inline_images_warn_for_both_object_paths() {
+    let mut animated = Vec::new();
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut animated);
+        for value in [10, 20] {
+            let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([value, 0, 0, 255]));
+            encoder.encode_frame(image::Frame::new(pixels)).unwrap();
+        }
+    }
+    let mut still = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([30, 0, 0, 255]))
+        .write_to(&mut still, image::ImageFormat::WebP)
+        .unwrap();
+    let mut frame = vec![0; 16];
+    frame[6] = 1;
+    frame[9] = 1;
+    frame[12] = 1;
+    frame.extend_from_slice(&still.into_inner()[12..]);
+    let mut payload = b"WEBPVP8X".to_vec();
+    payload.extend_from_slice(&10u32.to_le_bytes());
+    payload.extend_from_slice(&[2, 0, 0, 0, 1, 0, 0, 1, 0, 0]);
+    payload.extend_from_slice(b"ANIM");
+    payload.extend_from_slice(&6u32.to_le_bytes());
+    payload.extend_from_slice(&[0; 6]);
+    payload.extend_from_slice(b"ANMF");
+    payload.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&frame);
+    let mut animated_webp = b"RIFF".to_vec();
+    animated_webp.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    animated_webp.extend_from_slice(&payload);
+    for (media, data) in [
+        ("image/gif", b64(&animated)),
+        ("image/webp", b64(&animated_webp)),
+        ("image/gif", b64(b"bad gif")),
+        ("image/webp", b64(b"bad webp")),
+    ] {
+        for style in ["shape=image;", "shape=image;thinodaCard=image;"] {
+            let xml = page(&format!(
+                r#"<mxCell id="a" style="{style}image=data:{media},{data};" vertex="1" parent="1"><mxGeometry width="40" height="20" as="geometry"/></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(
+                report.warnings.contains(&ImportWarning::Resources),
+                "{media} {style}"
+            );
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings)) if warnings.contains(&ImportWarning::Resources)
+            ));
+            let sheet = &report.workbook.sheets[0];
+            assert!(sheet.topics.values().all(|topic| topic.image.is_none()));
+            sheet.validate().unwrap();
+        }
+    }
 }
 
 #[test]
