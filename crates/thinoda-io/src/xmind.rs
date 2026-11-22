@@ -171,12 +171,19 @@ fn embedded_svg_raster_pixels(href: &str) -> Option<u64> {
         ("image/png", data)
     } else if let Some(data) = href.strip_prefix("data:image/jpeg;base64,") {
         ("image/jpeg", data)
+    } else if let Some(data) = href.strip_prefix("data:image/webp;base64,") {
+        ("image/webp", data)
     } else {
-        ("image/webp", href.strip_prefix("data:image/webp;base64,")?)
+        ("image/gif", href.strip_prefix("data:image/gif;base64,")?)
     };
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .ok()?;
+    if media_type == "image/gif" {
+        let png = images::transcode_static_gif(&bytes).ok()?;
+        let image = images::decode(&png).ok()?;
+        return Some(u64::from(image.width) * u64::from(image.height));
+    }
     if media_type == "image/webp" {
         let mut decoder =
             image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).ok()?;
@@ -349,7 +356,7 @@ fn transcode_package_picture(path: &str, bytes: &[u8]) -> Result<Vec<u8>, String
             .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
             && supported_static_svg(bytes) =>
         {
-            crate::render::rasterize_svg(bytes, None)
+            crate::render::rasterize_xmind_svg(bytes)
                 .map(|(png, _)| png)
                 .ok_or_else(|| "invalid or unsupported SVG image".into())
         }
@@ -8178,6 +8185,84 @@ mod tests {
                 sheet.resources.get(&attachment.resource).unwrap().bytes(),
                 animated_svg
             );
+        }
+    }
+
+    #[test]
+    fn embedded_svg_gif_preserves_frame_offsets_and_rejects_animation() {
+        use base64::Engine as _;
+        let frame = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 30, 70, 255]));
+        let mut still = Vec::new();
+        image::codecs::gif::GifEncoder::new(&mut still)
+            .encode_frame(image::Frame::new(frame.clone()))
+            .unwrap();
+        still[6..10].copy_from_slice(&[4, 0, 4, 0]);
+        let packed = still[10];
+        let mut offset = 13;
+        if packed & 0x80 != 0 {
+            offset += 3 * (1usize << (usize::from(packed & 7) + 1));
+        }
+        while still[offset] == 0x21 {
+            offset += 2;
+            while still[offset] != 0 {
+                offset += 1 + usize::from(still[offset]);
+            }
+            offset += 1;
+        }
+        assert_eq!(still[offset], 0x2c);
+        still[offset + 1..offset + 5].copy_from_slice(&[1, 0, 1, 0]);
+        let svg = |bytes: &[u8]| {
+            let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+            format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><image width="4" height="4" href="data:image/gif;base64,{data}"/></svg>"#).into_bytes()
+        };
+        let png = transcode_package_picture("picture.svg", &svg(&still)).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(0, 0).0, [0, 0, 0, 0]);
+        assert_eq!(pixels.get_pixel(1, 1).0, [200, 30, 70, 255]);
+        assert_eq!(pixels.get_pixel(3, 3).0, [0, 0, 0, 0]);
+
+        let mut animated = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut animated);
+            encoder
+                .encode_frame(image::Frame::new(frame.clone()))
+                .unwrap();
+            encoder.encode_frame(image::Frame::new(frame)).unwrap();
+        }
+        assert!(!supported_static_svg(&svg(&animated)));
+        for (gif, recovered) in [(&still, true), (&animated, false)] {
+            let picture = svg(gif);
+            for legacy in [false, true] {
+                let content = if legacy {
+                    ("content.xml", br#"<xmap-content><sheet><topic xlink:href="xap:resources/picture.svg"><title>Root</title><image xlink:href="xap:resources/picture.svg"/></topic></sheet></xmap-content>"#.to_vec())
+                } else {
+                    (
+                        "content.json",
+                        serde_json::to_vec(&json!([{"rootTopic": {
+                            "title": "Root", "href": "xap:resources/picture.svg",
+                            "image": {"src": "xap:resources/picture.svg"}
+                        }}]))
+                        .unwrap(),
+                    )
+                };
+                let archive = make_archive(&[
+                    (content.0.into(), content.1),
+                    ("resources/picture.svg".into(), picture.clone()),
+                ]);
+                let (book, warnings) = import_with_report(&archive).unwrap();
+                assert!(warnings.contains(&ImportWarning::Resources));
+                assert!(matches!(
+                    import(&archive),
+                    Err(IoError::ImportNeedsConfirmation(_))
+                ));
+                let sheet = book.active();
+                assert_eq!(sheet.root_topic().image.is_some(), recovered);
+                let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+                assert_eq!(
+                    sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                    picture
+                );
+            }
         }
     }
 

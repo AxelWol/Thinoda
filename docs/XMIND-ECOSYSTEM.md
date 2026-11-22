@@ -420,7 +420,7 @@ undocumented XMind payload.
 - [x] Recover a bounded static SVG subset in modern and legacy packages,
   rasterizing to PNG with a resource-loss warning and preserving shared
   attachments.
-- [x] Recover SVG pictures containing embedded static PNG/JPEG/WebP data URLs, with
+- [x] Recover SVG pictures containing embedded static PNG/JPEG/WebP/GIF data URLs, with
   per-picture limits on image count and total decoded pixels.
 - [x] Recover static SVG stylesheets and inline styles with comments at rule or
   declaration boundaries, while rejecting comments that could obscure tokens.
@@ -460,8 +460,8 @@ The XMind subset permits simple static CSS and local fragment references
 inside tokens or functions are rejected. Validation examines the uncommented
 CSS so external URLs and animation cannot hide behind comments, and rejects CSS
 escapes. Embedded image
-elements are limited to 16 base64 PNG/JPEG/WebP images and four megapixels in total; APNG,
-animated WebP,
+elements are limited to 16 base64 PNG/JPEG/WebP/GIF images and four megapixels
+in total; APNG, animated WebP and animated GIF,
 invalid images and external references are rejected. Image links must use
 unqualified `href` or the XLink namespace, including its alternate prefixes.
 Images with orientation metadata requiring transformation are rejected because
@@ -475,9 +475,11 @@ their content. More SVG features, original vector
 preservation and animation remain open; the package and attachment budgets
 remain unchanged.
 
-**Embedded WebP critique:** Static WebP uses the same bounded decoder as
+**Embedded WebP and GIF critique:** Static WebP uses the same bounded decoder as
 standalone pictures, and rejects animation and orientation transforms before
 the SVG renderer sees it. The original SVG remains available as a shared
-attachment, and conversion still requires consent. Embedded GIF remains
-unsupported: the SVG renderer uses the first frame dimensions and ignores
-frame offsets, so accepting arbitrary static GIFs would misrepresent them.
+attachment, and conversion still requires consent. The SVG renderer normally
+ignores GIF frame offsets; XMind's validated static GIFs are composited onto
+their logical screen and replaced with PNG before rendering. Animated or
+malformed GIFs are rejected rather than flattened. This normalization applies
+only to the XMind path and does not change draw.io rendering.
