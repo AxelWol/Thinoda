@@ -845,3 +845,54 @@ fn multi_card_fill_changes_only_the_common_property_in_one_undo() {
     assert!(h.state_mut().doc_mut().unwrap().doc.undo());
     assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 }
+
+#[test]
+fn sticky_and_text_card_menus_stay_beside_the_card_on_a_narrow_canvas() {
+    // A tall, narrow canvas (format panel open) once pushed the card menu to
+    // the canvas corner because the handles blocked every adjacent position.
+    for kind in [thinoda_core::CardKind::Sticky, thinoda_core::CardKind::Text] {
+        for offset in [vec2(0.0, 0.0), vec2(-300.0, 250.0), vec2(-500.0, -200.0)] {
+            let mut app = ThinodaApp::headless();
+            app.settings.theme = SettingsTheme::Dark;
+            app.new_doc(templates::instantiate("brainstorm-wall"));
+            let mut h = Harness::builder()
+                .with_size(vec2(1000.0, 1400.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(6);
+            let doc = h.state_mut().doc_mut().unwrap();
+            let id = doc
+                .doc
+                .edit_sheet("Card", |sheet| {
+                    sheet
+                        .add_card(
+                            "Test",
+                            Vec2::new(700.0, -250.0),
+                            thinoda_core::Card::new(kind, Vec2::new(180.0, 150.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)
+                })
+                .unwrap();
+            doc.view.select_only(id);
+            doc.view.set_zoom(1.5);
+            doc.view.offset = offset;
+            h.run_steps(12);
+            let menu = h
+                .ctx
+                .memory(|memory| memory.area_rect(format_menu::area_id(&h.ctx)))
+                .expect("nearby menu");
+            let doc = h.state().doc().unwrap();
+            let card = doc.view.selected_topic_rect(&doc.doc).unwrap();
+            let dx = (card.left() - menu.right())
+                .max(menu.left() - card.right())
+                .max(0.0);
+            let dy = (card.top() - menu.bottom())
+                .max(menu.top() - card.bottom())
+                .max(0.0);
+            assert!(
+                dx.hypot(dy) < 60.0,
+                "{kind:?} {offset:?}: menu {menu:?} is far from card {card:?}"
+            );
+            assert!(!menu.contains(card.center()), "{kind:?} {offset:?}");
+        }
+    }
+}
