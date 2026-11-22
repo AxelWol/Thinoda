@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 use thinoda_core::{
     Boundary, ChildRange, Color, LineShape, Sheet, Structure, Summary, TextAlign, TopicId,
     TopicShape, Vec2, Workbook, images,
@@ -351,12 +351,41 @@ fn transcode_package_picture(path: &str, bytes: &[u8]) -> Result<Vec<u8>, String
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::WebP) => images::transcode_static_webp(bytes),
         Ok(image::ImageFormat::Gif) => images::transcode_static_gif(bytes),
-        _ if path
-            .rsplit_once('.')
-            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
-            && supported_static_svg(bytes) =>
+        _ if path.rsplit_once('.').is_some_and(|(_, ext)| {
+            ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz")
+        }) =>
         {
-            crate::render::rasterize_xmind_svg(bytes)
+            let compressed = bytes.starts_with(&[0x1f, 0x8b]);
+            let expanded;
+            let svg = if compressed {
+                if bytes.len() > MAX_RESOURCE_BYTES {
+                    return Err("compressed SVG exceeds the resource limit".into());
+                }
+                let mut decoder = flate2::bufread::GzDecoder::new(bytes);
+                expanded = {
+                    let mut data = Vec::new();
+                    (&mut decoder)
+                        .take(MAX_RESOURCE_BYTES as u64 + 1)
+                        .read_to_end(&mut data)
+                        .map_err(|error| format!("invalid compressed SVG: {error}"))?;
+                    data
+                };
+                if expanded.len() > MAX_RESOURCE_BYTES || !decoder.into_inner().is_empty() {
+                    return Err("compressed SVG exceeds the limit or has trailing data".into());
+                }
+                expanded.as_slice()
+            } else if path
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svgz"))
+            {
+                return Err("invalid compressed SVG".into());
+            } else {
+                bytes
+            };
+            if !supported_static_svg(svg) {
+                return Err("invalid or unsupported SVG image".into());
+            }
+            crate::render::rasterize_xmind_svg(svg)
                 .map(|(png, _)| png)
                 .ok_or_else(|| "invalid or unsupported SVG image".into())
         }
@@ -8012,6 +8041,67 @@ mod tests {
         let image = images::decode(&png).unwrap();
         assert_eq!((image.width, image.height), (1024, 512));
         assert!(png.len() <= MAX_RESOURCE_BYTES);
+    }
+
+    #[test]
+    fn compressed_svg_pictures_are_bounded_and_keep_original_attachments() {
+        fn gzip(data: &[u8]) -> Vec<u8> {
+            let mut writer =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap()
+        }
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#1255aa"/></svg>"##;
+        let compressed = gzip(svg);
+        for path in ["picture.svgz", "picture.svg"] {
+            let png = transcode_package_picture(path, &compressed).unwrap();
+            let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(pixels.get_pixel(0, 0).0, [18, 85, 170, 255]);
+        }
+        for legacy in [false, true] {
+            let content = if legacy {
+                ("content.xml", br#"<xmap-content><sheet><topic xlink:href="xap:resources/picture.svgz"><title>Root</title><image xlink:href="xap:resources/picture.svgz"/></topic></sheet></xmap-content>"#.to_vec())
+            } else {
+                (
+                    "content.json",
+                    serde_json::to_vec(&json!([{"rootTopic": {
+                        "title": "Root", "href": "xap:resources/picture.svgz",
+                        "image": {"src": "xap:resources/picture.svgz"}
+                    }}]))
+                    .unwrap(),
+                )
+            };
+            let archive = make_archive(&[
+                (content.0.into(), content.1),
+                ("resources/picture.svgz".into(), compressed.clone()),
+            ]);
+            let (book, warnings) = import_with_report(&archive).unwrap();
+            assert!(warnings.contains(&ImportWarning::Resources));
+            let sheet = book.active();
+            assert!(sheet.root_topic().image.is_some());
+            let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+            assert_eq!(
+                sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                compressed
+            );
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(_))
+            ));
+        }
+        let mut trailing = compressed.clone();
+        trailing.extend_from_slice(&gzip(svg));
+        assert!(transcode_package_picture("picture.svgz", &trailing).is_err());
+        assert!(
+            transcode_package_picture("picture.svgz", &compressed[..compressed.len() - 2]).is_err()
+        );
+        let unsafe_svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>"#;
+        assert!(transcode_package_picture("picture.svgz", &gzip(unsafe_svg)).is_err());
+        let mut bounded = svg.to_vec();
+        bounded.resize(MAX_RESOURCE_BYTES, b' ');
+        assert!(transcode_package_picture("picture.svgz", &gzip(&bounded)).is_ok());
+        bounded.push(b' ');
+        assert!(transcode_package_picture("picture.svgz", &gzip(&bounded)).is_err());
     }
 
     #[test]

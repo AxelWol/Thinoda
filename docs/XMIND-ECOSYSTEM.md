@@ -420,6 +420,8 @@ undocumented XMind payload.
 - [x] Recover a bounded static SVG subset in modern and legacy packages,
   rasterizing to PNG with a resource-loss warning and preserving shared
   attachments.
+- [x] Recover gzip-compressed SVG/SVGZ pictures within the same XML size and
+  feature limits, preserving the original compressed attachment.
 - [x] Recover SVG pictures containing embedded static PNG/JPEG/WebP/GIF data URLs, with
   per-picture limits on image count and total decoded pixels.
 - [x] Recover static SVG stylesheets and inline styles with comments at rule or
@@ -470,10 +472,16 @@ SVGs combining embedded
 images with `use` are rejected to avoid unbounded image replication. It also
 rejects external CSS URLs, escapes, imports, variables and animation,
 scripts, foreign objects, animation elements, external links,
-SVGZ, malformed XML and excessive XML events rather than silently dropping
+malformed XML and excessive XML events rather than silently dropping
 their content. More SVG features, original vector
 preservation and animation remain open; the package and attachment budgets
 remain unchanged.
+
+**Compressed SVG critique:** SVGZ expands through an 8 MiB limit before the
+same static-SVG validator runs. Invalid, truncated, concatenated or oversized
+gzip streams are rejected rather than partially decoded. The original bytes
+remain attached when shared, and rasterization still requires loss consent;
+compression support does not make SVG vectors editable.
 
 **Embedded WebP and GIF critique:** Static WebP uses the same bounded decoder as
 standalone pictures, and rejects animation and orientation transforms before

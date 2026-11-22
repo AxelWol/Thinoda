@@ -5137,6 +5137,7 @@ dependencies = [
  "cssparser",
  "cssparser-color",
  "epaint_default_fonts",
+ "flate2",
  "getrandom 0.3.4",
  "html-escape",
  "image",
