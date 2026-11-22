@@ -451,7 +451,10 @@ rasterization loses vector content and requires the same consent and source
 protection as GIF/WebP conversion. A shared bounded renderer preserves intrinsic
 size up to 1024 pixels on the longest side and never fetches external images.
 The XMind subset permits simple static CSS and local fragment references
-(for example gradients), but rejects image elements, embedded or external
+(for example gradients), including presentation attributes such as `fill` and
+`filter`. It validates those attributes as well as stylesheets so external URLs
+and CSS escapes cannot silently bypass the conversion guard. It rejects image
+elements, embedded or external
 image references, external CSS URLs, escapes, imports, variables and animation,
 scripts, foreign objects, animation elements, external links,
 SVGZ, malformed XML and excessive XML events rather than silently dropping

@@ -160,10 +160,24 @@ fn supported_static_svg(bytes: &[u8]) -> bool {
                         return false;
                     };
                     let value = value.to_ascii_lowercase();
+                    let css_attribute = matches!(
+                        attribute.key.local_name().as_ref(),
+                        "style"
+                            | "fill"
+                            | "stroke"
+                            | "filter"
+                            | "clip-path"
+                            | "mask"
+                            | "marker"
+                            | "marker-start"
+                            | "marker-mid"
+                            | "marker-end"
+                            | "cursor"
+                            | "color-profile"
+                    );
                     if value.contains("animation")
                         || value.contains("transition")
-                        || (attribute.key.local_name().as_ref() == "style"
-                            && !supported_static_svg_css(&value))
+                        || (css_attribute && !supported_static_svg_css(&value))
                         || (attribute.key.local_name().as_ref() == "href"
                             && !value.trim_start().starts_with('#'))
                     {
@@ -7766,6 +7780,8 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { ani<!-- split -->mation: move 1s; }</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { ani&#109;ation: move 1s; }</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { fill: url(https://example.com/a); }</style></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="url(https://example.com/a)"/></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" filter="u\72l(https://example.com/a)"/></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect style="ani&#109;ation: move 1s"/></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect style="anim\61tion: move 1s"/></svg>"#,
             b"not svg",
@@ -7826,6 +7842,14 @@ mod tests {
             <rect class="box" width="10" height="4"/>
             </svg>"##;
         let png = transcode_package_picture("resources/picture.svg", svg).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert!(pixels.get_pixel(0, 0).0[0] > pixels.get_pixel(0, 0).0[2]);
+        assert!(pixels.get_pixel(9, 0).0[2] > pixels.get_pixel(9, 0).0[0]);
+        let presentation = br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4">
+            <defs><linearGradient id="gradient"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
+            <rect fill="url(#gradient)" width="10" height="4"/>
+            </svg>"##;
+        let png = transcode_package_picture("resources/picture.svg", presentation).unwrap();
         let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
         assert!(pixels.get_pixel(0, 0).0[0] > pixels.get_pixel(0, 0).0[2]);
         assert!(pixels.get_pixel(9, 0).0[2] > pixels.get_pixel(9, 0).0[0]);
