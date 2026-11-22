@@ -5045,6 +5045,16 @@ impl<'a> PageImport<'a> {
         for child in self.children[index].clone() {
             let child = &cells[child];
             if child.vertex && child.visible {
+                if child.collapsed
+                    || child.source.is_some()
+                    || child.target.is_some()
+                    || child.geometry.source.is_some()
+                    || child.geometry.target.is_some()
+                    || child.geometry.alternate_bounds.is_some()
+                    || !child.geometry.points.is_empty()
+                {
+                    self.warn(ImportWarning::Other);
+                }
                 let (text, rich_text) = self.rich_label(child);
                 if text.is_empty()
                     && rich_text

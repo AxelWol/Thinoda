@@ -2122,6 +2122,10 @@ mod tests {
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="l" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
             ),
             (
+                "edge-label-geometry",
+                r##"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="l" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"><mxPoint x="4" y="5" as="sourcePoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"##,
+            ),
+            (
                 "container-link",
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" link="https://example.com"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
             ),

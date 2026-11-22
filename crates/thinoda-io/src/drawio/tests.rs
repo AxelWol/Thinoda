@@ -10880,6 +10880,32 @@ fn drawio_import_reports_hidden_or_empty_edge_children() {
 }
 
 #[test]
+fn drawio_import_reports_unrepresented_edge_label_geometry() {
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##;
+    for (attributes, geometry) in [
+        (r#" collapsed="1""#, ""),
+        (r#" source="e""#, ""),
+        ("", r#"<mxPoint x="4" y="5" as="sourcePoint"/>"#),
+        ("", r#"<mxPoint x="4" y="5" as="targetPoint"/>"#),
+        ("", r#"<Array as="points"><mxPoint x="4" y="5"/></Array>"#),
+        (
+            "",
+            r#"<mxRectangle x="4" y="5" width="6" height="7" as="alternateBounds"/>"#,
+        ),
+    ] {
+        let label = format!(
+            r##"<mxCell id="child" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"{attributes}><mxGeometry x="0.5" relative="1" as="geometry">{geometry}</mxGeometry></mxCell>"##
+        );
+        let report = load(&page(&format!("{edge}{label}")));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{label}");
+        assert_eq!(
+            connectors(&report.workbook.sheets[0])[0].extra_labels[0].text,
+            "Label"
+        );
+    }
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,

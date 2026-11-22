@@ -349,6 +349,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
 - [x] Warn when nested non-vertex structural cells are flattened, retaining their representable descendants and protecting the source
 - [x] Warn when hidden or empty edge-child vertices are skipped, retaining their connector and protecting the source
+- [x] Warn when connector-label children carry collapsed state, terminals or geometry not represented by label placement
 - [x] Preserve supported inline runs and list paragraphs when folding absolute connector child labels, within text and formatting limits
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
@@ -1457,6 +1458,13 @@ are not represented as connector labels and now require conversion consent.
 Their connector remains usable, but the omitted cells and their source
 identities are not preserved. Visible nonempty supported labels retain their
 existing warning-free path; opaque preservation remains open.
+
+**D10 edge-label geometry diagnostics (partial).** A connector label's
+collapsed state, cell terminals, source or target points, waypoints and
+alternate bounds are not represented by label placement. Their presence now
+requires conversion consent while the readable label remains available.
+Duck check: this detects those losses rather than preserving the geometry;
+other source-identity and opaque-data gaps still prevent in-place save.
 
 **D10 absolute edge-child rich text (partial).** Folding an absolute child
 into its connector label now retains supported inline styles and list
