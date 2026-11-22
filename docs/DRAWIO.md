@@ -440,7 +440,9 @@ discloses that loss, even on a board without other warnings. The encoder
 shares the bounded raster and clipping path; Chromium coverage checks the
 download and mixed-board rendering. The format-wide loss contract explicitly
 includes the GIF warning alongside any board-setting loss; WebP remains
-lossless in the same checks. Other D13 formats remain open.
+lossless in the same checks. Both formats render supported local images and
+reject unsupported embedded resources rather than silently dropping them.
+Other D13 formats remain open.
 
 **WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
 and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
