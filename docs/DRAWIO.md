@@ -438,7 +438,9 @@ animation or editable diagram. Its limited palette and binary transparency
 can visibly alter colours and antialiased edges, so export preflight always
 discloses that loss, even on a board without other warnings. The encoder
 shares the bounded raster and clipping path; Chromium coverage checks the
-download and mixed-board rendering. Other D13 formats remain open.
+download and mixed-board rendering. The format-wide loss contract explicitly
+includes the GIF warning alongside any board-setting loss; WebP remains
+lossless in the same checks. Other D13 formats remain open.
 
 **WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
 and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and

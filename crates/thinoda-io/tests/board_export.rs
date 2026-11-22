@@ -2789,11 +2789,16 @@ fn export_losses_itemise_board_content_per_format() {
         Format::Svg,
         Format::Png,
         Format::Jpeg,
+        Format::WebP,
         Format::Pdf,
         Format::PowerPoint,
     ] {
         assert!(export_losses(&wb, format, &o).is_empty(), "{format:?}");
     }
+    assert_eq!(
+        export_losses(&wb, Format::Gif, &o),
+        vec![ExportLoss::GifPaletteAndTransparency]
+    );
     let expected = |floating: bool| {
         let mut v = vec![
             ExportLoss::ShapesDropped(1),
@@ -2843,13 +2848,26 @@ fn export_losses_itemise_board_content_per_format() {
         .unwrap()
         .clip = true;
     clipped.sheets[0].board.snap = !clipped.sheets[0].board.snap;
-    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+    for format in [
+        Format::Svg,
+        Format::Png,
+        Format::Jpeg,
+        Format::WebP,
+        Format::Pdf,
+    ] {
         assert_eq!(
             export_losses(&clipped, format, &o),
             vec![ExportLoss::BoardSettingsDropped],
             "{format:?}"
         );
     }
+    assert_eq!(
+        export_losses(&clipped, Format::Gif, &o),
+        vec![
+            ExportLoss::BoardSettingsDropped,
+            ExportLoss::GifPaletteAndTransparency
+        ]
+    );
     assert_eq!(
         export_losses(&clipped, Format::PowerPoint, &o),
         vec![
@@ -2877,6 +2895,13 @@ fn export_losses_itemise_board_content_per_format() {
     }
     for &format in Format::EXPORTABLE {
         if format.is_drawio() {
+            continue;
+        }
+        if format == Format::Gif {
+            assert_eq!(
+                export_losses(&central(), format, &o),
+                vec![ExportLoss::GifPaletteAndTransparency]
+            );
             continue;
         }
         assert!(
