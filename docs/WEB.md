@@ -1004,7 +1004,7 @@ the raw error under **Technical details**:
   serves `dist` on loopback with Python, runs one isolated Chromium context per
   test, and covers the production loader, deferred offline installation,
   rootless board editing, synthetic-event clipboard flows with a virtual
-  clipboard, mini-map navigation and pointer capture, SVG/PNG/JPEG/PDF and
+  clipboard, mini-map navigation and pointer capture, SVG/PNG/JPEG/WebP/PDF and
   PowerPoint exports, embedded image cards (including PDF) and Pitch viewport.
   Set `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
   test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an

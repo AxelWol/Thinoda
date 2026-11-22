@@ -1,7 +1,7 @@
 /**
  * Production-browser coverage for exporting a mixed rootless board.
  * The document is created in the test's isolated browser context, and the
- * downloaded SVG, PNG, JPEG and PDF are inspected rather than inferred from the canvas.
+ * downloaded SVG, PNG, JPEG, WebP and PDF are inspected rather than inferred from the canvas.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -258,7 +258,7 @@ for (const image of [
     });
 }
 
-test("mixed rootless board SVG, PNG and JPEG exports require consent and preserve their objects", async ({ page }, testInfo) => {
+test("mixed rootless board SVG, PNG, JPEG and WebP exports require consent and preserve their objects", async ({ page }, testInfo) => {
     // This end-to-end journey takes almost three minutes on the CI software renderer.
     test.setTimeout(300_000);
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
@@ -552,6 +552,32 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
     expect(renderedJpeg.connectorHits).toEqual([true, true]);
     expect(renderedJpeg.inkHits).toEqual([true, true, true]);
 
+    await setExportPrompt(page, "f6-rootless-board.webp");
+    await command(page, "Export WebP");
+    await page.waitForTimeout(300);
+    expect(await exportPrompts(page)).toEqual([]);
+    const pendingWebp = page.waitForEvent("download", { timeout: 30_000 });
+    await confirmVisualPreflight(page);
+    const webpDownload = await pendingWebp;
+    expect(webpDownload.suggestedFilename()).toBe("f6-rootless-board.webp");
+    expect(await exportPrompts(page)).toEqual([{
+        message: "File name",
+        suggested: expect.stringMatching(/\.webp$/i),
+    }]);
+    const webpPath = testInfo.outputPath("downloaded-board.webp");
+    await webpDownload.saveAs(webpPath);
+    const webp = await readFile(webpPath);
+    await testInfo.attach("downloaded WebP", { path: webpPath, contentType: "image/webp" });
+    expect(webp.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(webp.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    const renderedWebp = await inspectRasterScene(page, webp, frame, ink.kind.ink!.points, "webp");
+    expect(renderedWebp.warnings).toHaveLength(2);
+    expect(renderedWebp.frame.count).toBeGreaterThan(500);
+    expect(renderedWebp.labelPixels.every((count) => count > 10)).toBe(true);
+    expect(renderedWebp.connectorPixels).toBeGreaterThan(30);
+    expect(renderedWebp.connectorHits).toEqual([true, true]);
+    expect(renderedWebp.inkHits).toEqual([true, true, true]);
+
     expect(sheetFrom(await saveAs(page, "f6-after-export.thinoda"))).toEqual(baseline);
 });
 
@@ -619,13 +645,13 @@ async function inspectRasterScene(
     screenshot: Buffer,
     zone: { frame: BoardRect; color?: string },
     points: { x: number; y: number }[],
-    rasterFormat: "viewer" | "png" | "jpeg" = "viewer",
+    rasterFormat: "viewer" | "png" | "jpeg" | "webp" = "viewer",
 ) {
     const frame = zone.frame;
     const tint = frameTint(zone);
     return page.evaluate(async ({ screenshot, frame, points, rasterFormat, tint }) => {
         const image = new Image();
-        image.src = `data:image/${rasterFormat === "jpeg" ? "jpeg" : "png"};base64,${screenshot}`;
+        image.src = `data:image/${rasterFormat === "viewer" ? "png" : rasterFormat};base64,${screenshot}`;
         await image.decode();
         const canvas = document.createElement("canvas");
         canvas.width = image.naturalWidth;

@@ -434,8 +434,9 @@ the main Edit menu.
 and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
 export-loss disclosure follow PNG rather than a second renderer. This is a
 flattened visual export, not an editable draw.io container or WebP import.
-Pixel-for-pixel comparisons cover transparent and opaque output; other D13
-formats and real-browser download verification remain open.
+Pixel-for-pixel comparisons cover transparent and opaque output; a Chromium
+test exercises consent, download and rendering of a mixed board. Other D13
+formats and cross-browser verification remain open.
 
 **JPEG rubber-duck critique:** JPEG is already available through the normal
 visual export path, so treating it as missing would duplicate existing work.
