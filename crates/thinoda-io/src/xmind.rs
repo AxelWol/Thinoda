@@ -3513,7 +3513,10 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                 };
                 parse_topic(root, &mut s, None, 0, &mut ids, &context, "centralTopic")?;
                 import_sheet_theme(&v["theme"], &mut s);
-                if non_empty(v.get("zones")) {
+                if ["zones", "topicOverlapping", "arrangeableLayerOrder"]
+                    .iter()
+                    .any(|key| non_empty(v.get(key)))
+                {
                     context.warn(ImportWarning::Other);
                 }
                 if let Some(rels) = v.get("relationships").and_then(Value::as_array) {
@@ -6793,8 +6796,11 @@ mod tests {
         let without_thumbnail = include_bytes!("../tests/fixtures/sample-map-no-thumbnail.xmind");
         let with_thumbnail = include_bytes!("../tests/fixtures/sample-map-with-thumbnail.xmind");
         let (expected, warnings) = import_with_report(without_thumbnail).unwrap();
-        // Desktop titles carry bold attributedTitle runs, which Thinoda titles cannot keep.
-        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        // Bold title runs and sheet layout settings are not preserved.
+        assert_eq!(
+            warnings,
+            vec![ImportWarning::Formatting, ImportWarning::Other]
+        );
         assert_eq!(expected.sheets.len(), 1);
         assert_eq!(expected.active().root_topic().title, "Central Topic");
         assert_eq!(
@@ -7393,6 +7399,34 @@ mod tests {
         }));
         assert_eq!(warnings, vec![ImportWarning::Other]);
         let (_, warnings) = content_report(json!({"rootTopic": {"title": "Root"}, "zones": []}));
+        assert!(warnings.is_empty());
+        for field in [
+            json!({"topicOverlapping": false}),
+            json!({"topicOverlapping": true}),
+            json!({"arrangeableLayerOrder": ["topic"]}),
+        ] {
+            let mut sheet = json!({"rootTopic": {"title": "Root"}});
+            sheet
+                .as_object_mut()
+                .unwrap()
+                .extend(field.as_object().unwrap().clone());
+            let (_, warnings) = content_report(sheet.clone());
+            assert_eq!(warnings, vec![ImportWarning::Other], "{sheet}");
+            let archive = make_archive(&[(
+                "content.json".to_owned(),
+                serde_json::to_vec(&json!([sheet])).unwrap(),
+            )]);
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&ImportWarning::Other)
+            ));
+        }
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root"},
+            "topicOverlapping": null,
+            "arrangeableLayerOrder": [],
+        }));
         assert!(warnings.is_empty());
     }
 
