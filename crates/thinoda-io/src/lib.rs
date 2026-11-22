@@ -3,7 +3,8 @@
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
 //! Graphical output shares font-measured title layout. PDF keeps vector paths
 //! (including outlined text); JPEG always uses an opaque background. WebP is
-//! a lossless visual export and can retain transparency.
+//! a lossless visual export and can retain transparency. GIF is a static visual
+//! export with a limited palette and binary transparency.
 mod board_export;
 mod drawio;
 pub mod drawio_bundle;
@@ -58,6 +59,7 @@ pub enum Format {
     Png,
     Jpeg,
     WebP,
+    Gif,
     Pdf,
     Word,
     PowerPoint,
@@ -103,6 +105,7 @@ impl Format {
         Self::Png,
         Self::Jpeg,
         Self::WebP,
+        Self::Gif,
         Self::Pdf,
         Self::Word,
         Self::PowerPoint,
@@ -137,6 +140,7 @@ impl Format {
             "png" => Self::Png,
             "jpg" | "jpeg" => Self::Jpeg,
             "webp" => Self::WebP,
+            "gif" => Self::Gif,
             "pdf" => Self::Pdf,
             "docx" => Self::Word,
             "pptx" => Self::PowerPoint,
@@ -167,6 +171,7 @@ impl Format {
             Self::Png => &["png"],
             Self::Jpeg => &["jpg", "jpeg"],
             Self::WebP => &["webp"],
+            Self::Gif => &["gif"],
             Self::Pdf => &["pdf"],
             Self::Word => &["docx"],
             Self::PowerPoint => &["pptx"],
@@ -196,6 +201,7 @@ impl Format {
             Self::Png => "PNG",
             Self::Jpeg => "JPEG",
             Self::WebP => "WebP",
+            Self::Gif => "GIF",
             Self::Pdf => "PDF",
             Self::Word => "Word",
             Self::PowerPoint => "PowerPoint",
@@ -797,6 +803,7 @@ pub fn export_bytes_with_consent_and_visual_context(
                 | Format::Png
                 | Format::Jpeg
                 | Format::WebP
+                | Format::Gif
                 | Format::Pdf
                 | Format::PowerPoint
         )
@@ -815,6 +822,7 @@ pub fn export_bytes_with_consent_and_visual_context(
                 | Format::Png
                 | Format::Jpeg
                 | Format::WebP
+                | Format::Gif
                 | Format::Pdf
                 | Format::PowerPoint
         )
@@ -901,6 +909,7 @@ pub fn export_bytes_with_consent_and_visual_context(
                 | Format::Png
                 | Format::Jpeg
                 | Format::WebP
+                | Format::Gif
                 | Format::Pdf
                 | Format::PowerPoint
         );
@@ -937,6 +946,7 @@ pub fn export_bytes_with_consent_and_visual_context(
             | Format::Png
             | Format::Jpeg
             | Format::WebP
+            | Format::Gif
             | Format::Pdf
             | Format::PowerPoint
     );
@@ -1001,6 +1011,7 @@ pub fn export_bytes_with_consent_and_visual_context(
         Format::Png => render::raster(book, opts, image::ImageFormat::Png, visual)?,
         Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg, visual)?,
         Format::WebP => render::raster(book, opts, image::ImageFormat::WebP, visual)?,
+        Format::Gif => render::raster(book, opts, image::ImageFormat::Gif, visual)?,
         Format::Pdf => render::pdf(book, opts, visual)?,
         Format::Word => office::docx(book, opts)?,
         Format::PowerPoint => {
@@ -1163,6 +1174,7 @@ pub fn symbol_color_loss_with_options(
             | Format::Png
             | Format::Jpeg
             | Format::WebP
+            | Format::Gif
             | Format::Pdf
             | Format::PowerPoint
     ) && exported_sheets(book, format, opts)

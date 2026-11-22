@@ -189,6 +189,7 @@ impl Cmd {
                 Format::Png => "export.png",
                 Format::Jpeg => "export.jpeg",
                 Format::WebP => "export.webp",
+                Format::Gif => "export.gif",
                 Format::Pdf => "export.pdf",
                 Format::Word => "export.word",
                 Format::PowerPoint => "export.powerpoint",

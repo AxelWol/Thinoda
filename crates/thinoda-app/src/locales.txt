@@ -877,6 +877,8 @@ SVG|SVG|SVG|SVG|SVG|SVG|SVG|SVG
 PNG|PNG|PNG|PNG|PNG|PNG|PNG|PNG
 JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG
 WebP|WebP|WebP|WebP|WebP|WebP|WebP|WebP
+GIF|GIF|GIF|GIF|GIF|GIF|GIF|GIF
+GIF reduces colors and supports only fully transparent or opaque pixels.|GIF reduce los colores y solo admite píxeles totalmente transparentes u opacos.|GIF réduit les couleurs et ne prend en charge que les pixels totalement transparents ou opaques.|GIF reducerer farver og understøtter kun helt gennemsigtige eller uigennemsigtige pixels.|GIF vermindert kleuren en ondersteunt alleen volledig transparante of ondoorzichtige pixels.|GIF reduz as cores e suporta apenas píxeis totalmente transparentes ou opacos.|GIF riduce i colori e supporta solo pixel completamente trasparenti o opachi.|GIF ogranicza kolory i obsługuje tylko całkowicie przezroczyste lub nieprzezroczyste piksele.
 PDF|PDF|PDF|PDF|PDF|PDF|PDF|PDF
 Word|Word|Word|Word|Word|Word|Word|Word
 Excel|Excel|Excel|Excel|Excel|Excel|Excel|Excel

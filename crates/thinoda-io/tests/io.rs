@@ -800,6 +800,12 @@ fn detection_supports_paths_and_signatures() {
     assert!(Format::WebP.can_export());
     assert!(!Format::WebP.can_import());
     assert_eq!(
+        Format::from_path(std::path::Path::new("diagram.GIF")),
+        Some(Format::Gif)
+    );
+    assert!(Format::Gif.can_export());
+    assert!(!Format::Gif.can_import());
+    assert_eq!(
         Format::from_path(std::path::Path::new("a.xmind")),
         Some(Format::XMind)
     );

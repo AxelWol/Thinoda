@@ -120,6 +120,8 @@ pub fn mime_for(file_name: &str) -> &'static str {
     {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
         Some("md") => "text/markdown",
@@ -317,6 +319,8 @@ mod tests {
     #[test]
     fn download_mime_types_follow_extensions() {
         assert_eq!(mime_for("a.PNG"), "image/png");
+        assert_eq!(mime_for("a.WebP"), "image/webp");
+        assert_eq!(mime_for("a.GIF"), "image/gif");
         assert_eq!(mime_for("a.pdf"), "application/pdf");
         assert_eq!(mime_for("a.xmind"), "application/octet-stream");
         assert_eq!(mime_for("noext"), "application/octet-stream");

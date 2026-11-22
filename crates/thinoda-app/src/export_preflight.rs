@@ -251,6 +251,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();
                 }
+                ExportLoss::GifPaletteAndTransparency => {
+                    return t("GIF reduces colors and supports only fully transparent or opaque pixels.").to_owned();
+                }
                 ExportLoss::SynthesizedRoot { sheet, .. } if fim => {
                     return t("Sheet {sheet}: hidden root mode omitted.")
                         .replace("{sheet}", &(sheet + 1).to_string());

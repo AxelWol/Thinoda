@@ -428,7 +428,15 @@ the main Edit menu.
 
 - [x] JPEG visual export through the shared raster renderer
 - [x] Lossless WebP visual export through the shared raster renderer
-- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX and GIF export
+- [x] Static GIF visual export through the shared raster renderer, with palette and transparency disclosure
+- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX export
+
+**GIF rubber-duck critique:** GIF is a static, flattened image, not an
+animation or editable diagram. Its limited palette and binary transparency
+can visibly alter colours and antialiased edges, so export preflight always
+discloses that loss, even on a board without other warnings. The encoder
+shares the bounded raster and clipping path; Chromium coverage checks the
+download and mixed-board rendering. Other D13 formats remain open.
 
 **WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
 and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
@@ -525,6 +533,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-22 | D13 GIF export (partial) | Added static GIF visual export with an always-visible palette/transparency preflight; remaining D13 formats stay open. |
 | 2026-11-22 | D13 WebP export (partial) | Added lossless WebP visual export with alpha and the same preflight as PNG; other D13 formats remain open. |
 | 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
 | 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |

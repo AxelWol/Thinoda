@@ -420,6 +420,30 @@ fn webp_export_matches_png_with_transparency_and_visual_context() {
 }
 
 #[test]
+fn gif_export_warns_about_palette_and_has_binary_transparency() {
+    let workbook = Workbook::new(fixture().sheet);
+    let visual =
+        VisualExportContext::default().with_automatic_board_stroke(Color::rgb(255, 0, 180));
+    for transparent in [false, true] {
+        let options = ExportOptions {
+            transparent,
+            ..Default::default()
+        };
+        let gif =
+            export_bytes_with_visual_context(&workbook, Format::Gif, &options, visual).unwrap();
+        assert_eq!(image::guess_format(&gif).unwrap(), image::ImageFormat::Gif);
+        let image = image::load_from_memory(&gif).unwrap().to_rgba8();
+        assert!(image.width() > 0 && image.height() > 0);
+        assert!(image.pixels().all(|pixel| matches!(pixel.0[3], 0 | 255)));
+        assert_eq!(image.pixels().any(|pixel| pixel.0[3] == 0), transparent);
+        assert!(
+            thinoda_io::export_losses(&workbook, Format::Gif, &options)
+                .contains(&thinoda_io::ExportLoss::GifPaletteAndTransparency)
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires Python 3, pypdfium2 and Pillow"]
 fn pdf_renderers_show_the_contextual_stroke_in_both_themes() {
     use std::{

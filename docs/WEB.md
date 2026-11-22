@@ -88,7 +88,7 @@ features work differently:
 | Open / Import / Merge dialogs | The browser's file picker. Open and Import copy files into `/Documents`; Merge uses a temporary browser input. Name collisions receive a suffix. |
 | Drag & drop onto the window | Documents, including explicitly named `.drawio.png` files, are copied into `/Documents` and opened. Ordinary PNG/JPEG drops stay in memory and insert an image on the selected topic or as a board image card. A `.png` with embedded draw.io data can instead be opened as a diagram through File > Open. |
 | Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. Plain Save updates the browser copy and, for a file explicitly picked with Chromium File System Access in this tab, saves back to the original file. Firefox/Safari retain downloads; use Save As to download again. |
-| Export (PNG, WebP, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. WebP is lossless and supports transparency. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
+| Export (PNG, WebP, GIF, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. WebP is lossless and supports transparency; static GIF reduces colors and uses binary transparency, disclosed before export. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Copy Sheet | Copies the editable Thinoda sheet text and SVG in one clipboard item when the browser supports SVG clipboard data. Otherwise it warns and copies the sheet text only. Clipboard permissions and a secure context are required; receiving apps choose which representation to use. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
@@ -1004,7 +1004,7 @@ the raw error under **Technical details**:
   serves `dist` on loopback with Python, runs one isolated Chromium context per
   test, and covers the production loader, deferred offline installation,
   rootless board editing, synthetic-event clipboard flows with a virtual
-  clipboard, mini-map navigation and pointer capture, SVG/PNG/JPEG/WebP/PDF and
+  clipboard, mini-map navigation and pointer capture, SVG/PNG/JPEG/WebP/GIF/PDF and
   PowerPoint exports, embedded image cards (including PDF) and Pitch viewport.
   Set `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
   test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an

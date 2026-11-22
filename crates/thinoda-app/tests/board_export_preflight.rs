@@ -823,10 +823,17 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
                 | Format::Png
                 | Format::Jpeg
                 | Format::WebP
+                | Format::Gif
                 | Format::Pdf
                 | Format::PowerPoint
         ) {
             has_label(&h, t("Board grid and snapping settings omitted"));
+            if format == Format::Gif {
+                has_label(
+                    &h,
+                    t("GIF reduces colors and supports only fully transparent or opaque pixels."),
+                );
+            }
             let clip_loss = format!("1 — {}", t("Zone clipping not fully applied"));
             // This fixture has a viewport-only deck; its PPTX slide uses the
             // clipped raster path too. Flattening is reported separately.
