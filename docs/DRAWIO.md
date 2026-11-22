@@ -242,17 +242,19 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
 - [x] Show at least six layers in a movable Layers dialog and remember its last position
-- [ ] Make Layers dialog repositioning keyboard-accessible
+- [x] Make Layers dialog repositioning keyboard-accessible
 
 **Rubber-duck critique:** Constraining the panel to the drawing canvas left too
 little room for six rows beneath the ribbon at the minimum native window size,
 so it uses the app viewport instead and scrolls if even that viewport is too
 small. Dragging the title or empty background moves the panel without stealing
-the layer controls' interactions; position is saved only after dragging,
-validated before restoration and clamped again when the window shrinks. Tests
-cover six actionable rows at multiple interface scales, drag/reopen/restart,
-scrolling and smaller-window restoration. Keyboard repositioning is not
-implemented.
+the layer controls' interactions. The focusable title announces movement
+instructions, shows a focus ring and uses arrow keys to move in 10-point steps;
+Tab leaves it normally and the canvas selection does not move. Position is saved
+after a completed drag or successful keyboard movement, validated before
+restoration and clamped to the viewport. Tests cover six actionable rows at
+multiple interface scales, pointer and keyboard movement, focus traversal,
+viewport edges, reopen/restart, scrolling and smaller-window restoration.
 
 ### D9 — Style and text
 
