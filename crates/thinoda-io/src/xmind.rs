@@ -87,12 +87,18 @@ fn supported_static_svg_css(css: &str) -> bool {
     while offset < css.len() {
         let rest = &css[offset..];
         if quote.is_none() && rest.starts_with("/*") {
-            if parentheses != 0 || previous.is_some_and(|ch| !matches!(ch, '{' | '}' | ';')) {
-                return false;
-            }
             let Some(end) = rest[2..].find("*/") else {
                 return false;
             };
+            let css_whitespace = |ch| matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{c}');
+            let whitespace_delimited = normalized.chars().next_back().is_some_and(css_whitespace)
+                && rest[end + 4..].chars().next().is_some_and(css_whitespace);
+            if parentheses != 0
+                || (previous.is_some_and(|ch| !matches!(ch, '{' | '}' | ';'))
+                    && !whitespace_delimited)
+            {
+                return false;
+            }
             offset += end + 4;
             continue;
         }
@@ -7890,6 +7896,8 @@ mod tests {
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style><![CDATA[.box { fill: #1255aa; }]]></style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>/* Generated */ .box { /* Fill */ fill: #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="/* Fill */ fill:#1255aa"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.box { fill: /* Fill */ #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="fill: /* Fill */ #1255aa"/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
@@ -8387,6 +8395,22 @@ mod tests {
         }
         for css in ["fill:url(#local)", "fill:URL( '#local-id' )"] {
             assert!(supported_static_svg_css(css), "{css}");
+        }
+    }
+
+    #[test]
+    fn svg_css_allows_whitespace_delimited_comments_without_hiding_tokens() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { fill: /* color */ #1255aa; }</style><rect class="box" width="4" height="4"/></svg>"##;
+        let png = transcode_package_picture("picture.svg", svg).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(1, 1).0, [0x12, 0x55, 0xaa, 255]);
+        for css in [
+            "anima/* comment */tion: slide",
+            "fill: u/* comment */rl(https://example.com/image)",
+            "fill: url( /* comment */ https://example.com/image)",
+            "fill: /* comment */ url(https://example.com/image)",
+        ] {
+            assert!(!supported_static_svg_css(css), "{css}");
         }
     }
 

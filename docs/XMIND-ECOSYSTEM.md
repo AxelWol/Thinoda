@@ -428,6 +428,8 @@ undocumented XMind payload.
   per-picture limits on image count and total decoded pixels.
 - [x] Recover static SVG stylesheets and inline styles with comments at rule or
   declaration boundaries, while rejecting comments that could obscure tokens.
+- [x] Recover static SVG styles with whitespace-delimited comments between a
+  property and its value in both modern and legacy packages.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -440,6 +442,11 @@ sheet used every file. Unsupported and duplicate source paths still count
 conservatively, so some pictures near a limit may be skipped. Shared
 picture/attachment paths use separate visual and opaque resources and charge
 both where a sheet uses both; the attachment is never replaced.
+
+**SVG CSS comment critique:** Whitespace-delimited comments retain token
+separation during safety checks, allowing common generated styles without
+accepting comments embedded in URLs, animation names or other tokens.
+Rasterization still loses SVG metadata and unsupported dynamic features.
 
 The legacy parser reserves the original package plus each converted PNG for
 every sheet, even when a picture is not also an attachment. This is intentionally
