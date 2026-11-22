@@ -66,6 +66,11 @@ const DRAWIO_GROUP_IDS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-GROUP-IDS-
 
 type PackageResources = HashMap<String, Resource>;
 
+fn webp_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize) -> bool {
+    let budget = MAX_SHEET_RESOURCE_BYTES.min(MAX_WORKBOOK_RESOURCE_BYTES / sheet_count.max(1));
+    extra == 0 || extra <= budget.saturating_sub(resolved_bytes)
+}
+
 const ENCRYPTED_PACKAGE_ERROR: &str = "This XMind file is password-protected. Remove the password in XMind, save the map again, and then import it.";
 
 struct TopicImportContext<'a> {
@@ -420,20 +425,40 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     }
 
     let mut resources = HashMap::new();
+    let mut resolved_bytes = package_bytes as usize;
+    let sheet_count = content.as_array().map_or(0, Vec::len);
     for path in referenced {
         if !available.contains(&path) {
             warnings.insert(ImportWarning::Resources);
             continue;
         }
-        let bytes = crate::zip_entry_with_limit(archive, &path, MAX_RESOURCE_BYTES as u64)?;
+        let mut bytes = crate::zip_entry_with_limit(archive, &path, MAX_RESOURCE_BYTES as u64)?;
         // The decoder checks headers and dimensions before allocating pixels.
-        let Ok(decoded) = images::decode(&bytes) else {
-            warnings.insert(ImportWarning::Resources);
-            continue;
+        let media_type = match images::decode(&bytes) {
+            Ok(decoded) => decoded.media_type,
+            Err(_) => {
+                warnings.insert(ImportWarning::Resources);
+                if attachments.contains(&path)
+                    || image::guess_format(&bytes).ok() != Some(image::ImageFormat::WebP)
+                {
+                    continue;
+                }
+                let Ok(png) = images::transcode_static_webp(&bytes) else {
+                    continue;
+                };
+                let extra = png.len().saturating_sub(bytes.len());
+                // Reserve the entire package for every sheet. This conservative
+                // bound prevents conversion from displacing existing resources.
+                if !webp_expansion_fits(resolved_bytes, extra, sheet_count) {
+                    continue;
+                }
+                resolved_bytes += extra;
+                bytes = png;
+                "image/png"
+            }
         };
         let component = path.strip_prefix("resources/").unwrap_or_default();
-        let resource =
-            Resource::new(component, decoded.media_type, bytes).map_err(IoError::Invalid)?;
+        let resource = Resource::new(component, media_type, bytes).map_err(IoError::Invalid)?;
         resources.insert(path, resource);
     }
     // Attachments are opaque: never decoded or sniffed. Paths that are also valid
@@ -7122,6 +7147,100 @@ mod tests {
         too_many.extend(paths.into_iter().map(|path| (path, image_bytes.clone())));
         let error = import(&make_archive(&too_many)).unwrap_err().to_string();
         assert!(error.contains("128 embedded image limit"), "{error}");
+    }
+
+    #[test]
+    fn static_webp_picture_is_recovered_without_overwriting_its_source() {
+        let pixels = image::RgbaImage::from_pixel(4, 3, image::Rgba([30, 80, 190, 128]));
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels.clone())
+            .write_to(&mut encoded, image::ImageFormat::WebP)
+            .unwrap();
+        let webp = encoded.into_inner();
+        let archive_for = |attachment: bool| {
+            let mut root = json!({
+                "title": "Root",
+                "image": {"src": "xap:resources/picture.webp"}
+            });
+            if attachment {
+                root["href"] = json!("xap:resources/picture.webp");
+            }
+            make_archive(&[
+                (
+                    "content.json".into(),
+                    serde_json::to_vec(&json!([{"rootTopic": root}])).unwrap(),
+                ),
+                ("resources/picture.webp".into(), webp.clone()),
+            ])
+        };
+        let archive = archive_for(false);
+        let (book, warnings) = import_with_report(&archive).unwrap();
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        let sheet = book.active();
+        let resource = sheet
+            .resources
+            .get(sheet.root_topic().image.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(resource.media_type, "image/png");
+        assert_eq!(
+            image::load_from_memory(resource.bytes())
+                .unwrap()
+                .to_rgba8(),
+            pixels
+        );
+        assert!(matches!(
+            import(&archive),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Resources)
+        ));
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+
+        let (book, warnings) = import_with_report(&archive_for(true)).unwrap();
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        let sheet = book.active();
+        assert!(sheet.root_topic().image.is_none());
+        let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+        assert_eq!(
+            sheet.resources.get(&attachment.resource).unwrap().bytes(),
+            webp
+        );
+    }
+
+    #[test]
+    fn webp_expansion_respects_sheet_and_workbook_resource_limits() {
+        let one_sheet = MAX_SHEET_RESOURCE_BYTES;
+        assert!(webp_expansion_fits(one_sheet - 1, 1, 1));
+        assert!(!webp_expansion_fits(one_sheet - 1, 2, 1));
+        let three_sheets = MAX_WORKBOOK_RESOURCE_BYTES / 3;
+        assert!(webp_expansion_fits(three_sheets - 1, 1, 3));
+        assert!(!webp_expansion_fits(three_sheets - 1, 2, 3));
+        assert!(webp_expansion_fits(one_sheet + 1, 0, 1));
+        assert!(!webp_expansion_fits(one_sheet + 1, 1, 1));
+    }
+
+    #[test]
+    fn malformed_webp_picture_is_skipped_with_a_warning() {
+        let archive = make_archive(&[
+            (
+                "content.json".into(),
+                serde_json::to_vec(&json!([{"rootTopic": {
+                    "title": "Root",
+                    "image": {"src": "xap:resources/broken.webp"}
+                }}]))
+                .unwrap(),
+            ),
+            (
+                "resources/broken.webp".into(),
+                b"RIFF\x04\0\0\0WEBP".to_vec(),
+            ),
+        ]);
+        let (book, warnings) = import_with_report(&archive).unwrap();
+        assert!(book.active().root_topic().image.is_none());
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert!(matches!(
+            import(&archive),
+            Err(IoError::ImportNeedsConfirmation(_))
+        ));
     }
 
     #[test]
