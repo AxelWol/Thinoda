@@ -417,8 +417,11 @@ undocumented XMind payload.
   original attachment and caching conversions across sheets.
 - [x] Recover static GIF pictures in modern and legacy packages, retaining
   transparency and any shared attachment under the same resource budgets.
-- [ ] Preserve GIF/WebP metadata and animation; support SVG pictures; validate
-  interoperability in installed XMind.
+- [x] Recover a bounded static SVG subset in modern and legacy packages,
+  rasterizing to PNG with a resource-loss warning and preserving shared
+  attachments.
+- [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
+  beyond the bounded static subset; validate interoperability in installed XMind.
 
 **Rubber-duck critique:** Converting a picture is not a lossless package
 round-trip even when its pixels survive, so warning and source protection are
@@ -441,4 +444,15 @@ looks like a complete picture. Recovery decodes at most two bounded frames and
 rejects multi-frame or malformed streams rather than silently flattening them;
 the Resources warning protects the source because GIF metadata and encoding
 are not preserved. Transparency is retained as decoded, and shared attachments
-remain byte-for-byte unchanged. SVG and animation remain open.
+remain byte-for-byte unchanged. Full SVG and animation support remain open.
+
+**Static SVG critique:** SVG is not a native editable image resource, so
+rasterization loses vector content and requires the same consent and source
+protection as GIF/WebP conversion. A shared bounded renderer preserves intrinsic
+size up to 1024 pixels on the longest side and never fetches external images.
+The XMind subset rejects image elements, embedded or external image references,
+stylesheets, scripts, foreign objects, animation elements, animated inline
+styles, external links, SVGZ, malformed XML and excessive XML events rather
+than silently dropping their content. More SVG features, original vector
+preservation and animation remain open; the package and attachment budgets
+remain unchanged.

@@ -75,10 +75,72 @@ fn image_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize)
     resolved_bytes <= budget && extra <= budget - resolved_bytes
 }
 
-fn transcode_package_picture(bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn supported_static_svg(bytes: &[u8]) -> bool {
+    use quick_xml::{Reader, events::Event};
+
+    if bytes.len() > MAX_RESOURCE_BYTES {
+        return false;
+    }
+    let mut reader = Reader::from_reader(bytes);
+    for _ in 0..100_000 {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element)) => {
+                if matches!(
+                    element.local_name().as_ref(),
+                    "image"
+                        | "feImage"
+                        | "foreignObject"
+                        | "script"
+                        | "style"
+                        | "animate"
+                        | "animateColor"
+                        | "animateMotion"
+                        | "animateTransform"
+                        | "set"
+                        | "discard"
+                ) {
+                    return false;
+                }
+                for attribute in element.attributes() {
+                    let Ok(attribute) = attribute else {
+                        return false;
+                    };
+                    let Ok(value) = attribute.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    else {
+                        return false;
+                    };
+                    let value = value.to_ascii_lowercase();
+                    if value.contains("animation")
+                        || value.contains("transition")
+                        || (attribute.key.local_name().as_ref() == "style" && value.contains('\\'))
+                        || (attribute.key.local_name().as_ref() == "href"
+                            && !value.trim_start().starts_with('#'))
+                    {
+                        return false;
+                    }
+                }
+            }
+            Ok(Event::DocType(_) | Event::PI(_)) | Err(_) => return false,
+            Ok(Event::Eof) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn transcode_package_picture(path: &str, bytes: &[u8]) -> Result<Vec<u8>, String> {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::WebP) => images::transcode_static_webp(bytes),
         Ok(image::ImageFormat::Gif) => images::transcode_static_gif(bytes),
+        _ if path
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
+            && supported_static_svg(bytes) =>
+        {
+            crate::render::rasterize_svg(bytes, None)
+                .map(|(png, _)| png)
+                .ok_or_else(|| "invalid or unsupported SVG image".into())
+        }
         _ => Err("unsupported image format".into()),
     }
 }
@@ -553,7 +615,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
             Ok(decoded) => decoded.media_type,
             Err(_) => {
                 warnings.insert(ImportWarning::Resources);
-                let Ok(png) = transcode_package_picture(&bytes) else {
+                let Ok(png) = transcode_package_picture(&path, &bytes) else {
                     continue;
                 };
                 if !budget.reserve_picture(&path, bytes.len(), png.len()) {
@@ -4115,7 +4177,7 @@ struct LegacyPictureRecovery {
 impl LegacyPictureRecovery {
     fn picture(&mut self, path: &str, bytes: &[u8]) -> Option<&[u8]> {
         if !self.cache.contains_key(path) {
-            let png = transcode_package_picture(bytes).ok().filter(|png| {
+            let png = transcode_package_picture(path, bytes).ok().filter(|png| {
                 self.reserved_count
                     .saturating_add(1)
                     .saturating_mul(self.sheet_count)
@@ -7561,6 +7623,118 @@ mod tests {
                 assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
             }
         }
+    }
+
+    #[test]
+    fn static_svg_picture_recovers_for_modern_and_legacy_packages() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="#1255aa"/></svg>"##;
+        for legacy in [false, true] {
+            let content = if legacy {
+                (
+                    "content.xml",
+                    br#"<xmap-content><sheet><topic
+                        xlink:href="xap:resources/picture.svg"><title>Root</title>
+                        <image xlink:href="xap:resources/picture.svg"/>
+                        </topic></sheet></xmap-content>"#
+                        .to_vec(),
+                )
+            } else {
+                (
+                    "content.json",
+                    serde_json::to_vec(&json!([{"rootTopic": {
+                        "title": "Root",
+                        "href": "xap:resources/picture.svg",
+                        "image": {"src": "xap:resources/picture.svg"}
+                    }}]))
+                    .unwrap(),
+                )
+            };
+            let archive = make_archive(&[
+                (content.0.into(), content.1),
+                ("resources/picture.svg".into(), svg.to_vec()),
+            ]);
+            let (book, warnings) = import_with_report(&archive).unwrap();
+            assert!(warnings.contains(&ImportWarning::Resources));
+            let sheet = book.active();
+            let image = sheet
+                .resources
+                .get(sheet.root_topic().image.as_ref().unwrap())
+                .unwrap();
+            assert_eq!(image.media_type, "image/png");
+            let pixels = image::load_from_memory(image.bytes()).unwrap().to_rgba8();
+            assert_eq!(pixels.dimensions(), (10, 4));
+            assert_eq!(pixels.get_pixel(0, 0).0, [18, 85, 170, 255]);
+            assert_eq!(sheet.root_topic().image_size, Some(Vec2::new(10.0, 4.0)));
+            let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+            assert_eq!(
+                sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                svg
+            );
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(_))
+            ));
+            book.validate().unwrap();
+            assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        }
+    }
+
+    #[test]
+    fn unsupported_svg_pictures_are_not_silently_flattened() {
+        let examples: &[&[u8]] = &[
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><image href="https://example.com/a.png"/></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"><animate attributeName="x" to="4"/></rect></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>@keyframes move {}</style></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect style="ani&#109;ation: move 1s"/></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect style="anim\61tion: move 1s"/></svg>"#,
+            b"not svg",
+            &[0x1f, 0x8b, 8, 0],
+        ];
+        for svg in examples {
+            for legacy in [false, true] {
+                let content = if legacy {
+                    (
+                        "content.xml",
+                        br#"<xmap-content><sheet><topic xlink:href="xap:resources/picture.svg">
+                            <title>Root</title><image xlink:href="xap:resources/picture.svg"/>
+                            </topic></sheet></xmap-content>"#
+                            .to_vec(),
+                    )
+                } else {
+                    (
+                        "content.json",
+                        serde_json::to_vec(&json!([{"rootTopic": {
+                            "title": "Root", "href": "xap:resources/picture.svg",
+                            "image": {"src": "xap:resources/picture.svg"}
+                        }}]))
+                        .unwrap(),
+                    )
+                };
+                let archive = make_archive(&[
+                    (content.0.into(), content.1),
+                    ("resources/picture.svg".into(), svg.to_vec()),
+                ]);
+                let (book, warnings) = import_with_report(&archive).unwrap();
+                assert!(warnings.contains(&ImportWarning::Resources));
+                let sheet = book.active();
+                assert!(sheet.root_topic().image.is_none());
+                let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+                assert_eq!(
+                    sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                    *svg
+                );
+                book.validate().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn svg_picture_rasterization_bounds_large_intrinsic_size() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="50000"><rect width="100000" height="50000" fill="red"/></svg>"#;
+        let png = transcode_package_picture("resources/picture.SVG", svg).unwrap();
+        let image = images::decode(&png).unwrap();
+        assert_eq!((image.width, image.height), (1024, 512));
+        assert!(png.len() <= MAX_RESOURCE_BYTES);
     }
 
     #[test]

@@ -5157,8 +5157,6 @@ impl<'a> PageImport<'a> {
 /// Longest image source kept as alt text on a placeholder.
 const MAX_IMAGE_ALT_CHARS: usize = 500;
 /// Longest side, in pixels, of a rasterised inline SVG image.
-const MAX_SVG_RASTER: f32 = 1024.0;
-
 /// An embedded image for an imported image card.
 struct CardImage {
     resource: Resource,
@@ -5212,7 +5210,7 @@ fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2, bool)> {
         }
         "image/svg+xml" => {
             let svg = base64().or_else(|| percent_decode(payload).map(String::into_bytes))?;
-            let (png, pixels) = rasterize_svg(&svg, display)?;
+            let (png, pixels) = crate::render::rasterize_svg(&svg, Some(display))?;
             Some((
                 Resource::new("draw.io image.png", "image/png", png).ok()?,
                 pixels,
@@ -5221,48 +5219,6 @@ fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2, bool)> {
         }
         _ => None,
     }
-}
-
-/// Renders untrusted SVG to PNG at about twice its display size. External and file
-/// references are refused; compressed SVGZ is rejected to rule out inflation bombs.
-fn rasterize_svg(svg: &[u8], display: Vec2) -> Option<(Vec<u8>, Vec2)> {
-    use image::ImageEncoder;
-    use resvg::{tiny_skia, usvg};
-    if svg.starts_with(&[0x1f, 0x8b]) {
-        return None;
-    }
-    let mut options = usvg::Options {
-        fontdb: crate::fonts::database(),
-        ..Default::default()
-    };
-    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-    let tree = usvg::Tree::from_data(svg, &options).ok()?;
-    let size = tree.size();
-    let longest = size.width().max(size.height());
-    let target = (display.x.max(display.y) * 2.0).clamp(64.0, MAX_SVG_RASTER);
-    if !longest.is_finite() || longest <= 0.0 || !target.is_finite() {
-        return None;
-    }
-    let scale = target / longest;
-    let width = (size.width() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
-    let height = (size.height() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(
-            width as f32 / size.width(),
-            height as f32 / size.height(),
-        ),
-        &mut pixmap.as_mut(),
-    );
-    // tiny-skia stores premultiplied alpha; PNG expects straight alpha.
-    let mut rgba = pixmap.take();
-    crate::render::unpremultiply_rgba(&mut rgba);
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
-        .ok()?;
-    Some((png, Vec2::new(width as f32, height as f32)))
 }
 
 /// Image card geometry for a draw.io image cell: the image keeps the cell size (fitted to
