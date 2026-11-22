@@ -410,9 +410,9 @@ undocumented XMind payload.
   4 megapixels, and decoder allocations. Reserve package bytes and resource
   counts conservatively across sheets so recovered images do not displace
   existing resources.
-- [x] Preserve original opaque bytes when a resource is also an attachment;
-  in that case its WebP picture is skipped and reported rather than replacing
-  the attachment.
+- [x] When a WebP resource is also an attachment, retain its original opaque
+  bytes and use a separate PNG for the picture. If the extra resource would
+  exceed a budget, retain the attachment and report the skipped picture.
 - [ ] Preserve WebP metadata and animation; support GIF and SVG pictures and
   WebP in legacy `content.xml`; validate interoperability in installed XMind.
 
@@ -422,5 +422,6 @@ mandatory. Animated or malformed images are skipped, not flattened. Expansion
 uses the whole package as a reservation for each sheet; this can skip pictures
 that a more precise per-sheet calculation could fit, but avoids evicting other
 resources or making previously valid resource budgets fail. Shared
-picture/attachment paths remain a deliberate compatibility gap until separate
-visual and opaque representations can be stored safely.
+picture/attachment paths use separate visual and opaque resources and charge
+both against those budgets; this may conservatively skip a recoverable picture
+near a limit but never replaces the attachment.
