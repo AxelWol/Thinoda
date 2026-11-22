@@ -2090,6 +2090,25 @@ mod tests {
     }
 
     #[test]
+    fn drawio_edge_label_background_requires_consent_and_preserves_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("edge-label.drawio");
+        let xml = r##"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="l" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;labelBackgroundColor=#ff0000;" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"##;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(warnings, [thinoda_io::ImportWarning::Formatting]);
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+    }
+
+    #[test]
     fn drawio_unmapped_document_xml_requires_consent_and_preserves_source() {
         let directory = tempfile::tempdir().unwrap();
         for (name, xml) in [

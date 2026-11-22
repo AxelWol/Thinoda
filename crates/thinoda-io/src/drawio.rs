@@ -1626,7 +1626,9 @@ fn child_label_style_loss(child: &Style, edge: &Style) -> bool {
         || child.tokens.iter().any(|token| token != "edgeLabel")
         || child.num("fontSize") != Some(CANVAS_LABEL_FONT_SIZE)
         || child.text_color() != edge.text_color()
-        || child.get("labelBackgroundColor") == Some("none")
+        || child
+            .get("labelBackgroundColor")
+            .is_some_and(|value| !value.is_empty())
         || child.map.iter().any(|(key, value)| !match key.as_str() {
             "html"
             | "resizable"
