@@ -1872,6 +1872,44 @@ fn editor_click_precedes_batched_format_shortcut_and_text() {
 }
 
 #[test]
+#[ignore = "multiple editor clicks in one input frame are not yet ordered with text"]
+fn two_editor_clicks_keep_batched_text_at_each_clicked_caret() {
+    let mut h = harness("AB");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    let editor = h.get_by_label("Board object label").rect();
+    let left = egui::pos2(editor.left() + 2.0, editor.center().y);
+    let right = egui::pos2(editor.right() - 2.0, editor.center().y);
+    for (pos, text) in [(left, "x"), (right, "y")] {
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text(text.into()),
+        ]);
+    }
+    h.run_steps(2);
+    let (_, text, _) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "xABy");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn editor_click_orders_ime_input_before_and_after_the_click() {
     for ime_before_click in [false, true] {
         let mut h = harness("aaa");

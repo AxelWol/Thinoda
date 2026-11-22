@@ -313,6 +313,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Add arbitrary RGBA color entry for card titles
   - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
+    - [ ] Preserve event order across multiple editor clicks and text events in one frame; the ignored `two_editor_clicks_keep_batched_text_at_each_clicked_caret` regression currently produces `ABxy` instead of `xABy`
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -533,6 +534,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-22 | D9 multiple-click input audit (open) | Reproduced text being inserted at the final caret when two editor clicks and text events arrive in one frame. The regression is ignored until ordered pointer handling is implemented; this is not a fix. |
 | 2026-11-22 | D13 GIF export (partial) | Added static GIF visual export with an always-visible palette/transparency preflight; remaining D13 formats stay open. |
 | 2026-11-22 | D13 WebP export (partial) | Added lossless WebP visual export with alpha and the same preflight as PNG; other D13 formats remain open. |
 | 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
@@ -632,6 +634,14 @@ recovery) and binary `.vsd`.
 | 2026-11-17 | D0 | Research, gap analysis, plan, coverage probe, translator fixes (99.94 % of shapes in converted files), rubber-duck review folded in |
 
 ### Critiques
+
+**D9 multiple-click rubber-duck critique:** Processing only the first editor
+press and then exposing the frame's aggregated pointer state to egui does not
+replay two clicks in event order. Splitting text alone is insufficient: pointer
+interaction, selection and click count also need correct per-event handling.
+A synthetic regression demonstrates the defect and remains ignored rather
+than hiding it or claiming a fix. Drag, touch, IME and real-platform input
+still need separate validation.
 
 **D0.** The inventory is regex-based over minified code, so counts are
 approximate; the gap table is limited to user-visible features and treats cloud
