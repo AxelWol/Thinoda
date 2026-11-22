@@ -110,7 +110,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Ancillary manifest entries (thumbnails) | ✅ | — | Keep (#136). |
 | Missing `manifest.json` with images | ❌ hard error | Third-party writers omit it. | Use the archive inventory (X1). |
 | Resources present but unreferenced | ❌ hard error | Note images and attachments leave bytes that the map does not reference. | Ignore them (still path- and size-checked) and record a warning (X1). |
-| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | GIF, SVG and animated WebP remain unsupported. | Static WebP pictures in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
+| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | SVG and animated GIF/WebP remain unsupported. | Static GIF and WebP pictures in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
 | Attachment topics (`href: xap:resources/...`) | ❌ verbatim inert link | — | Import as an opaque Thinoda attachment (X2). |
 | Other `attachment(s)`, `resourceRefs`, note images | ❌ hard error | The whole map fails. | Drop the payload and warn under Resources (X1). |
 | Import warnings and consent | ❌ none for XMind | Lossy conversions are silent or fatal. | `xmind::import_with_report` plus the existing localized consent dialog (X1). |
@@ -415,8 +415,10 @@ undocumented XMind payload.
   exceed a budget, retain the attachment and report the skipped picture.
 - [x] Recover static WebP pictures in legacy `content.xml`, retaining any
   original attachment and caching conversions across sheets.
-- [ ] Preserve WebP metadata and animation; support GIF and SVG pictures;
-  validate interoperability in installed XMind.
+- [x] Recover static GIF pictures in modern and legacy packages, retaining
+  transparency and any shared attachment under the same resource budgets.
+- [ ] Preserve GIF/WebP metadata and animation; support SVG pictures; validate
+  interoperability in installed XMind.
 
 **Rubber-duck critique:** Converting a picture is not a lossless package
 round-trip even when its pixels survive, so warning and source protection are
@@ -433,3 +435,10 @@ every sheet, even when a picture is not also an attachment. This is intentionall
 conservative and can skip pictures near a limit; cached successes and failures
 avoid repeated transcoding of the same source. Legacy and modern conversion
 both report Resources loss and never silently flatten animated WebP.
+
+**Static GIF critique:** A GIF may contain animation even when its first frame
+looks like a complete picture. Recovery decodes at most two bounded frames and
+rejects multi-frame or malformed streams rather than silently flattening them;
+the Resources warning protects the source because GIF metadata and encoding
+are not preserved. Transparency is retained as decoded, and shared attachments
+remain byte-for-byte unchanged. SVG and animation remain open.

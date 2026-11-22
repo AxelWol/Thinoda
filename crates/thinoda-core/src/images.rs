@@ -1,6 +1,8 @@
 //! Local PNG/JPEG only. Never resolves a URL or a filesystem reference.
 use crate::{Sheet, Vec2, resources::MAX_RESOURCE_BYTES};
-use image::{ImageDecoder, ImageEncoder, ImageFormat, ImageReader, metadata::Orientation};
+use image::{
+    AnimationDecoder, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, metadata::Orientation,
+};
 use std::io::{Cursor, Write};
 
 pub const MAX_DIMENSION: u32 = 4096;
@@ -153,7 +155,46 @@ pub fn transcode_static_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .decode()
         .map_err(|e| format!("invalid WebP image: {e}"))?;
     image.apply_orientation(orientation);
-    let image = image.into_rgba8();
+    encode_import_png(&image.into_rgba8())
+}
+
+/// Converts one bounded, non-animated GIF picture to the PNG storage format.
+pub fn transcode_static_gif(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
+        return Err("image must contain 1 byte to 8 MiB".into());
+    }
+    let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+        .map_err(|e| format!("invalid GIF header: {e}"))?;
+    let (width, height) = decoder.dimensions();
+    if width == 0
+        || height == 0
+        || width > MAX_DIMENSION
+        || height > MAX_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_PIXELS
+    {
+        return Err("image exceeds 4096 pixels per side or 4 megapixels".into());
+    }
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DIMENSION);
+    limits.max_image_height = Some(MAX_DIMENSION);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    decoder
+        .set_limits(limits)
+        .map_err(|e| format!("invalid GIF limits: {e}"))?;
+    let mut frames = decoder.into_frames();
+    let first = frames
+        .next()
+        .ok_or_else(|| "GIF has no frames".to_owned())?
+        .map_err(|e| format!("invalid GIF image: {e}"))?;
+    match frames.next() {
+        None => {}
+        Some(Ok(_)) => return Err("animated GIF images are not supported".into()),
+        Some(Err(e)) => return Err(format!("invalid GIF image: {e}")),
+    }
+    encode_import_png(first.buffer())
+}
+
+fn encode_import_png(image: &image::RgbaImage) -> Result<Vec<u8>, String> {
     let mut output = LimitedImageOutput {
         bytes: Vec::new(),
         limit: MAX_RESOURCE_BYTES,
@@ -166,7 +207,7 @@ pub fn transcode_static_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
             image.height(),
             image::ExtendedColorType::Rgba8,
         )
-        .map_err(|e| format!("could not convert WebP image: {e}"))?;
+        .map_err(|e| format!("could not convert image: {e}"))?;
     if output.overflowed {
         return Err("converted image exceeds the 8 MiB resource limit".into());
     }
@@ -346,6 +387,53 @@ mod tests {
         assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8(), original);
         assert!(transcode_static_webp(b"not webp").is_err());
         assert!(transcode_static_webp(&vec![0; MAX_RESOURCE_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn static_gif_conversion_preserves_pixels_and_rejects_animation() {
+        let gif = encoded(ImageFormat::Gif);
+        let original = image::load_from_memory(&gif).unwrap().to_rgba8();
+        let png = transcode_static_gif(&gif).unwrap();
+        assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8(), original);
+        assert!(transcode_static_gif(b"not gif").is_err());
+        assert!(transcode_static_gif(&vec![0; MAX_RESOURCE_BYTES + 1]).is_err());
+        for (width, height) in [(4097u16, 1u16), (4096, 1025)] {
+            let mut oversized = gif.clone();
+            oversized[6..8].copy_from_slice(&width.to_le_bytes());
+            oversized[8..10].copy_from_slice(&height.to_le_bytes());
+            assert!(transcode_static_gif(&oversized).is_err());
+        }
+
+        let mut transparent = Vec::new();
+        {
+            let mut pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([30, 80, 190, 255]));
+            pixels.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
+            image::codecs::gif::GifEncoder::new(&mut transparent)
+                .encode_frame(image::Frame::new(pixels))
+                .unwrap();
+        }
+        let expected = image::load_from_memory(&transparent).unwrap().to_rgba8();
+        assert_eq!(
+            image::load_from_memory(&transcode_static_gif(&transparent).unwrap())
+                .unwrap()
+                .to_rgba8(),
+            expected
+        );
+        assert_eq!(expected.get_pixel(0, 0).0[3], 0);
+
+        let mut animated = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut animated);
+            for value in [10, 20] {
+                let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([value, 0, 0, 255]));
+                encoder.encode_frame(image::Frame::new(pixels)).unwrap();
+            }
+        }
+        assert!(
+            transcode_static_gif(&animated)
+                .unwrap_err()
+                .contains("animated")
+        );
     }
 
     #[test]

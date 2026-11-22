@@ -70,9 +70,17 @@ struct PackageResources {
     converted_images: HashMap<String, Resource>,
 }
 
-fn webp_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize) -> bool {
+fn image_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize) -> bool {
     let budget = MAX_SHEET_RESOURCE_BYTES.min(MAX_WORKBOOK_RESOURCE_BYTES / sheet_count.max(1));
     resolved_bytes <= budget && extra <= budget - resolved_bytes
+}
+
+fn transcode_package_picture(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    match image::guess_format(bytes) {
+        Ok(image::ImageFormat::WebP) => images::transcode_static_webp(bytes),
+        Ok(image::ImageFormat::Gif) => images::transcode_static_gif(bytes),
+        _ => Err("unsupported image format".into()),
+    }
 }
 
 const ENCRYPTED_PACKAGE_ERROR: &str = "This XMind file is password-protected. Remove the password in XMind, save the map again, and then import it.";
@@ -444,10 +452,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
             Ok(decoded) => decoded.media_type,
             Err(_) => {
                 warnings.insert(ImportWarning::Resources);
-                if image::guess_format(&bytes).ok() != Some(image::ImageFormat::WebP) {
-                    continue;
-                }
-                let Ok(png) = images::transcode_static_webp(&bytes) else {
+                let Ok(png) = transcode_package_picture(&bytes) else {
                     continue;
                 };
                 let shared = attachments.contains(&path);
@@ -465,7 +470,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
                     .saturating_add(additional)
                     .saturating_mul(sheet_count)
                     > MAX_RESOURCES
-                    || !webp_expansion_fits(resolved_bytes, extra, sheet_count)
+                    || !image_expansion_fits(resolved_bytes, extra, sheet_count)
                 {
                     continue;
                 }
@@ -4009,7 +4014,7 @@ fn legacy_resource_path(href: &str) -> Option<String> {
 struct LegacyImportContext<'a> {
     styles: &'a LegacyStyles,
     files: &'a HashMap<String, Vec<u8>>,
-    webp: &'a mut LegacyWebpRecovery,
+    pictures: &'a mut LegacyPictureRecovery,
     ids: HashMap<String, TopicId>,
     used_files: HashSet<String>,
     warnings: BTreeSet<ImportWarning>,
@@ -4017,22 +4022,22 @@ struct LegacyImportContext<'a> {
     explicit_floating_positions: Vec<(TopicId, Vec2)>,
 }
 
-struct LegacyWebpRecovery {
+struct LegacyPictureRecovery {
     cache: HashMap<String, Option<Vec<u8>>>,
     reserved_bytes: usize,
     reserved_count: usize,
     sheet_count: usize,
 }
 
-impl LegacyWebpRecovery {
+impl LegacyPictureRecovery {
     fn picture(&mut self, path: &str, bytes: &[u8]) -> Option<&[u8]> {
         if !self.cache.contains_key(path) {
-            let png = images::transcode_static_webp(bytes).ok().filter(|png| {
+            let png = transcode_package_picture(bytes).ok().filter(|png| {
                 self.reserved_count
                     .saturating_add(1)
                     .saturating_mul(self.sheet_count)
                     <= MAX_RESOURCES
-                    && webp_expansion_fits(self.reserved_bytes, png.len(), self.sheet_count)
+                    && image_expansion_fits(self.reserved_bytes, png.len(), self.sheet_count)
             });
             if let Some(png) = &png {
                 self.reserved_bytes += png.len();
@@ -4240,12 +4245,11 @@ fn legacy_import_topic(
             let bytes = context.files.get(path)?;
             let (bytes, decoded) = match images::decode(bytes) {
                 Ok(decoded) => (bytes.as_slice(), decoded),
-                Err(_) if image::guess_format(bytes).ok() == Some(image::ImageFormat::WebP) => {
+                Err(_) => {
                     context.warnings.insert(ImportWarning::Resources);
-                    let png = context.webp.picture(path, bytes)?;
+                    let png = context.pictures.picture(path, bytes)?;
                     (png, images::decode(png).ok()?)
                 }
-                Err(_) => return None,
             };
             let component = path.rsplit('/').next().unwrap_or("image");
             let resource = Resource::new(component, decoded.media_type, bytes.to_vec()).ok()?;
@@ -4525,7 +4529,7 @@ fn import_legacy_xml_with_resources(
     let mut imported_sheets = Vec::new();
     let mut warnings = BTreeSet::new();
     let mut used_files = HashSet::new();
-    let mut webp = LegacyWebpRecovery {
+    let mut pictures = LegacyPictureRecovery {
         cache: HashMap::new(),
         reserved_bytes: files
             .values()
@@ -4566,7 +4570,7 @@ fn import_legacy_xml_with_resources(
         let mut context = LegacyImportContext {
             styles: &styles,
             files,
-            webp: &mut webp,
+            pictures: &mut pictures,
             ids: HashMap::new(),
             used_files: HashSet::new(),
             warnings: BTreeSet::new(),
@@ -7396,15 +7400,87 @@ mod tests {
     }
 
     #[test]
+    fn static_gif_pictures_are_recovered_without_flattening_animation() {
+        let pixels = image::RgbaImage::from_pixel(4, 3, image::Rgba([30, 80, 190, 255]));
+        for animated in [false, true] {
+            let mut gif = Vec::new();
+            {
+                let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+                encoder
+                    .encode_frame(image::Frame::new(pixels.clone()))
+                    .unwrap();
+                if animated {
+                    encoder
+                        .encode_frame(image::Frame::new(pixels.clone()))
+                        .unwrap();
+                }
+            }
+            for legacy in [false, true] {
+                let content = if legacy {
+                    (
+                        "content.xml",
+                        br#"<xmap-content><sheet><topic
+                            xlink:href="xap:resources/picture.gif"><title>Root</title>
+                            <image xlink:href="xap:resources/picture.gif"/>
+                            </topic></sheet></xmap-content>"#
+                            .to_vec(),
+                    )
+                } else {
+                    (
+                        "content.json",
+                        serde_json::to_vec(&json!([{"rootTopic": {
+                            "title": "Root",
+                            "href": "xap:resources/picture.gif",
+                            "image": {"src": "xap:resources/picture.gif"}
+                        }}]))
+                        .unwrap(),
+                    )
+                };
+                let archive = make_archive(&[
+                    (content.0.into(), content.1),
+                    ("resources/picture.gif".into(), gif.clone()),
+                ]);
+                let (book, warnings) = import_with_report(&archive).unwrap();
+                assert!(warnings.contains(&ImportWarning::Resources));
+                let sheet = book.active();
+                let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+                assert_eq!(
+                    sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                    gif
+                );
+                if animated {
+                    assert!(sheet.root_topic().image.is_none());
+                } else {
+                    let image = sheet
+                        .resources
+                        .get(sheet.root_topic().image.as_ref().unwrap())
+                        .unwrap();
+                    assert_eq!(image.media_type, "image/png");
+                    assert_eq!(
+                        image::load_from_memory(image.bytes()).unwrap().to_rgba8(),
+                        pixels
+                    );
+                }
+                assert!(matches!(
+                    import(&archive),
+                    Err(IoError::ImportNeedsConfirmation(_))
+                ));
+                book.validate().unwrap();
+                assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+            }
+        }
+    }
+
+    #[test]
     fn webp_expansion_respects_sheet_and_workbook_resource_limits() {
         let one_sheet = MAX_SHEET_RESOURCE_BYTES;
-        assert!(webp_expansion_fits(one_sheet - 1, 1, 1));
-        assert!(!webp_expansion_fits(one_sheet - 1, 2, 1));
+        assert!(image_expansion_fits(one_sheet - 1, 1, 1));
+        assert!(!image_expansion_fits(one_sheet - 1, 2, 1));
         let three_sheets = MAX_WORKBOOK_RESOURCE_BYTES / 3;
-        assert!(webp_expansion_fits(three_sheets - 1, 1, 3));
-        assert!(!webp_expansion_fits(three_sheets - 1, 2, 3));
-        assert!(!webp_expansion_fits(one_sheet + 1, 0, 1));
-        assert!(!webp_expansion_fits(one_sheet + 1, 1, 1));
+        assert!(image_expansion_fits(three_sheets - 1, 1, 3));
+        assert!(!image_expansion_fits(three_sheets - 1, 2, 3));
+        assert!(!image_expansion_fits(one_sheet + 1, 0, 1));
+        assert!(!image_expansion_fits(one_sheet + 1, 1, 1));
     }
 
     #[test]
