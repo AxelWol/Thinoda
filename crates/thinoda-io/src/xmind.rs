@@ -118,19 +118,30 @@ fn supported_static_svg_css(css: &str) -> bool {
     true
 }
 
-fn embedded_svg_png_pixels(href: &str) -> Option<u64> {
+fn embedded_svg_raster_pixels(href: &str) -> Option<u64> {
     use base64::Engine as _;
 
-    let data = href.strip_prefix("data:image/png;base64,")?;
+    let (media_type, data) = if let Some(data) = href.strip_prefix("data:image/png;base64,") {
+        ("image/png", data)
+    } else {
+        ("image/jpeg", href.strip_prefix("data:image/jpeg;base64,")?)
+    };
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .ok()?;
-    let decoder = image::codecs::png::PngDecoder::new(std::io::Cursor::new(&bytes)).ok()?;
-    if decoder.is_apng().ok()? {
+    if media_type == "image/png"
+        && image::codecs::png::PngDecoder::new(std::io::Cursor::new(&bytes))
+            .ok()?
+            .is_apng()
+            .ok()?
+    {
+        return None;
+    }
+    if images::requires_visual_normalization(&bytes).ok()? {
         return None;
     }
     let image = images::decode(&bytes).ok()?;
-    (image.media_type == "image/png").then_some(u64::from(image.width) * u64::from(image.height))
+    (image.media_type == media_type).then_some(u64::from(image.width) * u64::from(image.height))
 }
 
 fn supported_static_svg(bytes: &[u8]) -> bool {
@@ -203,7 +214,7 @@ fn supported_static_svg(bytes: &[u8]) -> bool {
                             _ => return false,
                         }
                         image_href = true;
-                        let Some(pixels) = embedded_svg_png_pixels(&value) else {
+                        let Some(pixels) = embedded_svg_raster_pixels(&value) else {
                             return false;
                         };
                         image_pixels += pixels;
@@ -7787,7 +7798,27 @@ mod tests {
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
         ];
-        for svg in &examples {
+        let mut examples: Vec<_> = examples
+            .into_iter()
+            .map(|svg| (svg, [18, 85, 170, 255]))
+            .collect();
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            10,
+            4,
+            image::Rgb([18, 85, 170]),
+        ))
+        .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+        .unwrap();
+        let jpeg = jpeg.into_inner();
+        let expected = image::load_from_memory(&jpeg)
+            .unwrap()
+            .to_rgba8()
+            .get_pixel(0, 0)
+            .0;
+        let jpeg = base64::engine::general_purpose::STANDARD.encode(jpeg);
+        examples.push((format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/jpeg;base64,{jpeg}"/></svg>"#).into_bytes(), expected));
+        for (svg, expected) in &examples {
             for legacy in [false, true] {
                 let content = if legacy {
                     (
@@ -7823,7 +7854,7 @@ mod tests {
                 assert_eq!(image.media_type, "image/png");
                 let pixels = image::load_from_memory(image.bytes()).unwrap().to_rgba8();
                 assert_eq!(pixels.dimensions(), (10, 4));
-                assert_eq!(pixels.get_pixel(0, 0).0, [18, 85, 170, 255]);
+                assert_eq!(pixels.get_pixel(0, 0).0, *expected);
                 assert_eq!(sheet.root_topic().image_size, Some(Vec2::new(10.0, 4.0)));
                 let attachment = sheet.root_topic().attachment.as_ref().unwrap();
                 assert_eq!(
@@ -7961,6 +7992,40 @@ mod tests {
         chunk.extend_from_slice(&checksum.to_be_bytes());
         animated.splice(33..33, [8u32.to_be_bytes().as_slice(), &chunk].concat());
         assert!(!supported_static_svg(&svg(&element(&animated))));
+    }
+
+    #[test]
+    fn embedded_svg_jpegs_preserve_pixels_and_reject_orientation_changes() {
+        use base64::Engine as _;
+        let mut output = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            4,
+            4,
+            image::Rgb([18, 85, 170]),
+        ))
+        .write_to(&mut output, image::ImageFormat::Jpeg)
+        .unwrap();
+        let jpeg = output.into_inner();
+        let svg = |bytes: &[u8]| {
+            let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+            format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><image width="4" height="4" href="data:image/jpeg;base64,{data}"/></svg>"#).into_bytes()
+        };
+        let png = transcode_package_picture("picture.svg", &svg(&jpeg)).unwrap();
+        let source = image::load_from_memory(&jpeg).unwrap().to_rgba8();
+        let result = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(source, result);
+
+        let exif = [
+            b'E', b'x', b'i', b'f', 0, 0, b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1,
+            0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut rotated = jpeg.clone();
+        let length = u16::try_from(exif.len() + 2).unwrap().to_be_bytes();
+        let segment = [&[0xff, 0xe1][..], &length, &exif].concat();
+        rotated.splice(2..2, segment);
+        assert!(images::requires_visual_normalization(&rotated).unwrap());
+        assert!(!supported_static_svg(&svg(&rotated)));
+        assert!(!supported_static_svg(&svg(&[0x89, b'P', b'N', b'G'])));
     }
 
     #[test]
