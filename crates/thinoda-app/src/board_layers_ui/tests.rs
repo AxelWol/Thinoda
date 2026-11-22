@@ -286,7 +286,10 @@ fn keyboard_panel_movement_stays_inside_the_viewport() {
 #[test]
 fn keyboard_panel_movement_does_not_move_selected_canvas_objects() {
     let mut app = ThinodaApp::headless();
-    app.desktop_ribbon = true;
+    #[cfg(target_os = "windows")]
+    {
+        app.desktop_ribbon = true;
+    }
     app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
     let shape = add_shape(&mut app, 0.0);
     {
