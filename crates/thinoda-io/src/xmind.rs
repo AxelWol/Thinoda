@@ -2763,19 +2763,40 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
     if v.get("taskInfo").is_some_and(|task| !task.is_null()) {
         context.warn(ImportWarning::Markers);
     }
-    if v.get("markers")
-        .and_then(Value::as_array)
-        .is_some_and(|markers| {
-            markers.iter().any(|marker| {
-                marker
-                    .get("markerId")
-                    .or_else(|| marker.get("id"))
-                    .and_then(Value::as_str)
-                    .is_none_or(|id| thinoda_core::markers::find(canonical_marker_id(id)).is_none())
-            })
-        })
-    {
+    if v.get("markers").is_some_and(|value| {
+        value.as_array().map_or_else(
+            || non_empty(Some(value)),
+            |markers| {
+                markers.iter().any(|marker| {
+                    marker
+                        .get("markerId")
+                        .or_else(|| marker.get("id"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|id| {
+                            thinoda_core::markers::find(canonical_marker_id(id)).is_none()
+                        })
+                })
+            },
+        )
+    }) {
         context.warn(ImportWarning::Markers);
+    }
+    if v.get("structureClass").is_some_and(|value| {
+        non_empty(Some(value))
+            && value
+                .as_str()
+                .and_then(Structure::from_xmind_class)
+                .is_none()
+    }) {
+        context.warn(ImportWarning::Formatting);
+    }
+    if v.get("labels").is_some_and(|value| {
+        value.as_array().map_or_else(
+            || non_empty(Some(value)),
+            |labels| labels.iter().any(|label| !label.is_string()),
+        )
+    }) {
+        context.warn(ImportWarning::Other);
     }
     if v.get("href")
         .and_then(Value::as_str)
@@ -2789,11 +2810,20 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
     {
         context.warn(ImportWarning::Other);
     }
-    if let Some(children) = v.get("children").and_then(Value::as_object)
-        && children.iter().any(|(kind, values)| {
-            !TOPIC_COLLECTIONS.contains(&kind.as_str()) && non_empty(Some(values))
-        })
-    {
+    if v.get("children").is_some_and(|children| {
+        children.as_object().map_or_else(
+            || non_empty(Some(children)),
+            |children| {
+                children.iter().any(|(kind, values)| {
+                    non_empty(Some(values))
+                        && (!TOPIC_COLLECTIONS.contains(&kind.as_str())
+                            || values
+                                .as_array()
+                                .is_none_or(|topics| topics.iter().any(|topic| !topic.is_object())))
+                })
+            },
+        )
+    }) {
         context.warn(ImportWarning::Other);
     }
 }
@@ -7359,6 +7389,26 @@ mod tests {
                 ImportWarning::Markers,
             ),
             (
+                json!({"title": "Root", "markers": {"markerId": "priority-1"}}),
+                ImportWarning::Markers,
+            ),
+            (
+                json!({"title": "Root", "structureClass": "org.vendor.future"}),
+                ImportWarning::Formatting,
+            ),
+            (
+                json!({"title": "Root", "labels": ["kept", {"name": "lost"}]}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "children": ["lost"]}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "children": {"attached": {"title": "lost"}}}),
+                ImportWarning::Other,
+            ),
+            (
                 json!({"title": "Root", "taskInfo": {"progress": 0.5}}),
                 ImportWarning::Markers,
             ),
@@ -7386,7 +7436,28 @@ mod tests {
         for (root, expected) in cases {
             let (_, warnings) = content_report(json!({"rootTopic": root.clone()}));
             assert_eq!(warnings, vec![expected], "{root}");
+            let archive = make_archive(&[(
+                "content.json".to_owned(),
+                serde_json::to_vec(&json!([{"rootTopic": root}])).unwrap(),
+            )]);
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&expected)
+            ));
         }
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root", "labels": ["kept", {"name": "lost"}]}
+        }));
+        assert_eq!(book.active().root_topic().labels, ["kept"]);
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {
+                "title": "Root", "markers": [], "labels": [],
+                "children": {}, "structureClass": "org.xmind.ui.map"
+            }
+        }));
+        assert!(warnings.is_empty());
         let (workbook, warnings) = content_report(json!({
             "rootTopic": {"id": "r", "title": "Root"},
             "relationships": [{"end1Id": "r", "end2Id": "missing"}],

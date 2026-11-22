@@ -132,13 +132,13 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Custom width (`customWidth`) | ❌ | — | Map to `style.width` both ways (X2). |
 | Callouts (`children.callout`) | ❌ dropped silently | Text is lost. | Floating topic plus a relationship to its owner; warn under Other (X1). |
 | Detached topics under non-root topics | ❌ dropped silently | — | Floating topic at the given position; warn under Other (X1). |
-| Unknown child collections | ◐ silent, image → error | — | Warn under Other (X1). |
+| Unknown or malformed child collections, malformed labels | ◐ silent, image → error | — | Warn under Other when non-empty or partially unrepresentable. |
 
 ### 2.3 Structure, layout and style
 
 | Capability | Before | Gap | Target |
 |---|---|---|---|
-| Structure classes | ✅ 17 kinds | — | Keep; plain `org.xmind.ui.map` is clockwise. |
+| Structure classes | ✅ 17 kinds | Unknown classes are not represented. | Keep recognized mappings; plain `org.xmind.ui.map` is clockwise. Warn under Formatting for unrecognized non-empty classes. |
 | Unbalanced `right-number` extension | ❌ | The left/right split is lost. | Set `branch_side` on import; write the extension on export (X2). |
 | Role theme and inline style properties | ✅ | Values are not trimmed; numeric `fo:font-weight` only partly parsed. | Trim values, treat `inherited` as unset, weights ≥ 600 are bold (X2). |
 | Line classes `bight`, `fold`, `roundedfold` | ❌ unset | Desktop default theme uses `roundedfold`. | Map to the nearest Thinoda line (X2). |
@@ -292,6 +292,13 @@ must trigger the same source protection as `true`; absent, null and empty
 collections do not. This is a conservative warning, not preservation or
 verified interpretation of these settings. The checked-in desktop samples
 contain both settings and consequently now report Other alongside Formatting.
+
+**Malformed and unknown topic content follow-up:** Unknown structure classes,
+non-array marker data, malformed labels and malformed child collections now
+produce loss warnings. Duck check: valid entries are still imported where
+possible, while a warning protects the source from in-place overwrite; the
+warning does not reconstruct missing content or guarantee exact layout for
+the lenient structure aliases already accepted by Thinoda.
 
 ### 4.1 X2 review critique
 
