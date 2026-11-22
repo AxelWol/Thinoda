@@ -1626,6 +1626,7 @@ fn child_label_style_loss(child: &Style, edge: &Style) -> bool {
         || child.tokens.iter().any(|token| token != "edgeLabel")
         || child.num("fontSize") != Some(CANVAS_LABEL_FONT_SIZE)
         || child.text_color() != edge.text_color()
+        || child.color_appearance_loss("fontColor", "textOpacity")
         || child
             .get("labelBackgroundColor")
             .is_some_and(|value| !value.is_empty())

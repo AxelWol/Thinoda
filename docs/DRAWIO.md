@@ -351,6 +351,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Warn when hidden or empty edge-child vertices are skipped, retaining their connector and protecting the source
 - [x] Warn when connector-label children carry collapsed state, terminals or geometry not represented by label placement
 - [x] Warn when a positioned connector-label child specifies an unsupported background color
+- [x] Warn when a positioned connector-label child's color or text opacity cannot be interpreted faithfully
 - [x] Preserve supported inline runs and list paragraphs when folding absolute connector child labels, within text and formatting limits
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
@@ -1472,6 +1473,12 @@ colors now produce a formatting warning because extra connector labels cannot
 store their own backgrounds. Duck check: this conservatively warns even when a
 specified color happens to match the canvas background; the label remains
 editable, but the specified background is not retained.
+
+**D10 edge-label text opacity diagnostics (partial).** Positioned child
+labels now apply the same color and opacity loss checks as other cells, so
+invalid or out-of-range values cannot silently become an ordinary opaque
+label. Duck check: the warning protects the source but does not preserve the
+unrecognized source value on the label.
 
 **D10 absolute edge-child rich text (partial).** Folding an absolute child
 into its connector label now retains supported inline styles and list
