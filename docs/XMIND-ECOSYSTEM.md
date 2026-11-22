@@ -1,4 +1,4 @@
-_Last updated: 2026-11-19 12:53:59 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-22 14:45:55 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind ecosystem research, gap analysis and phase plan
 
