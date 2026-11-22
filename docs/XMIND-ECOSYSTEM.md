@@ -420,6 +420,8 @@ undocumented XMind payload.
 - [x] Recover a bounded static SVG subset in modern and legacy packages,
   rasterizing to PNG with a resource-loss warning and preserving shared
   attachments.
+- [x] Recover SVG pictures containing embedded static PNG data URLs, with
+  per-picture limits on image count and total decoded pixels.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -453,9 +455,11 @@ size up to 1024 pixels on the longest side and never fetches external images.
 The XMind subset permits simple static CSS and local fragment references
 (for example gradients), including presentation attributes such as `fill` and
 `filter`. It validates those attributes as well as stylesheets so external URLs
-and CSS escapes cannot silently bypass the conversion guard. It rejects image
-elements, embedded or external
-image references, external CSS URLs, escapes, imports, variables and animation,
+and CSS escapes cannot silently bypass the conversion guard. Embedded image
+elements are limited to 16 base64 PNGs and four megapixels in total; APNG,
+invalid images and external references are rejected. SVGs combining embedded
+images with `use` are rejected to avoid unbounded image replication. It also
+rejects external CSS URLs, escapes, imports, variables and animation,
 scripts, foreign objects, animation elements, external links,
 SVGZ, malformed XML and excessive XML events rather than silently dropping
 their content. More SVG features, original vector
