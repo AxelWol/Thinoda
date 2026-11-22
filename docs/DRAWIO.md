@@ -216,12 +216,14 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
-### D6 — Ownership and passthrough envelope ✅
+### D6 — Ownership and passthrough envelope
 
-- [x] Source ids, unknown style keys and attributes kept per object and sheet (architecture §3.1.1), with copy/delete semantics and diagnostics
-- [x] Round-trip tests for unknown data through native save, clipboard and draw.io export
+- [x] Retain source IDs and supported passthrough data for represented objects and pages, with copy/delete semantics and diagnostics
+- [x] Round-trip tests for supported passthrough data through native save, clipboard and draw.io export
+- [ ] Preserve unmappable cells as visible, selectable opaque objects and retain unsupported workbook/page XML under bounded ownership rules
+- [ ] Preserve a source ID on a completed, same-document cut exactly once using the provenance contract in architecture §3.1.1
 
-### D7 — Connectors, links and data ✅
+### D7 — Connectors, links and data
 
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [x] Line jumps (arc, gap, sharp, line)
@@ -233,12 +235,14 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Object data model (link, tags, properties, placeholder flag), gates, draw.io round trip, inspector "Data" section, hover tooltip
   - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
   - [x] Page links (`data:page/id,`) navigate to the matching sheet
+- [ ] Named ports, remaining draw.io connection point sets and keyboard traversal between individual ports
 
-### D8 — Layers and tables ✅
+### D8 — Layers and tables
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
 - [x] Show at least six layers in a movable Layers dialog and remember its last position
+- [ ] Make Layers dialog repositioning keyboard-accessible
 
 **Rubber-duck critique:** Constraining the panel to the drawing canvas left too
 little room for six rows beneath the ribbon at the minimum native window size,
@@ -349,13 +353,15 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
-### D11 — Automatic layouts ✅
+### D11 — Automatic layouts
 
 - [x] Tree, flow, radial, circle and organic layouts for selected board objects
   - [x] Pure, deterministic, bounded core algorithms (≤ 500 items, ≤ 5,000 connections) with a guaranteed non-overlap pass and a fixed top-left anchor
   - [x] One undoable board command per layout in the Board menu, context-menu Layout submenu and command palette, translated in all locales
   - [x] Groups, selected containers with their descendants and floating mind-map branches move rigidly; locked items are skipped as Align does
   - [x] Bends of unlocked connectors between items that moved apart are reset; locked connectors keep theirs
+- [ ] Support draw.io's remaining layout algorithms and options, including ELK and org-chart variants
+- [ ] Route edges as part of automatic layout, preserving supported attachment and waypoint semantics
 
 **D11 rubber-duck critique.** A pre-implementation review found five
 blocking traps, all addressed: a container and its selected child were
@@ -377,7 +383,7 @@ place items, not edges, so routes and fixed ports are unchanged and long
 flow edges are not given virtual bends; exactly coincident items fall back
 to selection order; each moved item is applied with one sheet move, so very
 large selections may be slow even within the 500-item bound. draw.io's ELK
-options, org-chart variants and edge routing are out of scope.
+options, org-chart variants and edge routing remain open.
 
 ### D12 — Insert tools and editors
 
