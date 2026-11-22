@@ -16,6 +16,19 @@ pub(crate) use pptx::editable_slide;
 
 /// Rasterize bounded SVG without fetching external resources.
 pub(crate) fn rasterize_svg(svg: &[u8], display: Option<Vec2>) -> Option<(Vec<u8>, Vec2)> {
+    rasterize_svg_with_static_gifs(svg, display, false)
+}
+
+/// Rasterize validated XMind SVG, compositing static GIFs before rendering.
+pub(crate) fn rasterize_xmind_svg(svg: &[u8]) -> Option<(Vec<u8>, Vec2)> {
+    rasterize_svg_with_static_gifs(svg, None, true)
+}
+
+fn rasterize_svg_with_static_gifs(
+    svg: &[u8],
+    display: Option<Vec2>,
+    normalize_gifs: bool,
+) -> Option<(Vec<u8>, Vec2)> {
     use image::ImageEncoder;
     use resvg::{tiny_skia, usvg};
 
@@ -28,6 +41,17 @@ pub(crate) fn rasterize_svg(svg: &[u8], display: Option<Vec2>) -> Option<(Vec<u8
         ..Default::default()
     };
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    if normalize_gifs {
+        let default_resolver = usvg::ImageHrefResolver::default_data_resolver();
+        options.image_href_resolver.resolve_data = Box::new(move |mime, bytes, options| {
+            if mime == "image/gif" {
+                let png = thinoda_core::images::transcode_static_gif(&bytes).ok()?;
+                Some(usvg::ImageKind::PNG(std::sync::Arc::new(png)))
+            } else {
+                default_resolver(mime, bytes, options)
+            }
+        });
+    }
     let tree = usvg::Tree::from_data(svg, &options).ok()?;
     let size = tree.size();
     let longest = size.width().max(size.height());
