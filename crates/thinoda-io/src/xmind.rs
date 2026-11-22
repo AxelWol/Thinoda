@@ -76,10 +76,55 @@ fn image_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize)
 }
 
 fn supported_static_svg_css(css: &str) -> bool {
-    let css = css.to_ascii_lowercase();
-    if css.contains(['@', '\\'])
-        || css.contains("/*")
-        || css.contains("*/")
+    if css.contains('\\') {
+        return false;
+    }
+    let mut normalized = String::with_capacity(css.len());
+    let mut offset = 0;
+    let mut quote = None;
+    let mut parentheses = 0usize;
+    let mut previous = None;
+    while offset < css.len() {
+        let rest = &css[offset..];
+        if quote.is_none() && rest.starts_with("/*") {
+            if parentheses != 0 || previous.is_some_and(|ch| !matches!(ch, '{' | '}' | ';')) {
+                return false;
+            }
+            let Some(end) = rest[2..].find("*/") else {
+                return false;
+            };
+            offset += end + 4;
+            continue;
+        }
+        if quote.is_none() && rest.starts_with("*/") {
+            return false;
+        }
+        let Some(ch) = rest.chars().next() else {
+            return false;
+        };
+        normalized.push(ch);
+        offset += ch.len_utf8();
+        if !ch.is_whitespace() {
+            previous = Some(ch);
+        }
+        if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+        } else if quote.is_none() && ch == '(' {
+            parentheses += 1;
+        } else if quote.is_none() && ch == ')' {
+            let Some(depth) = parentheses.checked_sub(1) else {
+                return false;
+            };
+            parentheses = depth;
+        }
+    }
+    if quote.is_some() || parentheses != 0 {
+        return false;
+    }
+    let css = normalized.to_ascii_lowercase();
+    if css.contains('@')
         || css.contains("animation")
         || css.contains("transition")
         || css.contains("var(")
@@ -7794,6 +7839,8 @@ mod tests {
         let examples = [
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="#1255aa"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style><![CDATA[.box { fill: #1255aa; }]]></style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>/* Generated */ .box { /* Fill */ fill: #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="/* Fill */ fill:#1255aa"/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
@@ -7879,6 +7926,9 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>@keyframes move {}</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { ani<!-- split -->mation: move 1s; }</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { ani&#109;ation: move 1s; }</style></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { anima/**/tion: move 1s; }</style></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { fill: url(/**/https://example.com/a); }</style></svg>"#,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>/* unclosed .box { fill: red; }</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.box { fill: url(https://example.com/a); }</style></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="url(https://example.com/a)"/></svg>"#,
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" filter="u\72l(https://example.com/a)"/></svg>"#,

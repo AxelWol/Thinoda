@@ -422,6 +422,8 @@ undocumented XMind payload.
   attachments.
 - [x] Recover SVG pictures containing embedded static PNG/JPEG data URLs, with
   per-picture limits on image count and total decoded pixels.
+- [x] Recover static SVG stylesheets and inline styles with comments at rule or
+  declaration boundaries, while rejecting comments that could obscure tokens.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -454,8 +456,10 @@ protection as GIF/WebP conversion. A shared bounded renderer preserves intrinsic
 size up to 1024 pixels on the longest side and never fetches external images.
 The XMind subset permits simple static CSS and local fragment references
 (for example gradients), including presentation attributes such as `fill` and
-`filter`. It validates those attributes as well as stylesheets so external URLs
-and CSS escapes cannot silently bypass the conversion guard. Embedded image
+`filter`. Rule- and declaration-boundary CSS comments are accepted; comments
+inside tokens or functions are rejected. Validation examines the uncommented
+CSS so external URLs and animation cannot hide behind comments, and rejects CSS
+escapes. Embedded image
 elements are limited to 16 base64 PNG/JPEG images and four megapixels in total; APNG,
 invalid images and external references are rejected. Image links must use
 unqualified `href` or the XLink namespace, including its alternate prefixes.
