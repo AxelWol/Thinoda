@@ -3434,11 +3434,16 @@ impl<'a> PageImport<'a> {
         }
         self.paint_order.push(index);
         if cell.edge {
+            let mut hidden_child = false;
             for &child in &self.children[index] {
                 // Edge labels are child vertices; they are folded into the edge.
                 if cells[child].vertex {
                     self.visited[child] = true;
+                    hidden_child |= !cells[child].visible;
                 }
+            }
+            if hidden_child {
+                self.warn(ImportWarning::Other);
             }
             self.edge(index, context, false);
             return;
@@ -4973,6 +4978,7 @@ impl<'a> PageImport<'a> {
                         .as_ref()
                         .is_none_or(|rich| rich.paragraphs.is_empty())
                 {
+                    self.warn(ImportWarning::Other);
                     continue;
                 }
                 if child.geometry.relative && !child.geometry.invalid_frame {
