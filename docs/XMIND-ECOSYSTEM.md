@@ -110,7 +110,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Ancillary manifest entries (thumbnails) | ✅ | — | Keep (#136). |
 | Missing `manifest.json` with images | ❌ hard error | Third-party writers omit it. | Use the archive inventory (X1). |
 | Resources present but unreferenced | ❌ hard error | Note images and attachments leave bytes that the map does not reference. | Ignore them (still path- and size-checked) and record a warning (X1). |
-| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | The whole map fails. | Skip the picture and warn under Resources (X1). |
+| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | GIF, SVG and animated WebP remain unsupported. | Static WebP pictures in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
 | Attachment topics (`href: xap:resources/...`) | ❌ verbatim inert link | — | Import as an opaque Thinoda attachment (X2). |
 | Other `attachment(s)`, `resourceRefs`, note images | ❌ hard error | The whole map fails. | Drop the payload and warn under Resources (X1). |
 | Import warnings and consent | ❌ none for XMind | Lossy conversions are silent or fatal. | `xmind::import_with_report` plus the existing localized consent dialog (X1). |
@@ -399,3 +399,37 @@ The resulting support is intentionally evidence-bounded: Thinoda robustly import
 the reviewed current and legacy XMind structures and supports a documented
 XMindMark subset, but does not claim exhaustive coverage of every future or
 undocumented XMind payload.
+
+### 4.7 Static WebP picture recovery: review and remaining work
+
+- [x] Recover bounded static WebP pictures in modern `content.json` packages as
+  PNG, preserving decoded pixels and applying orientation. Report Resources
+  loss and require conversion consent because original format and metadata are
+  not preserved.
+- [x] Limit input and output to 8 MiB, dimensions to 4096 per side and
+  4 megapixels, and decoder allocations. Reserve package bytes and resource
+  counts conservatively across sheets so recovered images do not displace
+  existing resources.
+- [x] When a WebP resource is also an attachment, retain its original opaque
+  bytes and use a separate PNG for the picture. If the extra resource would
+  exceed a budget, retain the attachment and report the skipped picture.
+- [x] Recover static WebP pictures in legacy `content.xml`, retaining any
+  original attachment and caching conversions across sheets.
+- [ ] Preserve WebP metadata and animation; support GIF and SVG pictures;
+  validate interoperability in installed XMind.
+
+**Rubber-duck critique:** Converting a picture is not a lossless package
+round-trip even when its pixels survive, so warning and source protection are
+mandatory. Animated or malformed images are skipped, not flattened. Expansion
+uses the whole package as a reservation for each sheet; this can skip pictures
+that a more precise per-sheet calculation could fit, but avoids evicting other
+resources or making previously valid resource budgets fail. Shared
+picture/attachment paths use separate visual and opaque resources and charge
+both against those budgets; this may conservatively skip a recoverable picture
+near a limit but never replaces the attachment.
+
+The legacy parser reserves the original package plus each converted PNG for
+every sheet, even when a picture is not also an attachment. This is intentionally
+conservative and can skip pictures near a limit; cached successes and failures
+avoid repeated transcoding of the same source. Legacy and modern conversion
+both report Resources loss and never silently flatten animated WebP.

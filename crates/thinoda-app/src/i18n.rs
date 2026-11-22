@@ -1924,6 +1924,10 @@ const DE: &[(&str, &str)] = &[
         "GIF reduces colors and supports only fully transparent or opaque pixels.",
         "GIF reduziert Farben und unterstützt nur vollständig transparente oder undurchsichtige Pixel.",
     ),
+    (
+        "JPEG cannot preserve transparency; the sheet background will be used.",
+        "JPEG unterstützt keine Transparenz; der Blatthintergrund wird verwendet.",
+    ),
     ("PDF", "PDF"),
     ("Word", "Word"),
     ("PowerPoint", "PowerPoint"),

@@ -127,6 +127,52 @@ impl Write for LimitedImageOutput {
     }
 }
 
+/// Converts one bounded, non-animated WebP picture to the PNG storage format.
+pub fn transcode_static_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
+        return Err("image must contain 1 byte to 8 MiB".into());
+    }
+    let mut decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))
+        .map_err(|e| format!("invalid WebP header: {e}"))?;
+    if decoder.has_animation() {
+        return Err("animated WebP images are not supported".into());
+    }
+    let (width, height) = decoder.dimensions();
+    if width == 0
+        || height == 0
+        || width > MAX_DIMENSION
+        || height > MAX_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_PIXELS
+    {
+        return Err("image exceeds 4096 pixels per side or 4 megapixels".into());
+    }
+    let orientation = decoder
+        .orientation()
+        .map_err(|e| format!("invalid image metadata: {e}"))?;
+    let mut image = reader(bytes, ImageFormat::WebP)
+        .decode()
+        .map_err(|e| format!("invalid WebP image: {e}"))?;
+    image.apply_orientation(orientation);
+    let image = image.into_rgba8();
+    let mut output = LimitedImageOutput {
+        bytes: Vec::new(),
+        limit: MAX_RESOURCE_BYTES,
+        overflowed: false,
+    };
+    image::codecs::png::PngEncoder::new(&mut output)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("could not convert WebP image: {e}"))?;
+    if output.overflowed {
+        return Err("converted image exceeds the 8 MiB resource limit".into());
+    }
+    Ok(output.bytes)
+}
+
 /// Whether visual consumers need pixels normalized to avoid differing EXIF handling.
 pub fn requires_visual_normalization(bytes: &[u8]) -> Result<bool, String> {
     Ok(inspect(bytes)?.orientation != Orientation::NoTransforms)
@@ -289,6 +335,49 @@ mod tests {
         .write_to(&mut bytes, format)
         .unwrap();
         bytes.into_inner()
+    }
+
+    #[test]
+    fn static_webp_conversion_preserves_pixels_and_rejects_bad_input() {
+        let webp = encoded(ImageFormat::WebP);
+        let original = image::load_from_memory(&webp).unwrap().to_rgba8();
+        let png = transcode_static_webp(&webp).unwrap();
+        assert_eq!(image::guess_format(&png).unwrap(), ImageFormat::Png);
+        assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8(), original);
+        assert!(transcode_static_webp(b"not webp").is_err());
+        assert!(transcode_static_webp(&vec![0; MAX_RESOURCE_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn animated_webp_is_not_silently_flattened() {
+        let still = encoded(ImageFormat::WebP);
+        let mut frame = vec![0; 16];
+        frame[6] = 39;
+        frame[9] = 19;
+        frame[12] = 1;
+        frame.extend_from_slice(&still[12..]);
+        let mut payload = b"WEBPVP8X".to_vec();
+        payload.extend_from_slice(&10u32.to_le_bytes());
+        payload.extend_from_slice(&[2, 0, 0, 0, 39, 0, 0, 19, 0, 0]);
+        payload.extend_from_slice(b"ANIM");
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&[0; 6]);
+        payload.extend_from_slice(b"ANMF");
+        payload.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&frame);
+        if !frame.len().is_multiple_of(2) {
+            payload.push(0);
+        }
+        let mut webp = b"RIFF".to_vec();
+        webp.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        webp.extend_from_slice(&payload);
+        let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(&webp)).unwrap();
+        assert!(decoder.has_animation());
+        assert!(
+            transcode_static_webp(&webp)
+                .unwrap_err()
+                .contains("animated")
+        );
     }
 
     fn oriented_image(format: ImageFormat, orientation: u8) -> Vec<u8> {

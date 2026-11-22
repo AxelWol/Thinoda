@@ -308,6 +308,8 @@ pub enum ExportLoss {
     BoardSettingsDropped,
     /// GIF uses a limited palette and binary transparency.
     GifPaletteAndTransparency,
+    /// JPEG cannot preserve the requested transparent background.
+    JpegTransparencyDropped,
     /// Formatted card titles are not supported by this export target.
     InlineTextDropped(usize),
     /// Mind-map topics, branches and annotations are written as unlinked drawn
@@ -625,6 +627,9 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     }
     if format == Format::Gif {
         out.push(ExportLoss::GifPaletteAndTransparency);
+    }
+    if format == Format::Jpeg && opts.transparent {
+        out.push(ExportLoss::JpegTransparencyDropped);
     }
     out
 }
