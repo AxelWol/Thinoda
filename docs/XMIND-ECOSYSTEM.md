@@ -407,9 +407,9 @@ undocumented XMind payload.
   loss and require conversion consent because original format and metadata are
   not preserved.
 - [x] Limit input and output to 8 MiB, dimensions to 4096 per side and
-  4 megapixels, and decoder allocations. Reserve package bytes and resource
-  counts conservatively across sheets so recovered images do not displace
-  existing resources.
+  4 megapixels, and decoder allocations. Count all source package resources
+  against the archive limit and reserve per-sheet referenced bytes and resource
+  counts so recovered images do not displace existing resources.
 - [x] When a WebP resource is also an attachment, retain its original opaque
   bytes and use a separate PNG for the picture. If the extra resource would
   exceed a budget, retain the attachment and report the skipped picture.
@@ -422,13 +422,13 @@ undocumented XMind payload.
 
 **Rubber-duck critique:** Converting a picture is not a lossless package
 round-trip even when its pixels survive, so warning and source protection are
-mandatory. Animated or malformed images are skipped, not flattened. Expansion
-uses the whole package as a reservation for each sheet; this can skip pictures
-that a more precise per-sheet calculation could fit, but avoids evicting other
-resources or making previously valid resource budgets fail. Shared
+mandatory. Animated or malformed images are skipped, not flattened. Modern
+packages reserve the source paths each sheet references and charge each
+conversion to the sheets using it, avoiding the previous assumption that every
+sheet used every file. Unsupported and duplicate source paths still count
+conservatively, so some pictures near a limit may be skipped. Shared
 picture/attachment paths use separate visual and opaque resources and charge
-both against those budgets; this may conservatively skip a recoverable picture
-near a limit but never replaces the attachment.
+both where a sheet uses both; the attachment is never replaced.
 
 The legacy parser reserves the original package plus each converted PNG for
 every sheet, even when a picture is not also an attachment. This is intentionally

@@ -201,6 +201,95 @@ struct ResourceReferences {
     warnings: BTreeSet<ImportWarning>,
 }
 
+struct SheetResourceReservation {
+    references: ResourceReferences,
+    bytes: usize,
+    count: usize,
+}
+
+struct PackageRecoveryBudget {
+    sheets: Vec<SheetResourceReservation>,
+    workbook_bytes: usize,
+    workbook_count: usize,
+}
+
+impl PackageRecoveryBudget {
+    fn new(references: Vec<ResourceReferences>, sizes: &HashMap<String, usize>) -> Self {
+        let sheets: Vec<_> = references
+            .into_iter()
+            .map(|references| {
+                let mut bytes = 0usize;
+                let mut count = 0usize;
+                for path in references.images.union(&references.attachments) {
+                    if let Some(size) = sizes.get(path) {
+                        bytes = bytes.saturating_add(*size);
+                        count += 1;
+                    }
+                }
+                SheetResourceReservation {
+                    references,
+                    bytes,
+                    count,
+                }
+            })
+            .collect();
+        let workbook_bytes = sheets
+            .iter()
+            .fold(0usize, |total, sheet| total.saturating_add(sheet.bytes));
+        let workbook_count = sheets
+            .iter()
+            .fold(0usize, |total, sheet| total.saturating_add(sheet.count));
+        Self {
+            sheets,
+            workbook_bytes,
+            workbook_count,
+        }
+    }
+
+    fn reserve_picture(&mut self, path: &str, original: usize, converted: usize) -> bool {
+        let mut extra_bytes = 0usize;
+        let mut extra_count = 0usize;
+        for sheet in &self.sheets {
+            if !sheet.references.images.contains(path) {
+                continue;
+            }
+            let shared = sheet.references.attachments.contains(path);
+            let extra = if shared {
+                converted
+            } else {
+                converted.saturating_sub(original)
+            };
+            let count = usize::from(shared);
+            if sheet.bytes.saturating_add(extra) > MAX_SHEET_RESOURCE_BYTES
+                || sheet.count.saturating_add(count) > MAX_RESOURCES
+            {
+                return false;
+            }
+            extra_bytes = extra_bytes.saturating_add(extra);
+            extra_count = extra_count.saturating_add(count);
+        }
+        if self.workbook_bytes.saturating_add(extra_bytes) > MAX_WORKBOOK_RESOURCE_BYTES
+            || self.workbook_count.saturating_add(extra_count) > MAX_RESOURCES
+        {
+            return false;
+        }
+        for sheet in &mut self.sheets {
+            if sheet.references.images.contains(path) {
+                let shared = sheet.references.attachments.contains(path);
+                sheet.bytes += if shared {
+                    converted
+                } else {
+                    converted.saturating_sub(original)
+                };
+                sheet.count += usize::from(shared);
+            }
+        }
+        self.workbook_bytes += extra_bytes;
+        self.workbook_count += extra_count;
+        true
+    }
+}
+
 /// One traversal over every imported topic collection. Unsafe package references
 /// are fatal; everything else that cannot be imported is reported.
 fn collect_topic_resource_paths(
@@ -384,13 +473,25 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     names: &BTreeSet<String>,
 ) -> Result<(PackageResources, BTreeSet<ImportWarning>), IoError> {
     let mut references = ResourceReferences::default();
+    let mut sheet_references = Vec::new();
     for sheet in content
         .as_array()
         .ok_or_else(|| IoError::Invalid("XMind content must be an array".into()))?
     {
+        let mut sheet_resources = ResourceReferences::default();
         if let Some(root) = sheet.get("rootTopic") {
-            collect_topic_resource_paths(root, &mut references, 0)?;
+            collect_topic_resource_paths(root, &mut sheet_resources, 0)?;
         }
+        references
+            .images
+            .extend(sheet_resources.images.iter().cloned());
+        references
+            .attachments
+            .extend(sheet_resources.attachments.iter().cloned());
+        references
+            .warnings
+            .extend(sheet_resources.warnings.iter().copied());
+        sheet_references.push(sheet_resources);
     }
     let ResourceReferences {
         images: referenced,
@@ -399,6 +500,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     } = references;
 
     let mut available = BTreeSet::new();
+    let mut sizes = HashMap::new();
     let mut package_bytes = 0u64;
     for path in names {
         let Some(component) = path.strip_prefix("resources/") else {
@@ -412,6 +514,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
         match image_component(&format!("xap:resources/{component}")) {
             Ok((_, expected)) if expected == *path => {
                 available.insert(path.clone());
+                sizes.insert(path.clone(), archive.by_name(path)?.size() as usize);
             }
             _ => {
                 warnings.insert(ImportWarning::Resources);
@@ -437,9 +540,7 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
     }
 
     let mut resources = PackageResources::default();
-    let mut resolved_bytes = package_bytes as usize;
-    let mut additional_images = 0usize;
-    let sheet_count = content.as_array().map_or(0, Vec::len);
+    let mut budget = PackageRecoveryBudget::new(sheet_references, &sizes);
     for path in referenced {
         if !available.contains(&path) {
             warnings.insert(ImportWarning::Resources);
@@ -455,27 +556,9 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
                 let Ok(png) = transcode_package_picture(&bytes) else {
                     continue;
                 };
-                let shared = attachments.contains(&path);
-                let extra = if shared {
-                    png.len()
-                } else {
-                    png.len().saturating_sub(bytes.len())
-                };
-                let additional = usize::from(shared);
-                // Reserve the entire package for every sheet. This conservative
-                // bound prevents conversion from displacing existing resources.
-                if available
-                    .len()
-                    .saturating_add(additional_images)
-                    .saturating_add(additional)
-                    .saturating_mul(sheet_count)
-                    > MAX_RESOURCES
-                    || !image_expansion_fits(resolved_bytes, extra, sheet_count)
-                {
+                if !budget.reserve_picture(&path, bytes.len(), png.len()) {
                     continue;
                 }
-                resolved_bytes += extra;
-                additional_images += additional;
                 bytes = png;
                 converted = true;
                 "image/png"
@@ -7301,19 +7384,28 @@ mod tests {
         .write_to(&mut webp, image::ImageFormat::WebP)
         .unwrap();
         let webp = webp.into_inner();
+        let children: Vec<_> = (0..MAX_RESOURCES - 1)
+            .map(|i| json!({"title": format!("File {i}"), "href": format!("xap:resources/file-{i}")}))
+            .collect();
         let mut entries = vec![
             (
                 "content.json".into(),
                 serde_json::to_vec(&json!([{"rootTopic": {
                     "title": "Root",
                     "href": "xap:resources/picture.webp",
-                    "image": {"src": "xap:resources/picture.webp"}
+                    "image": {"src": "xap:resources/picture.webp"},
+                    "children": {"attached": children}
                 }}]))
                 .unwrap(),
             ),
             ("resources/picture.webp".into(), webp.clone()),
         ];
-        entries.extend((0..MAX_RESOURCES - 1).map(|i| (format!("resources/unused-{i}"), vec![1])));
+        entries.extend((0..MAX_RESOURCES - 1).map(|i| {
+            (
+                format!("resources/file-{i}"),
+                format!("file-{i}").into_bytes(),
+            )
+        }));
         let (book, warnings) = import_with_report(&make_archive(&entries)).unwrap();
         assert_eq!(warnings, vec![ImportWarning::Resources]);
         let sheet = book.active();
@@ -7484,6 +7576,39 @@ mod tests {
     }
 
     #[test]
+    fn modern_picture_budget_enforces_sheet_and_workbook_byte_boundaries() {
+        let mut shared = ResourceReferences::default();
+        shared.images.insert("picture".into());
+        shared.attachments.insert("picture".into());
+        shared.attachments.insert("filler".into());
+        let sizes = HashMap::from([
+            ("picture".into(), 10),
+            ("filler".into(), MAX_SHEET_RESOURCE_BYTES - 20),
+        ]);
+        let mut budget = PackageRecoveryBudget::new(vec![shared], &sizes);
+        assert!(!budget.reserve_picture("picture", 10, 11));
+        assert!(budget.reserve_picture("picture", 10, 10));
+
+        let mut first = ResourceReferences::default();
+        first.images.insert("picture".into());
+        first.attachments.insert("first".into());
+        let mut second = ResourceReferences::default();
+        second.attachments.insert("second".into());
+        let mut third = ResourceReferences::default();
+        third.attachments.insert("third".into());
+        let half = MAX_SHEET_RESOURCE_BYTES / 2;
+        let sizes = HashMap::from([
+            ("picture".into(), 10),
+            ("first".into(), MAX_SHEET_RESOURCE_BYTES - 11),
+            ("second".into(), half + 1),
+            ("third".into(), half),
+        ]);
+        let mut budget = PackageRecoveryBudget::new(vec![first, second, third], &sizes);
+        assert!(!budget.reserve_picture("picture", 10, 11));
+        assert!(budget.reserve_picture("picture", 10, 10));
+    }
+
+    #[test]
     fn webp_recovery_does_not_exceed_workbook_resource_count() {
         let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
         let picture = image::DynamicImage::ImageRgba8(pixels);
@@ -7522,6 +7647,52 @@ mod tests {
                     .image
                     .is_none()
             );
+        }
+        book.validate().unwrap();
+    }
+
+    #[test]
+    fn webp_recovery_counts_only_resources_referenced_by_each_sheet() {
+        let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
+        let picture = image::DynamicImage::ImageRgba8(pixels);
+        let mut png = Cursor::new(Vec::new());
+        let mut webp = Cursor::new(Vec::new());
+        picture.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        picture
+            .write_to(&mut webp, image::ImageFormat::WebP)
+            .unwrap();
+        let png = png.into_inner();
+        let sheets: Vec<_> = (0..65)
+            .map(|index| {
+                let path = if index == 0 {
+                    "picture.webp"
+                } else {
+                    "picture.png"
+                };
+                json!({"rootTopic": {
+                    "title": "Root",
+                    "image": {"src": format!("xap:resources/{path}")}
+                }})
+            })
+            .collect();
+        let archive = make_archive(&[
+            ("content.json".into(), serde_json::to_vec(&sheets).unwrap()),
+            ("resources/picture.png".into(), png.clone()),
+            ("resources/picture.webp".into(), webp.into_inner()),
+        ]);
+        let (book, warnings) = import_with_report(&archive).unwrap();
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(book.sheets.len(), 65);
+        for (index, sheet) in book.sheets.iter().enumerate() {
+            let resource = sheet
+                .resources
+                .get(sheet.root_topic().image.as_ref().unwrap())
+                .unwrap();
+            if index != 0 {
+                assert_eq!(resource.bytes(), png);
+            } else {
+                assert_eq!(resource.media_type, "image/png");
+            }
         }
         book.validate().unwrap();
     }
