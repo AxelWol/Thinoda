@@ -347,6 +347,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
+- [x] Warn when nested non-vertex structural cells are flattened, retaining their representable descendants and protecting the source
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
 - [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
@@ -1441,6 +1442,13 @@ the current model discards, including geometry, custom styles and regenerated
 IDs, now produce import warnings; normalized names are disclosed as well.
 Duck check: these warnings do not preserve structural data and are not an
 exhaustive semantic audit. Complete layer and source fidelity remain open.
+
+**D10 nested structural cells (partial).** Nested non-vertex cells are
+flattened while their children are imported, so even an empty cell loses its
+source identity and hierarchy. Import now reports this loss and requires the
+existing conversion consent; tests also check that the original file cannot be
+overwritten. This is a conservative warning, not opaque-cell preservation or
+permission to save in place.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot

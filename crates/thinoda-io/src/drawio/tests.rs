@@ -10853,6 +10853,18 @@ fn drawio_import_reports_unrepresented_root_and_layer_data() {
 }
 
 #[test]
+fn drawio_import_reports_flattened_nested_structural_cells() {
+    for metadata in ["", r#" value="hidden data""#, r#" style="custom=1;""#] {
+        let xml = page(&format!(
+            r#"<mxCell id="structural" parent="1"{metadata}/><mxCell id="shape" value="Kept" vertex="1" parent="structural"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Other), "{xml}");
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Kept");
+    }
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,

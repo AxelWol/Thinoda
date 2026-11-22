@@ -3444,6 +3444,7 @@ impl<'a> PageImport<'a> {
             return;
         }
         if !cell.vertex {
+            self.warn(ImportWarning::Other);
             for child in self.children[index].clone() {
                 self.visit(child, context, depth + 1);
             }

@@ -2110,6 +2110,10 @@ mod tests {
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="layer" value="Layer" style="custom=1;" parent="0"/></root></mxGraphModel></diagram></mxfile>"#,
             ),
             (
+                "nested-structural",
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="s" parent="1" value="Hidden data"/><mxCell id="a" vertex="1" parent="s"><mxGeometry width="60" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#,
+            ),
+            (
                 "container-link",
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject id="lane" label="Lane" link="https://example.com"><mxCell style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell></UserObject></root></mxGraphModel></diagram></mxfile>"#,
             ),
