@@ -236,6 +236,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
   - [x] Page links (`data:page/id,`) navigate to the matching sheet
 - [ ] Named ports, remaining draw.io connection point sets and keyboard traversal between individual ports
+  - [x] Cycle supported connection points for a focused connector endpoint with Home/End, including stencil shapes
+  - [ ] Expose named ports and Tab traversal between individual ports
 
 ### D8 — Layers and tables
 
