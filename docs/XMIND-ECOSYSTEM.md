@@ -407,8 +407,9 @@ undocumented XMind payload.
   loss and require conversion consent because original format and metadata are
   not preserved.
 - [x] Limit input and output to 8 MiB, dimensions to 4096 per side and
-  4 megapixels, and decoder allocations. Account conservatively for expansion
-  across sheets so converted images do not displace existing resources.
+  4 megapixels, and decoder allocations. Reserve package bytes and resource
+  counts conservatively across sheets so recovered images do not displace
+  existing resources.
 - [x] Preserve original opaque bytes when a resource is also an attachment;
   in that case its WebP picture is skipped and reported rather than replacing
   the attachment.

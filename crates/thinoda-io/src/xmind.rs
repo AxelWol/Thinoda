@@ -68,7 +68,7 @@ type PackageResources = HashMap<String, Resource>;
 
 fn webp_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize) -> bool {
     let budget = MAX_SHEET_RESOURCE_BYTES.min(MAX_WORKBOOK_RESOURCE_BYTES / sheet_count.max(1));
-    extra == 0 || extra <= budget.saturating_sub(resolved_bytes)
+    resolved_bytes <= budget && extra <= budget - resolved_bytes
 }
 
 const ENCRYPTED_PACKAGE_ERROR: &str = "This XMind file is password-protected. Remove the password in XMind, save the map again, and then import it.";
@@ -449,7 +449,9 @@ fn package_resources<R: std::io::Read + std::io::Seek>(
                 let extra = png.len().saturating_sub(bytes.len());
                 // Reserve the entire package for every sheet. This conservative
                 // bound prevents conversion from displacing existing resources.
-                if !webp_expansion_fits(resolved_bytes, extra, sheet_count) {
+                if available.len().saturating_mul(sheet_count) > MAX_RESOURCES
+                    || !webp_expansion_fits(resolved_bytes, extra, sheet_count)
+                {
                     continue;
                 }
                 resolved_bytes += extra;
@@ -7214,8 +7216,51 @@ mod tests {
         let three_sheets = MAX_WORKBOOK_RESOURCE_BYTES / 3;
         assert!(webp_expansion_fits(three_sheets - 1, 1, 3));
         assert!(!webp_expansion_fits(three_sheets - 1, 2, 3));
-        assert!(webp_expansion_fits(one_sheet + 1, 0, 1));
+        assert!(!webp_expansion_fits(one_sheet + 1, 0, 1));
         assert!(!webp_expansion_fits(one_sheet + 1, 1, 1));
+    }
+
+    #[test]
+    fn webp_recovery_does_not_exceed_workbook_resource_count() {
+        let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
+        let picture = image::DynamicImage::ImageRgba8(pixels);
+        let mut png = Cursor::new(Vec::new());
+        let mut webp = Cursor::new(Vec::new());
+        picture.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        picture
+            .write_to(&mut webp, image::ImageFormat::WebP)
+            .unwrap();
+        let sheets: Vec<_> = (0..65)
+            .map(|_| {
+                json!({"rootTopic": {
+                    "title": "Root",
+                    "image": {"src": "xap:resources/picture.png"},
+                    "children": {"attached": [{
+                        "title": "WebP",
+                        "image": {"src": "xap:resources/picture.webp"}
+                    }]}
+                }})
+            })
+            .collect();
+        let archive = make_archive(&[
+            ("content.json".into(), serde_json::to_vec(&sheets).unwrap()),
+            ("resources/picture.png".into(), png.into_inner()),
+            ("resources/picture.webp".into(), webp.into_inner()),
+        ]);
+        let (book, warnings) = import_with_report(&archive).unwrap();
+        assert_eq!(warnings, vec![ImportWarning::Resources]);
+        assert_eq!(book.sheets.len(), 65);
+        for sheet in &book.sheets {
+            assert!(sheet.root_topic().image.is_some());
+            assert!(
+                sheet
+                    .topic(sheet.root_topic().children[0])
+                    .unwrap()
+                    .image
+                    .is_none()
+            );
+        }
+        book.validate().unwrap();
     }
 
     #[test]
