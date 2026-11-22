@@ -157,6 +157,13 @@ fn supported_static_svg(bytes: &[u8]) -> bool {
                 let is_image = element.local_name().as_ref() == "image";
                 has_use |= element.local_name().as_ref() == "use";
                 if is_image {
+                    if !matches!(
+                        reader.resolver().resolve_element(element.name()).0,
+                        ResolveResult::Bound(namespace)
+                            if namespace.0 == "http://www.w3.org/2000/svg"
+                    ) {
+                        return false;
+                    }
                     image_count += 1;
                     if image_count > 16 {
                         return false;
@@ -7778,6 +7785,7 @@ mod tests {
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style><![CDATA[.box { fill: #1255aa; }]]></style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
+            format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
         ];
         for svg in &examples {
             for legacy in [false, true] {
@@ -7927,6 +7935,11 @@ mod tests {
         assert!(!supported_static_svg(wrong_namespace.as_bytes()));
         let xlink_namespace = wrong_namespace.replace("urn:other", "http://www.w3.org/1999/xlink");
         assert!(supported_static_svg(xlink_namespace.as_bytes()));
+        let wrong_element = small.replace("<image", "<other:image");
+        let wrong_element = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:other="urn:other" width="1" height="1">{wrong_element}</svg>"#
+        );
+        assert!(!supported_static_svg(wrong_element.as_bytes()));
         assert!(!supported_static_svg(&svg(&format!(
             "{small}<use href=\"#x\"/>"
         ))));
