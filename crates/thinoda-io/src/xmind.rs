@@ -77,13 +77,45 @@ fn image_expansion_fits(resolved_bytes: usize, extra: usize, sheet_count: usize)
 
 fn supported_static_svg_css(css: &str) -> bool {
     let css = css.to_ascii_lowercase();
-    !css.contains(['@', '\\'])
-        && !css.contains("/*")
-        && !css.contains("*/")
-        && !css.contains("animation")
-        && !css.contains("transition")
-        && !css.contains("url")
-        && !css.contains("var(")
+    if css.contains(['@', '\\'])
+        || css.contains("/*")
+        || css.contains("*/")
+        || css.contains("animation")
+        || css.contains("transition")
+        || css.contains("var(")
+    {
+        return false;
+    }
+    let mut remaining = css.as_str();
+    while let Some(index) = remaining.find("url") {
+        let Some(reference) = remaining[index + 3..].strip_prefix('(') else {
+            return false;
+        };
+        let Some(end) = reference.find(')') else {
+            return false;
+        };
+        let value = reference[..end].trim();
+        let value = if value.len() >= 2
+            && ((value.starts_with('"') && value.ends_with('"'))
+                || (value.starts_with('\'') && value.ends_with('\'')))
+        {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        let Some(fragment) = value.strip_prefix('#') else {
+            return false;
+        };
+        if fragment.is_empty()
+            || !fragment.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+            })
+        {
+            return false;
+        }
+        remaining = &reference[end + 1..];
+    }
+    true
 }
 
 fn supported_static_svg(bytes: &[u8]) -> bool {
@@ -7784,6 +7816,32 @@ mod tests {
         let image = images::decode(&png).unwrap();
         assert_eq!((image.width, image.height), (1024, 512));
         assert!(png.len() <= MAX_RESOURCE_BYTES);
+    }
+
+    #[test]
+    fn svg_css_allows_local_gradients_but_not_external_urls() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4">
+            <defs><linearGradient id="gradient"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
+            <style>.box { fill: url("#gradient"); }</style>
+            <rect class="box" width="10" height="4"/>
+            </svg>"##;
+        let png = transcode_package_picture("resources/picture.svg", svg).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert!(pixels.get_pixel(0, 0).0[0] > pixels.get_pixel(0, 0).0[2]);
+        assert!(pixels.get_pixel(9, 0).0[2] > pixels.get_pixel(9, 0).0[0]);
+        for css in [
+            "fill:url(https://example.com/image)",
+            "fill:url('https://example.com/image')",
+            "fill:url(#local) url(https://example.com/image)",
+            "fill:url(\")",
+            "fill:url(#)",
+            "fill:url(#local",
+        ] {
+            assert!(!supported_static_svg_css(css), "{css}");
+        }
+        for css in ["fill:url(#local)", "fill:URL( '#local-id' )"] {
+            assert!(supported_static_svg_css(css), "{css}");
+        }
     }
 
     #[test]
