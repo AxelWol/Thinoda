@@ -71,7 +71,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | PDF with embedded diagram | Missing | D13 |
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
 | Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over black, with no editable diagram data | — |
-| Files | VSDX, WebP/GIF export | Missing (SVG/PNG/PDF/JPEG exist) | D13 |
+| Files | WebP/GIF export | Native visual export: lossless WebP; static GIF with palette/transparency preflight; neither embeds an editable diagram | — |
+| Files | VSDX export | Missing | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
@@ -101,8 +102,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
 | Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Partial (exact geometry in the nearby Arrange section; raw style and XML missing) | D12 |
-| Editing | Copy/paste style, set default style, style rules | Partial (format painter) | D9 |
-| Views | Find/replace on board, tags, outline window | Partial (mind-map find; minimap) | D12 |
+| Editing | Copy/paste style, set default style, style rules | Partial (copy/paste and reusable quick styles; default styles and rules missing) | D9 |
+| Views | Find/replace on board, tags, outline window | Partial (board find/replace, exact tag selection and Outliner; tag visibility and other draw.io views missing) | D12 |
 | Views | Ruler, units, page view, print layout | Missing | D12 |
 | Appearance | Dark mode, adaptive colours | Native app theme; adaptive diagram colours approximate | D14 |
 | Appearance | Sketch style, math typesetting | Missing | D14 |
