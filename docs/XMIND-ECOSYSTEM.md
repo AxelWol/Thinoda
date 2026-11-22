@@ -457,7 +457,9 @@ The XMind subset permits simple static CSS and local fragment references
 `filter`. It validates those attributes as well as stylesheets so external URLs
 and CSS escapes cannot silently bypass the conversion guard. Embedded image
 elements are limited to 16 base64 PNGs and four megapixels in total; APNG,
-invalid images and external references are rejected. SVGs combining embedded
+invalid images and external references are rejected. Image links must use
+unqualified `href` or the XLink namespace, including its alternate prefixes.
+SVGs combining embedded
 images with `use` are rejected to avoid unbounded image replication. It also
 rejects external CSS URLs, escapes, imports, variables and animation,
 scripts, foreign objects, animation elements, external links,

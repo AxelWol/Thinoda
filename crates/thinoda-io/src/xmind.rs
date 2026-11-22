@@ -134,12 +134,12 @@ fn embedded_svg_png_pixels(href: &str) -> Option<u64> {
 }
 
 fn supported_static_svg(bytes: &[u8]) -> bool {
-    use quick_xml::{Reader, events::Event};
+    use quick_xml::{NsReader, events::Event, name::ResolveResult};
 
     if bytes.len() > MAX_RESOURCE_BYTES {
         return false;
     }
-    let mut reader = Reader::from_reader(bytes);
+    let mut reader = NsReader::from_reader(bytes);
     let mut stylesheet: Option<String> = None;
     let mut image_pixels = 0u64;
     let mut image_count = 0usize;
@@ -188,6 +188,12 @@ fn supported_static_svg(bytes: &[u8]) -> bool {
                     if is_image && attribute.key.local_name().as_ref() == "href" {
                         if image_href {
                             return false;
+                        }
+                        match reader.resolver().resolve_attribute(attribute.key).0 {
+                            ResolveResult::Unbound => {}
+                            ResolveResult::Bound(namespace)
+                                if namespace.0 == "http://www.w3.org/1999/xlink" => {}
+                            _ => return false,
                         }
                         image_href = true;
                         let Some(pixels) = embedded_svg_png_pixels(&value) else {
@@ -7771,6 +7777,7 @@ mod tests {
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="#1255aa"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style><![CDATA[.box { fill: #1255aa; }]]></style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
+            format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
         ];
         for svg in &examples {
             for legacy in [false, true] {
@@ -7913,6 +7920,13 @@ mod tests {
         let small = element(&png(1, 1));
         assert!(supported_static_svg(&svg(&small.repeat(16))));
         assert!(!supported_static_svg(&svg(&small.repeat(17))));
+        let prefixed = small.replace(" href=", " other:href=");
+        let wrong_namespace = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:other="urn:other" width="1" height="1">{prefixed}</svg>"#
+        );
+        assert!(!supported_static_svg(wrong_namespace.as_bytes()));
+        let xlink_namespace = wrong_namespace.replace("urn:other", "http://www.w3.org/1999/xlink");
+        assert!(supported_static_svg(xlink_namespace.as_bytes()));
         assert!(!supported_static_svg(&svg(&format!(
             "{small}<use href=\"#x\"/>"
         ))));
