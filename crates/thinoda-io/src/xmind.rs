@@ -4009,11 +4009,39 @@ fn legacy_resource_path(href: &str) -> Option<String> {
 struct LegacyImportContext<'a> {
     styles: &'a LegacyStyles,
     files: &'a HashMap<String, Vec<u8>>,
+    webp: &'a mut LegacyWebpRecovery,
     ids: HashMap<String, TopicId>,
     used_files: HashSet<String>,
     warnings: BTreeSet<ImportWarning>,
     floating_links: Vec<(TopicId, TopicId, Option<Vec2>)>,
     explicit_floating_positions: Vec<(TopicId, Vec2)>,
+}
+
+struct LegacyWebpRecovery {
+    cache: HashMap<String, Option<Vec<u8>>>,
+    reserved_bytes: usize,
+    reserved_count: usize,
+    sheet_count: usize,
+}
+
+impl LegacyWebpRecovery {
+    fn picture(&mut self, path: &str, bytes: &[u8]) -> Option<&[u8]> {
+        if !self.cache.contains_key(path) {
+            let png = images::transcode_static_webp(bytes).ok().filter(|png| {
+                self.reserved_count
+                    .saturating_add(1)
+                    .saturating_mul(self.sheet_count)
+                    <= MAX_RESOURCES
+                    && webp_expansion_fits(self.reserved_bytes, png.len(), self.sheet_count)
+            });
+            if let Some(png) = &png {
+                self.reserved_bytes += png.len();
+                self.reserved_count += 1;
+            }
+            self.cache.insert(path.to_owned(), png);
+        }
+        self.cache.get(path)?.as_deref()
+    }
 }
 
 fn legacy_normalize_range(
@@ -4210,9 +4238,17 @@ fn legacy_import_topic(
         let path = href.and_then(legacy_resource_path);
         let imported = path.as_ref().and_then(|path| {
             let bytes = context.files.get(path)?;
-            let decoded = images::decode(bytes).ok()?;
+            let (bytes, decoded) = match images::decode(bytes) {
+                Ok(decoded) => (bytes.as_slice(), decoded),
+                Err(_) if image::guess_format(bytes).ok() == Some(image::ImageFormat::WebP) => {
+                    context.warnings.insert(ImportWarning::Resources);
+                    let png = context.webp.picture(path, bytes)?;
+                    (png, images::decode(png).ok()?)
+                }
+                Err(_) => return None,
+            };
             let component = path.rsplit('/').next().unwrap_or("image");
-            let resource = Resource::new(component, decoded.media_type, bytes.clone()).ok()?;
+            let resource = Resource::new(component, decoded.media_type, bytes.to_vec()).ok()?;
             let reference = sheet.resources.insert(resource).ok()?;
             if let Some(stored) = reference
                 .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
@@ -4489,6 +4525,14 @@ fn import_legacy_xml_with_resources(
     let mut imported_sheets = Vec::new();
     let mut warnings = BTreeSet::new();
     let mut used_files = HashSet::new();
+    let mut webp = LegacyWebpRecovery {
+        cache: HashMap::new(),
+        reserved_bytes: files
+            .values()
+            .fold(0usize, |total, bytes| total.saturating_add(bytes.len())),
+        reserved_count: files.len(),
+        sheet_count: sheets.len(),
+    };
     for sheet_xml in sheets {
         let roots: Vec<_> = sheet_xml.children("topic").collect();
         let root = roots
@@ -4522,6 +4566,7 @@ fn import_legacy_xml_with_resources(
         let mut context = LegacyImportContext {
             styles: &styles,
             files,
+            webp: &mut webp,
             ids: HashMap::new(),
             used_files: HashSet::new(),
             warnings: BTreeSet::new(),
@@ -7267,6 +7312,79 @@ mod tests {
         entries.extend((0..MAX_RESOURCES - 1).map(|i| (format!("resources/unused-{i}"), vec![1])));
         let (book, warnings) = import_with_report(&make_archive(&entries)).unwrap();
         assert_eq!(warnings, vec![ImportWarning::Resources]);
+        let sheet = book.active();
+        assert!(sheet.root_topic().image.is_none());
+        let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+        assert_eq!(
+            sheet.resources.get(&attachment.resource).unwrap().bytes(),
+            webp
+        );
+        book.validate().unwrap();
+    }
+
+    #[test]
+    fn legacy_webp_picture_and_attachment_are_recovered_separately() {
+        let pixels = image::RgbaImage::from_pixel(4, 3, image::Rgba([30, 80, 190, 128]));
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels.clone())
+            .write_to(&mut encoded, image::ImageFormat::WebP)
+            .unwrap();
+        let webp = encoded.into_inner();
+        let content = br#"<xmap-content><sheet><title>Sheet</title>
+            <topic id="root" xlink:href="xap:resources/picture.webp">
+                <title>Root</title><image xlink:href="xap:resources/picture.webp"/>
+            </topic></sheet></xmap-content>"#;
+        let archive = make_archive(&[
+            ("content.xml".into(), content.to_vec()),
+            ("resources/picture.webp".into(), webp.clone()),
+        ]);
+        let (book, warnings) = import_with_report(&archive).unwrap();
+        assert!(warnings.contains(&ImportWarning::Resources));
+        let sheet = book.active();
+        let image = sheet
+            .resources
+            .get(sheet.root_topic().image.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(image.media_type, "image/png");
+        assert_eq!(
+            image::load_from_memory(image.bytes()).unwrap().to_rgba8(),
+            pixels
+        );
+        let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+        assert_eq!(
+            sheet.resources.get(&attachment.resource).unwrap().bytes(),
+            webp
+        );
+        assert!(matches!(
+            import(&archive),
+            Err(IoError::ImportNeedsConfirmation(_))
+        ));
+        book.validate().unwrap();
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+    }
+
+    #[test]
+    fn legacy_webp_recovery_keeps_attachments_when_resource_limit_is_full() {
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([1, 2, 3, 255]),
+        ))
+        .write_to(&mut encoded, image::ImageFormat::WebP)
+        .unwrap();
+        let webp = encoded.into_inner();
+        let content = br#"<xmap-content><sheet><topic
+            xlink:href="xap:resources/picture.webp"><title>Root</title>
+            <image xlink:href="xap:resources/picture.webp"/>
+            </topic></sheet></xmap-content>"#;
+        let mut entries = vec![
+            ("content.xml".into(), content.to_vec()),
+            ("resources/picture.webp".into(), webp.clone()),
+        ];
+        entries.extend((0..MAX_RESOURCES - 1).map(|i| (format!("resources/unused-{i}"), vec![1])));
+        let (book, warnings) = import_with_report(&make_archive(&entries)).unwrap();
+        assert!(warnings.contains(&ImportWarning::Resources));
         let sheet = book.active();
         assert!(sheet.root_topic().image.is_none());
         let attachment = sheet.root_topic().attachment.as_ref().unwrap();
