@@ -147,7 +147,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Boundaries | ✅ | `master` handled. | Keep. |
 | Summaries | ◐ | Reversed or out-of-range ranges are kept as-is; unresolved summaries vanish silently. | Normalize/clamp, warn under Other (X1/X2). |
 | Relationships | ◐ | `controlPoints` ignored on import and export; unresolved endpoints vanish silently. | Import/export control points; warn under Other on drops (X1/X2). |
-| Zones, comments, `topicOverlapping`, `arrangeableLayerOrder` | ❌ silent | — | Warn under Other when non-empty; boolean `topicOverlapping` values, including `false`, are reported because their semantics are not preserved. |
+| Zones, comments, `topicOverlapping`, `arrangeableLayerOrder`, sheet extensions | ❌ silent | — | Warn under Other when non-empty; boolean `topicOverlapping` values, including `false`, are reported because their semantics are not preserved. |
 
 ### 2.4 Legacy XMind 8 (`content.xml`)
 
@@ -285,13 +285,13 @@ Formatting warning; imports with that warning stay protected from in-place
 overwrite. Duck check: text recovery does not preserve run formatting or
 establish installed-XMind round-trip parity, so those gaps remain open.
 
-**Sheet-setting safety follow-up:** Modern XMind sheet overlap and layer-order
-settings are reported as Other when present with content rather than silently
+**Sheet-setting safety follow-up:** Modern XMind sheet overlap, layer-order
+settings and extensions are reported as Other when present with content rather than silently
 discarded. Duck check: even `false` may carry meaningful source intent, so it
 must trigger the same source protection as `true`; absent, null and empty
 collections do not. This is a conservative warning, not preservation or
 verified interpretation of these settings. The checked-in desktop samples
-contain both settings and consequently now report Other alongside Formatting.
+contain these settings and consequently now report Other alongside Formatting.
 
 **Malformed and unknown topic content follow-up:** Unknown structure classes,
 non-array marker data, malformed labels and malformed child collections now

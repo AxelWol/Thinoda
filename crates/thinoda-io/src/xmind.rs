@@ -3543,9 +3543,14 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                 };
                 parse_topic(root, &mut s, None, 0, &mut ids, &context, "centralTopic")?;
                 import_sheet_theme(&v["theme"], &mut s);
-                if ["zones", "topicOverlapping", "arrangeableLayerOrder"]
-                    .iter()
-                    .any(|key| non_empty(v.get(key)))
+                if [
+                    "zones",
+                    "topicOverlapping",
+                    "arrangeableLayerOrder",
+                    "extensions",
+                ]
+                .iter()
+                .any(|key| non_empty(v.get(key)))
                 {
                     context.warn(ImportWarning::Other);
                 }
@@ -7475,6 +7480,7 @@ mod tests {
             json!({"topicOverlapping": false}),
             json!({"topicOverlapping": true}),
             json!({"arrangeableLayerOrder": ["topic"]}),
+            json!({"extensions": [{"provider": "vendor", "content": {"style": "value"}}]}),
         ] {
             let mut sheet = json!({"rootTopic": {"title": "Root"}});
             sheet
@@ -7497,6 +7503,7 @@ mod tests {
             "rootTopic": {"title": "Root"},
             "topicOverlapping": null,
             "arrangeableLayerOrder": [],
+            "extensions": [],
         }));
         assert!(warnings.is_empty());
     }
