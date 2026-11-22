@@ -39,6 +39,13 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.28.1](https://github.com/AxelWol/Thinoda/compare/v0.28.0...v0.28.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* keep card formatting menus near selected objects ([b69faf7](https://github.com/AxelWol/Thinoda/commit/b69faf76065b1cf2aec32e80f8a9b67890c47686))
+
 ## [0.28.0](https://github.com/AxelWol/Thinoda/compare/v0.27.2...v0.28.0) (2026-11-20)
 
 
