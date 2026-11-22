@@ -55,7 +55,7 @@ eframe = { version = "0.37", default-features = false, features = ["accesskit", 
 egui_kittest = "0.37"
 earcutr = "0.5"
 rfd = "0.17"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 resvg = "0.48"
 fontdb = "0.24"
 tempfile = "3"

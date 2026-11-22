@@ -132,13 +132,13 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Custom width (`customWidth`) | ❌ | — | Map to `style.width` both ways (X2). |
 | Callouts (`children.callout`) | ❌ dropped silently | Text is lost. | Floating topic plus a relationship to its owner; warn under Other (X1). |
 | Detached topics under non-root topics | ❌ dropped silently | — | Floating topic at the given position; warn under Other (X1). |
-| Unknown child collections | ◐ silent, image → error | — | Warn under Other (X1). |
+| Unknown or malformed child collections, malformed labels | ◐ silent, image → error | — | Warn under Other when non-empty or partially unrepresentable. |
 
 ### 2.3 Structure, layout and style
 
 | Capability | Before | Gap | Target |
 |---|---|---|---|
-| Structure classes | ✅ 17 kinds | — | Keep; plain `org.xmind.ui.map` is clockwise. |
+| Structure classes | ✅ 17 kinds | Unknown classes and variant-specific behavior are not represented. | Keep recognized mappings; plain `org.xmind.ui.map` is clockwise. Warn under Formatting for unrecognized classes and non-canonical variants approximated by a supported structure. |
 | Unbalanced `right-number` extension | ❌ | The left/right split is lost. | Set `branch_side` on import; write the extension on export (X2). |
 | Role theme and inline style properties | ✅ | Values are not trimmed; numeric `fo:font-weight` only partly parsed. | Trim values, treat `inherited` as unset, weights ≥ 600 are bold (X2). |
 | Line classes `bight`, `fold`, `roundedfold` | ❌ unset | Desktop default theme uses `roundedfold`. | Map to the nearest Thinoda line (X2). |
@@ -147,7 +147,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Boundaries | ✅ | `master` handled. | Keep. |
 | Summaries | ◐ | Reversed or out-of-range ranges are kept as-is; unresolved summaries vanish silently. | Normalize/clamp, warn under Other (X1/X2). |
 | Relationships | ◐ | `controlPoints` ignored on import and export; unresolved endpoints vanish silently. | Import/export control points; warn under Other on drops (X1/X2). |
-| Zones, comments, `topicOverlapping` | ❌ silent | — | Warn under Other when non-empty (X1). |
+| Zones, comments, `topicOverlapping`, `arrangeableLayerOrder`, sheet extensions | ❌ silent | — | Warn under Other when non-empty; boolean `topicOverlapping` values, including `false`, are reported because their semantics are not preserved. |
 
 ### 2.4 Legacy XMind 8 (`content.xml`)
 
@@ -187,7 +187,7 @@ Every phase:
 
 | Phase | Scope | Acceptance |
 |---|---|---|
-| **X1 Import report and source protection** | Add `xmind::import_with_report` and route `Format::XMind` through it. Classify every package/content failure as **fatal** or **recoverable** (§3.3). Recoverable content becomes a categorized warning, never a silent drop. Recover note text from HTML/ops. Turn callouts and nested detached topics into floating topics placed deterministically and linked to their owner. Report rich title runs, unknown markers, task info, zones, comments, internal `xmind:#` links and unresolved relationships or summaries. Detect password-protected packages (`encryption-data` in the manifest) with a dedicated error. **A native XMind file that imported with warnings is opened like a foreign import:** no writable path, Save asks for a new file, and the source bytes are never overwritten. | Maps that used to fail open through the consent dialog with exact warning categories. Strict `import_bytes` still refuses them with `ImportNeedsConfirmation`. The desktop samples report only Formatting (bold title runs). App tests prove that accepting a lossy import cannot save over the source. Adversarial tests keep every fatal case fatal. |
+| **X1 Import report and source protection** | Add `xmind::import_with_report` and route `Format::XMind` through it. Classify every package/content failure as **fatal** or **recoverable** (§3.3). Recoverable content becomes a categorized warning, never a silent drop. Recover note text from HTML/ops. Turn callouts and nested detached topics into floating topics placed deterministically and linked to their owner. Report rich title runs, unknown markers, task info, zones, comments, internal `xmind:#` links and unresolved relationships or summaries. Detect password-protected packages (`encryption-data` in the manifest) with a dedicated error. **A native XMind file that imported with warnings is opened like a foreign import:** no writable path, Save asks for a new file, and the source bytes are never overwritten. | Maps that used to fail open through the consent dialog with exact warning categories. Strict `import_bytes` still refuses them with `ImportNeedsConfirmation`. The desktop samples report Formatting (bold title runs) and Other (unpreserved sheet settings). App tests prove that accepting a lossy import cannot save over the source. Adversarial tests keep every fatal case fatal. |
 | **X2 Content fidelity** | Trim style values and handle `inherited`. Add line and shape aliases. Normalize summary ranges. Import and export relationship control points, numbering, custom width, the unbalanced split and attachments (archive-only resolver, §3.4). Read the sheet background and tapered lines. **Version the public projection** (`thinodaPublicProjection` in `metadata.json`). Older exports without the key are validated against projection 1, so their private snapshots stay trusted. | Round-trip tests for each field, including exports with the Thinoda metadata stripped. Checked-in pre-X2 Thinoda export fixture still imports through its private snapshot. Generator-style minimal fixtures import. |
 | **X3 Markers** | Extend the catalog (`people` and `arrow` groups, dark-blue flag/star, `smiley-embarrass`, `task-pause`). Add the `week-web` alias. Localize every new name in all ten UI languages. | The marker picker shows the new groups; the catalog test covers ID uniqueness, and translation tests cover the new names. |
 | **X4 XMind 8** | Tree-based legacy parser: multiple sheets, attached/detached/summary collections, positions, boundaries, summaries, relationships, `styles.xml` style resolution, HTML notes, numbering, width, pictures and attachments from `attachments/`, all with warnings instead of silent loss. | Fixture-based tests; legacy files import with only the expected warnings. |
@@ -203,7 +203,7 @@ Every phase:
 | Publishing new fields changes the regenerated public JSON, invalidating older private snapshots. | X2: versioned public projection; projection 1 reproduces the pre-X2 output exactly. |
 | A broad "error → warning" change could downgrade safety failures. | X1: explicit fatal/recoverable contract (§3.3) with adversarial tests. |
 | Attachment `href` resolution needed safety rules. | X2: archive-only resolver (§3.4). |
-| "No warnings for desktop samples" contradicted the rich-title warning. | Acceptance now names the exact expected warning (Formatting). |
+| "No warnings for desktop samples" contradicted the rich-title warning. | Acceptance names the expected Formatting warning and, following the sheet-setting audit, Other. |
 | Tasks and zones *do* have Thinoda models. | Neither the reviewed sources nor the samples document XMind's task or zone JSON, so mapping would be guesswork. They are reported and listed as deferred interoperability, pending real samples. |
 | Callout flattening needs traversal before creation. | X1: one shared traversal covers every child collection for resources, IDs and relationships; deterministic placement. |
 | Thinoda-to-Thinoda round trips can hide broken public JSON. | X2/X5 tests strip Thinoda metadata before re-import. Installed-app verification stays an explicit manual release check in the user guide. |
@@ -277,6 +277,27 @@ branch for per-phase critiques.
 | X5 | Done. The public projection is checked against an explicit XMind key allowlist; projection-2 fields round-trip with the Thinoda snapshot removed, while projection-1 snapshots remain covered by a checked-in fixture. |
 | X6 | Done. `.xmindmark` is a bounded, localized import/export format; supported hierarchy, boundaries, summaries and relationships round-trip deterministically, while export preflight identifies omitted topic details, annotation styling/routing and other sheets. |
 | X7 | Done. User guidance and this status/critique reflect the implemented behavior and its loss boundaries. |
+
+**Attributed-title safety follow-up:** When a JSON topic has no plain title,
+valid attributed runs now supply its visible text. A mismatch between plain
+and attributed text, malformed runs, or unsupported run formatting produces a
+Formatting warning; imports with that warning stay protected from in-place
+overwrite. Duck check: text recovery does not preserve run formatting or
+establish installed-XMind round-trip parity, so those gaps remain open.
+
+**Sheet-setting safety follow-up:** Modern XMind sheet overlap, layer-order
+settings and extensions are reported as Other when present with content rather than silently
+discarded. Duck check: even `false` may carry meaningful source intent, so it
+must trigger the same source protection as `true`; absent, null and empty
+collections do not. This is a conservative warning, not preservation or
+verified interpretation of these settings. The checked-in desktop samples
+contain these settings and consequently now report Other alongside Formatting.
+
+**Malformed and unknown topic content follow-up:** Unknown or approximated
+structure classes, non-array marker data, malformed labels and malformed child collections now
+produce loss warnings. Duck check: valid entries are still imported where
+possible, while a warning protects the source from in-place overwrite; the
+warning does not reconstruct missing content or guarantee exact layout.
 
 ### 4.1 X2 review critique
 

@@ -1918,6 +1918,12 @@ const DE: &[(&str, &str)] = &[
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),
+    ("WebP", "WebP"),
+    ("GIF", "GIF"),
+    (
+        "GIF reduces colors and supports only fully transparent or opaque pixels.",
+        "GIF reduziert Farben und unterstützt nur vollständig transparente oder undurchsichtige Pixel.",
+    ),
     ("PDF", "PDF"),
     ("Word", "Word"),
     ("PowerPoint", "PowerPoint"),

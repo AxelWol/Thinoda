@@ -110,8 +110,8 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         board.ungroup board.unlock board.zoom-selection
         zone.add-selection zone.remove-selection zone.remove
         edit.command-palette edit.copy edit.copy-drawio edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
-        export.csv export.drawio export.drawio-png export.drawio-svg export.excel export.fim-xdf2 export.fim-xdf3 export.freemind export.jpeg export.markdown export.mindmanager
-        export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.word export.xmind export.xmindmark
+        export.csv export.drawio export.drawio-png export.drawio-svg export.excel export.fim-xdf2 export.fim-xdf3 export.freemind export.gif export.jpeg export.markdown export.mindmanager
+        export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.webp export.word export.xmind export.xmindmark
         file.close-tab file.home file.import file.import-drawio-link file.masked-copy file.merge file.new file.open file.print
         file.quit file.save file.save-all file.save-as file.save-attachment file.show-in-folder
         fim.add-child fim.edit-node fim.insert-after fim.insert-before

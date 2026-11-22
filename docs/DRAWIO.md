@@ -71,7 +71,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | PDF with embedded diagram | Missing | D13 |
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
 | Files | JPEG export | Native visual raster export; opaque, transparent pixels composite over black, with no editable diagram data | — |
-| Files | VSDX, WebP/GIF export | Missing (SVG/PNG/PDF/JPEG exist) | D13 |
+| Files | WebP/GIF export | Native visual export: lossless WebP; static GIF with palette/transparency preflight; neither embeds an editable diagram | — |
+| Files | VSDX export | Missing | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
@@ -101,8 +102,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
 | Editing | Edit Style (raw), Edit Diagram (raw XML), Edit Geometry | Partial (exact geometry in the nearby Arrange section; raw style and XML missing) | D12 |
-| Editing | Copy/paste style, set default style, style rules | Partial (format painter) | D9 |
-| Views | Find/replace on board, tags, outline window | Partial (mind-map find; minimap) | D12 |
+| Editing | Copy/paste style, set default style, style rules | Partial (copy/paste and reusable quick styles; default styles and rules missing) | D9 |
+| Views | Find/replace on board, tags, outline window | Partial (board find/replace, exact tag selection and Outliner; tag visibility and other draw.io views missing) | D12 |
 | Views | Ruler, units, page view, print layout | Missing | D12 |
 | Appearance | Dark mode, adaptive colours | Native app theme; adaptive diagram colours approximate | D14 |
 | Appearance | Sketch style, math typesetting | Missing | D14 |
@@ -313,6 +314,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Add arbitrary RGBA color entry for card titles
   - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
+    - [ ] Preserve event order across multiple editor clicks and text events in one frame; the ignored `two_editor_clicks_keep_batched_text_at_each_clicked_caret` regression currently produces `ABxy` instead of `xABy`
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -427,7 +429,28 @@ the main Edit menu.
 ### D13 — Other formats
 
 - [x] JPEG visual export through the shared raster renderer
-- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, WebP and GIF export
+- [x] Lossless WebP visual export through the shared raster renderer
+- [x] Static GIF visual export through the shared raster renderer, with palette and transparency disclosure
+- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX export
+
+**GIF rubber-duck critique:** GIF is a static, flattened image, not an
+animation or editable diagram. Its limited palette and binary transparency
+can visibly alter colours and antialiased edges, so export preflight always
+discloses that loss, even on a board without other warnings. The encoder
+shares the bounded raster and clipping path; Chromium coverage checks the
+download and mixed-board rendering. The format-wide loss contract explicitly
+includes the GIF warning alongside any board-setting loss; WebP remains
+lossless in the same checks. Both formats render supported local images and
+reject unsupported embedded resources rather than silently dropping them.
+Other D13 formats remain open.
+
+**WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
+and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
+export-loss disclosure follow PNG rather than a second renderer. This is a
+flattened visual export, not an editable draw.io container or WebP import.
+Pixel-for-pixel comparisons cover transparent and opaque output; a Chromium
+test exercises consent, download and rendering of a mixed board. Other D13
+formats and cross-browser verification remain open.
 
 **JPEG rubber-duck critique:** JPEG is already available through the normal
 visual export path, so treating it as missing would duplicate existing work.
@@ -516,6 +539,9 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-22 | D9 multiple-click input audit (open) | Reproduced text being inserted at the final caret when two editor clicks and text events arrive in one frame. The regression is ignored until ordered pointer handling is implemented; this is not a fix. |
+| 2026-11-22 | D13 GIF export (partial) | Added static GIF visual export with an always-visible palette/transparency preflight; remaining D13 formats stay open. |
+| 2026-11-22 | D13 WebP export (partial) | Added lossless WebP visual export with alpha and the same preflight as PNG; other D13 formats remain open. |
 | 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
 | 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |
 | 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |
@@ -613,6 +639,14 @@ recovery) and binary `.vsd`.
 | 2026-11-17 | D0 | Research, gap analysis, plan, coverage probe, translator fixes (99.94 % of shapes in converted files), rubber-duck review folded in |
 
 ### Critiques
+
+**D9 multiple-click rubber-duck critique:** Processing only the first editor
+press and then exposing the frame's aggregated pointer state to egui does not
+replay two clicks in event order. Splitting text alone is insufficient: pointer
+interaction, selection and click count also need correct per-event handling.
+A synthetic regression demonstrates the defect and remains ignored rather
+than hiding it or claiming a fix. Drag, touch, IME and real-platform input
+still need separate validation.
 
 **D0.** The inventory is regex-based over minified code, so counts are
 approximate; the gap table is limited to user-visible features and treats cloud

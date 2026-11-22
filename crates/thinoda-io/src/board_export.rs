@@ -306,6 +306,8 @@ pub enum ExportLoss {
     ConnectorLabelCompositingApproximated(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
+    /// GIF uses a limited palette and binary transparency.
+    GifPaletteAndTransparency,
     /// Formatted card titles are not supported by this export target.
     InlineTextDropped(usize),
     /// Mind-map topics, branches and annotations are written as unlinked drawn
@@ -350,7 +352,7 @@ pub enum ExportLoss {
 /// Content lost when exporting `book` to `format` with `opts`, itemised with counts.
 ///
 /// Plain data for an export preflight; empty when nothing is lost. Thinoda keeps
-/// everything. SVG, PNG, JPEG and PDF apply frame clipping visually; this is not
+/// everything. SVG, PNG, JPEG, WebP, GIF and PDF apply frame clipping visually; this is not
 /// secure redaction of embedded resources or vector content. Flattened PowerPoint
 /// viewport slides also preserve visual clipping, while editable branch/zone slides
 /// may omit it and retain a clipping warning. Visual formats also omit the editing
@@ -472,7 +474,13 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     );
     if matches!(
         format,
-        Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
+        Format::Svg
+            | Format::Png
+            | Format::Jpeg
+            | Format::WebP
+            | Format::Gif
+            | Format::Pdf
+            | Format::PowerPoint
     ) {
         let oriented_images = sheets
             .iter()
@@ -614,6 +622,9 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     }
     if c.settings {
         out.push(ExportLoss::BoardSettingsDropped);
+    }
+    if format == Format::Gif {
+        out.push(ExportLoss::GifPaletteAndTransparency);
     }
     out
 }

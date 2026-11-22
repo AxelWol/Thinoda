@@ -333,6 +333,7 @@ fn visual_context_reaches_raster_pdf_presentations_and_print_without_mutating_so
                 < magenta_pixels(&image::load_from_memory(&contextual).unwrap().to_rgb8())
         );
     }
+
     let legacy_pdf = export_bytes(&workbook, Format::Pdf, &options).unwrap();
     let contextual_pdf =
         export_bytes_with_visual_context(&workbook, Format::Pdf, &options, visual).unwrap();
@@ -384,6 +385,62 @@ fn visual_context_reaches_raster_pdf_presentations_and_print_without_mutating_so
     assert!(print.pdf().unwrap().starts_with(b"%PDF-"));
     assert_eq!(fixture.sheet, before);
     assert_eq!(workbook.active(), &before);
+}
+
+#[test]
+fn webp_export_matches_png_with_transparency_and_visual_context() {
+    let fixture = fixture();
+    let workbook = Workbook::new(fixture.sheet);
+    let visual =
+        VisualExportContext::default().with_automatic_board_stroke(Color::rgb(255, 0, 180));
+    for transparent in [false, true] {
+        let options = ExportOptions {
+            transparent,
+            ..Default::default()
+        };
+        let png =
+            export_bytes_with_visual_context(&workbook, Format::Png, &options, visual).unwrap();
+        let webp =
+            export_bytes_with_visual_context(&workbook, Format::WebP, &options, visual).unwrap();
+        assert_eq!(
+            image::guess_format(&webp).unwrap(),
+            image::ImageFormat::WebP
+        );
+        let png = image::load_from_memory(&png).unwrap().to_rgba8();
+        let webp = image::load_from_memory(&webp).unwrap().to_rgba8();
+        assert_eq!(webp, png);
+        if transparent {
+            assert!(webp.pixels().any(|pixel| pixel.0[3] < 255));
+        }
+        assert_eq!(
+            thinoda_io::export_losses(&workbook, Format::WebP, &options),
+            thinoda_io::export_losses(&workbook, Format::Png, &options)
+        );
+    }
+}
+
+#[test]
+fn gif_export_warns_about_palette_and_has_binary_transparency() {
+    let workbook = Workbook::new(fixture().sheet);
+    let visual =
+        VisualExportContext::default().with_automatic_board_stroke(Color::rgb(255, 0, 180));
+    for transparent in [false, true] {
+        let options = ExportOptions {
+            transparent,
+            ..Default::default()
+        };
+        let gif =
+            export_bytes_with_visual_context(&workbook, Format::Gif, &options, visual).unwrap();
+        assert_eq!(image::guess_format(&gif).unwrap(), image::ImageFormat::Gif);
+        let image = image::load_from_memory(&gif).unwrap().to_rgba8();
+        assert!(image.width() > 0 && image.height() > 0);
+        assert!(image.pixels().all(|pixel| matches!(pixel.0[3], 0 | 255)));
+        assert_eq!(image.pixels().any(|pixel| pixel.0[3] == 0), transparent);
+        assert!(
+            thinoda_io::export_losses(&workbook, Format::Gif, &options)
+                .contains(&thinoda_io::ExportLoss::GifPaletteAndTransparency)
+        );
+    }
 }
 
 #[test]

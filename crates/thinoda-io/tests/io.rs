@@ -794,6 +794,18 @@ fn svg_png_jpeg_pdf_and_office_exports_are_valid() {
 #[test]
 fn detection_supports_paths_and_signatures() {
     assert_eq!(
+        Format::from_path(std::path::Path::new("diagram.WEBP")),
+        Some(Format::WebP)
+    );
+    assert!(Format::WebP.can_export());
+    assert!(!Format::WebP.can_import());
+    assert_eq!(
+        Format::from_path(std::path::Path::new("diagram.GIF")),
+        Some(Format::Gif)
+    );
+    assert!(Format::Gif.can_export());
+    assert!(!Format::Gif.can_import());
+    assert_eq!(
         Format::from_path(std::path::Path::new("a.xmind")),
         Some(Format::XMind)
     );

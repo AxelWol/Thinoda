@@ -753,6 +753,9 @@ Image width|Largura da imagem
 Image below topic|Imagem abaixo do tópico
 Reset Size|Redefinir tamanho
 PNG/JPEG only. Resizing keeps the aspect ratio.|Apenas PNG/JPEG. O redimensionamento mantém as proporções.
+WebP|WebP
+GIF|GIF
+GIF reduces colors and supports only fully transparent or opaque pixels.|GIF reduz as cores e permite apenas pixels totalmente transparentes ou opacos.
 Could not insert image|Não foi possível inserir a imagem
 Image request expired. Select a topic and try again.|A solicitação de imagem expirou. Selecione um tópico e tente novamente.
 Attachment|Anexo

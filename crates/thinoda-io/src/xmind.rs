@@ -2,6 +2,7 @@ use crate::{ImportWarning, IoError, zip_entry};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write};
 use thinoda_core::{
@@ -2759,33 +2760,45 @@ fn canonical_marker_id(id: &str) -> &str {
 }
 
 fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
-    if v.get("attributedTitle")
-        .and_then(Value::as_array)
-        .is_some_and(|runs| {
-            runs.iter().any(|run| {
-                run.as_object()
-                    .is_some_and(|run| run.keys().any(|key| key != "text"))
-            })
-        })
-    {
-        context.warn(ImportWarning::Formatting);
-    }
     if v.get("taskInfo").is_some_and(|task| !task.is_null()) {
         context.warn(ImportWarning::Markers);
     }
-    if v.get("markers")
-        .and_then(Value::as_array)
-        .is_some_and(|markers| {
-            markers.iter().any(|marker| {
-                marker
-                    .get("markerId")
-                    .or_else(|| marker.get("id"))
-                    .and_then(Value::as_str)
-                    .is_none_or(|id| thinoda_core::markers::find(canonical_marker_id(id)).is_none())
-            })
-        })
-    {
+    if v.get("markers").is_some_and(|value| {
+        value.as_array().map_or_else(
+            || non_empty(Some(value)),
+            |markers| {
+                markers.iter().any(|marker| {
+                    marker
+                        .get("markerId")
+                        .or_else(|| marker.get("id"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|id| {
+                            thinoda_core::markers::find(canonical_marker_id(id)).is_none()
+                        })
+                })
+            },
+        )
+    }) {
         context.warn(ImportWarning::Markers);
+    }
+    if v.get("structureClass").is_some_and(|value| {
+        non_empty(Some(value))
+            && value.as_str().is_none_or(|class| {
+                let class = class.trim();
+                Structure::from_xmind_class(class).is_none_or(|structure| {
+                    class != "org.xmind.ui.map" && class != structure.xmind_class()
+                })
+            })
+    }) {
+        context.warn(ImportWarning::Formatting);
+    }
+    if v.get("labels").is_some_and(|value| {
+        value.as_array().map_or_else(
+            || non_empty(Some(value)),
+            |labels| labels.iter().any(|label| !label.is_string()),
+        )
+    }) {
+        context.warn(ImportWarning::Other);
     }
     if v.get("href")
         .and_then(Value::as_str)
@@ -2799,12 +2812,53 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
     {
         context.warn(ImportWarning::Other);
     }
-    if let Some(children) = v.get("children").and_then(Value::as_object)
-        && children.iter().any(|(kind, values)| {
-            !TOPIC_COLLECTIONS.contains(&kind.as_str()) && non_empty(Some(values))
-        })
-    {
+    if v.get("children").is_some_and(|children| {
+        children.as_object().map_or_else(
+            || non_empty(Some(children)),
+            |children| {
+                children.iter().any(|(kind, values)| {
+                    non_empty(Some(values))
+                        && (!TOPIC_COLLECTIONS.contains(&kind.as_str())
+                            || values
+                                .as_array()
+                                .is_none_or(|topics| topics.iter().any(|topic| !topic.is_object())))
+                })
+            },
+        )
+    }) {
         context.warn(ImportWarning::Other);
+    }
+}
+
+fn imported_topic_title<'a>(v: &'a Value, context: &TopicImportContext<'_>) -> Cow<'a, str> {
+    let plain = v.get("title").and_then(Value::as_str);
+    let source = v.get("attributedTitle");
+    let runs = source
+        .and_then(Value::as_array)
+        .filter(|runs| !runs.is_empty());
+    let attributed = runs.and_then(|runs| {
+        runs.iter()
+            .map(|run| run.get("text").and_then(Value::as_str))
+            .collect::<Option<String>>()
+    });
+    if v.get("title")
+        .is_some_and(|title| !title.is_null() && !title.is_string())
+        || (non_empty(source)
+            && (runs.is_none_or(|runs| {
+                runs.iter().any(|run| {
+                    run.as_object()
+                        .is_none_or(|run| run.keys().any(|key| key != "text"))
+                })
+            }) || attributed
+                .as_deref()
+                .is_none_or(|text| plain.is_some_and(|title| title != text))))
+    {
+        context.warn(ImportWarning::Formatting);
+    }
+    match (plain, attributed) {
+        (Some(title), _) => Cow::Borrowed(title),
+        (None, Some(title)) => Cow::Owned(title),
+        (None, None) => Cow::Borrowed("Untitled"),
     }
 }
 
@@ -2862,9 +2916,9 @@ fn parse_topic(
     if depth > 2000 {
         return Err(IoError::Invalid("XMind topic nesting exceeds 2000".into()));
     }
-    let title = v.get("title").and_then(Value::as_str).unwrap_or("Untitled");
+    let title = imported_topic_title(v, context);
     let id = match parent {
-        Some(parent_id) => s.add_child(parent_id, None, title),
+        Some(parent_id) => s.add_child(parent_id, None, title.as_ref()),
         None => s.root,
     };
     if parent.is_none() {
@@ -2898,7 +2952,7 @@ fn parse_topic(
             let name = title
                 .strip_prefix('📎')
                 .map(str::trim_start)
-                .unwrap_or(title);
+                .unwrap_or(&title);
             Ok(thinoda_core::attachments::Attachment {
                 resource: reference,
                 name: thinoda_core::attachments::safe_name(name),
@@ -3491,7 +3545,15 @@ pub(crate) fn import_with_report(bytes: &[u8]) -> Result<(Workbook, Vec<ImportWa
                 };
                 parse_topic(root, &mut s, None, 0, &mut ids, &context, "centralTopic")?;
                 import_sheet_theme(&v["theme"], &mut s);
-                if non_empty(v.get("zones")) {
+                if [
+                    "zones",
+                    "topicOverlapping",
+                    "arrangeableLayerOrder",
+                    "extensions",
+                ]
+                .iter()
+                .any(|key| non_empty(v.get(key)))
+                {
                     context.warn(ImportWarning::Other);
                 }
                 if let Some(rels) = v.get("relationships").and_then(Value::as_array) {
@@ -6771,8 +6833,11 @@ mod tests {
         let without_thumbnail = include_bytes!("../tests/fixtures/sample-map-no-thumbnail.xmind");
         let with_thumbnail = include_bytes!("../tests/fixtures/sample-map-with-thumbnail.xmind");
         let (expected, warnings) = import_with_report(without_thumbnail).unwrap();
-        // Desktop titles carry bold attributedTitle runs, which Thinoda titles cannot keep.
-        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        // Bold title runs and sheet layout settings are not preserved.
+        assert_eq!(
+            warnings,
+            vec![ImportWarning::Formatting, ImportWarning::Other]
+        );
         assert_eq!(expected.sheets.len(), 1);
         assert_eq!(expected.active().root_topic().title, "Central Topic");
         assert_eq!(
@@ -7331,6 +7396,30 @@ mod tests {
                 ImportWarning::Markers,
             ),
             (
+                json!({"title": "Root", "markers": {"markerId": "priority-1"}}),
+                ImportWarning::Markers,
+            ),
+            (
+                json!({"title": "Root", "structureClass": "org.vendor.future"}),
+                ImportWarning::Formatting,
+            ),
+            (
+                json!({"title": "Root", "structureClass": "org.xmind.ui.timeline.vertical.btt"}),
+                ImportWarning::Formatting,
+            ),
+            (
+                json!({"title": "Root", "labels": ["kept", {"name": "lost"}]}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "children": ["lost"]}),
+                ImportWarning::Other,
+            ),
+            (
+                json!({"title": "Root", "children": {"attached": {"title": "lost"}}}),
+                ImportWarning::Other,
+            ),
+            (
                 json!({"title": "Root", "taskInfo": {"progress": 0.5}}),
                 ImportWarning::Markers,
             ),
@@ -7358,7 +7447,28 @@ mod tests {
         for (root, expected) in cases {
             let (_, warnings) = content_report(json!({"rootTopic": root.clone()}));
             assert_eq!(warnings, vec![expected], "{root}");
+            let archive = make_archive(&[(
+                "content.json".to_owned(),
+                serde_json::to_vec(&json!([{"rootTopic": root}])).unwrap(),
+            )]);
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&expected)
+            ));
         }
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root", "labels": ["kept", {"name": "lost"}]}
+        }));
+        assert_eq!(book.active().root_topic().labels, ["kept"]);
+        assert_eq!(warnings, vec![ImportWarning::Other]);
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {
+                "title": "Root", "markers": [], "labels": [],
+                "children": {}, "structureClass": "org.xmind.ui.map"
+            }
+        }));
+        assert!(warnings.is_empty());
         let (workbook, warnings) = content_report(json!({
             "rootTopic": {"id": "r", "title": "Root"},
             "relationships": [{"end1Id": "r", "end2Id": "missing"}],
@@ -7371,6 +7481,94 @@ mod tests {
         }));
         assert_eq!(warnings, vec![ImportWarning::Other]);
         let (_, warnings) = content_report(json!({"rootTopic": {"title": "Root"}, "zones": []}));
+        assert!(warnings.is_empty());
+        for field in [
+            json!({"topicOverlapping": false}),
+            json!({"topicOverlapping": true}),
+            json!({"arrangeableLayerOrder": ["topic"]}),
+            json!({"extensions": [{"provider": "vendor", "content": {"style": "value"}}]}),
+        ] {
+            let mut sheet = json!({"rootTopic": {"title": "Root"}});
+            sheet
+                .as_object_mut()
+                .unwrap()
+                .extend(field.as_object().unwrap().clone());
+            let (_, warnings) = content_report(sheet.clone());
+            assert_eq!(warnings, vec![ImportWarning::Other], "{sheet}");
+            let archive = make_archive(&[(
+                "content.json".to_owned(),
+                serde_json::to_vec(&json!([sheet])).unwrap(),
+            )]);
+            assert!(matches!(
+                import(&archive),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&ImportWarning::Other)
+            ));
+        }
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root"},
+            "topicOverlapping": null,
+            "arrangeableLayerOrder": [],
+            "extensions": [],
+        }));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn attributed_title_text_is_recovered_or_disclosed() {
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"attributedTitle": [{"text": "Hello "}, {"text": "world"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Hello world");
+        assert!(warnings.is_empty());
+
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Pl"}, {"text": "ain"}]}
+        }));
+        assert!(warnings.is_empty());
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Different"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Plain");
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        let archive = make_archive(&[(
+            "content.json".to_owned(),
+            serde_json::to_vec(&json!([{
+                "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Different"}]}
+            }]))
+            .unwrap(),
+        )]);
+        assert!(matches!(
+            import(&archive),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": 42}]}
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root", "children": {"attached": [
+                {"attributedTitle": [{"text": "Child"}]}
+            ]}}
+        }));
+        let root = book.active().root_topic();
+        assert_eq!(book.active().topics[&root.children[0]].title, "Child");
+        assert!(warnings.is_empty());
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"attributedTitle": [{"text": "Styled", "fo:font-weight": "bold"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Styled");
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": []}
+        }));
+        assert_eq!(book.active().root_topic().title, "Plain");
         assert!(warnings.is_empty());
     }
 

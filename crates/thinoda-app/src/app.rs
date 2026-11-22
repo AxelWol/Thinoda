@@ -399,6 +399,8 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::MindManager,
     Format::Png,
     Format::Jpeg,
+    Format::WebP,
+    Format::Gif,
     Format::Svg,
     Format::Pdf,
     Format::PowerPoint,

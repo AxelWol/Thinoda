@@ -450,6 +450,8 @@ fn unsupported_resources_and_editable_exports_remain_explicit() {
                 | Format::Svg
                 | Format::Png
                 | Format::Jpeg
+                | Format::WebP
+                | Format::Gif
                 | Format::Pdf
                 | Format::PowerPoint
         ) {
@@ -459,9 +461,23 @@ fn unsupported_resources_and_editable_exports_remain_explicit() {
             );
         }
     }
+    for format in [Format::WebP, Format::Gif] {
+        assert!(
+            !export_bytes(&book, format, &Default::default())
+                .unwrap()
+                .is_empty()
+        );
+    }
     let bad = Resource::new("document.bin", "application/octet-stream", vec![1, 2, 3]).unwrap();
     book.active_mut().resources.insert(bad).unwrap();
-    for format in [Format::Svg, Format::Png, Format::Pdf, Format::PowerPoint] {
+    for format in [
+        Format::Svg,
+        Format::Png,
+        Format::WebP,
+        Format::Gif,
+        Format::Pdf,
+        Format::PowerPoint,
+    ] {
         assert!(export_bytes(&book, format, &Default::default()).is_err());
     }
     assert!(export_bytes(&book, Format::XMind, &Default::default()).is_err());
