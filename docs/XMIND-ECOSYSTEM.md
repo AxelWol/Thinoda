@@ -474,3 +474,10 @@ SVGZ, malformed XML and excessive XML events rather than silently dropping
 their content. More SVG features, original vector
 preservation and animation remain open; the package and attachment budgets
 remain unchanged.
+
+**Embedded WebP critique:** Static WebP uses the same bounded decoder as
+standalone pictures, and rejects animation and orientation transforms before
+the SVG renderer sees it. The original SVG remains available as a shared
+attachment, and conversion still requires consent. Embedded GIF remains
+unsupported: the SVG renderer uses the first frame dimensions and ignores
+frame offsets, so accepting arbitrary static GIFs would misrepresent them.
