@@ -165,15 +165,28 @@ fn supported_static_svg_css(css: &str) -> bool {
 
 fn embedded_svg_raster_pixels(href: &str) -> Option<u64> {
     use base64::Engine as _;
+    use image::ImageDecoder as _;
 
     let (media_type, data) = if let Some(data) = href.strip_prefix("data:image/png;base64,") {
         ("image/png", data)
+    } else if let Some(data) = href.strip_prefix("data:image/jpeg;base64,") {
+        ("image/jpeg", data)
     } else {
-        ("image/jpeg", href.strip_prefix("data:image/jpeg;base64,")?)
+        ("image/webp", href.strip_prefix("data:image/webp;base64,")?)
     };
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .ok()?;
+    if media_type == "image/webp" {
+        let mut decoder =
+            image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).ok()?;
+        if decoder.orientation().ok()? != image::metadata::Orientation::NoTransforms {
+            return None;
+        }
+        let png = images::transcode_static_webp(&bytes).ok()?;
+        let image = images::decode(&png).ok()?;
+        return Some(u64::from(image.width) * u64::from(image.height));
+    }
     if media_type == "image/png"
         && image::codecs::png::PngDecoder::new(std::io::Cursor::new(&bytes))
             .ok()?
@@ -7865,6 +7878,16 @@ mod tests {
             .0;
         let jpeg = base64::engine::general_purpose::STANDARD.encode(jpeg);
         examples.push((format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/jpeg;base64,{jpeg}"/></svg>"#).into_bytes(), expected));
+        let mut webp = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            10,
+            4,
+            image::Rgba([18, 85, 170, 255]),
+        ))
+        .write_to(&mut webp, image::ImageFormat::WebP)
+        .unwrap();
+        let webp = base64::engine::general_purpose::STANDARD.encode(webp.into_inner());
+        examples.push((format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/webp;base64,{webp}"/></svg>"#).into_bytes(), [18, 85, 170, 255]));
         for (svg, expected) in &examples {
             for legacy in [false, true] {
                 let content = if legacy {
@@ -8076,6 +8099,86 @@ mod tests {
         assert!(images::requires_visual_normalization(&rotated).unwrap());
         assert!(!supported_static_svg(&svg(&rotated)));
         assert!(!supported_static_svg(&svg(&[0x89, b'P', b'N', b'G'])));
+    }
+
+    #[test]
+    fn embedded_svg_webp_preserves_transparency_and_rejects_animation() {
+        use base64::Engine as _;
+        let mut output = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([20, 40, 80, 128]),
+        ))
+        .write_to(&mut output, image::ImageFormat::WebP)
+        .unwrap();
+        let still = output.into_inner();
+        let svg = |bytes: &[u8]| {
+            let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+            format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><image width="4" height="4" href="data:image/webp;base64,{data}"/></svg>"#).into_bytes()
+        };
+        let png = transcode_package_picture("picture.svg", &svg(&still)).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        let pixel = pixels.get_pixel(0, 0).0;
+        assert_eq!(pixel[3], 128);
+        for (actual, expected) in pixel[..3].iter().zip([20u8, 40, 80]) {
+            assert!(actual.abs_diff(expected) <= 1);
+        }
+
+        let mut frame = vec![0; 16];
+        frame[6] = 3;
+        frame[9] = 3;
+        frame[12] = 1;
+        frame.extend_from_slice(&still[12..]);
+        let mut payload = b"WEBPVP8X".to_vec();
+        payload.extend_from_slice(&10u32.to_le_bytes());
+        payload.extend_from_slice(&[2, 0, 0, 0, 3, 0, 0, 3, 0, 0]);
+        payload.extend_from_slice(b"ANIM");
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&[0; 6]);
+        payload.extend_from_slice(b"ANMF");
+        payload.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&frame);
+        if !frame.len().is_multiple_of(2) {
+            payload.push(0);
+        }
+        let mut animated = b"RIFF".to_vec();
+        animated.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        animated.extend_from_slice(&payload);
+        assert!(
+            image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&animated))
+                .unwrap()
+                .has_animation()
+        );
+        let animated_svg = svg(&animated);
+        assert!(!supported_static_svg(&animated_svg));
+        for legacy in [false, true] {
+            let content = if legacy {
+                ("content.xml", br#"<xmap-content><sheet><topic xlink:href="xap:resources/picture.svg"><title>Root</title><image xlink:href="xap:resources/picture.svg"/></topic></sheet></xmap-content>"#.to_vec())
+            } else {
+                (
+                    "content.json",
+                    serde_json::to_vec(&json!([{"rootTopic": {
+                        "title": "Root", "href": "xap:resources/picture.svg",
+                        "image": {"src": "xap:resources/picture.svg"}
+                    }}]))
+                    .unwrap(),
+                )
+            };
+            let archive = make_archive(&[
+                (content.0.into(), content.1),
+                ("resources/picture.svg".into(), animated_svg.clone()),
+            ]);
+            let (book, warnings) = import_with_report(&archive).unwrap();
+            assert!(warnings.contains(&ImportWarning::Resources));
+            let sheet = book.active();
+            assert!(sheet.root_topic().image.is_none());
+            let attachment = sheet.root_topic().attachment.as_ref().unwrap();
+            assert_eq!(
+                sheet.resources.get(&attachment.resource).unwrap().bytes(),
+                animated_svg
+            );
+        }
     }
 
     #[test]

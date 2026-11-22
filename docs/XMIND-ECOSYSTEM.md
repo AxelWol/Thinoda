@@ -420,7 +420,7 @@ undocumented XMind payload.
 - [x] Recover a bounded static SVG subset in modern and legacy packages,
   rasterizing to PNG with a resource-loss warning and preserving shared
   attachments.
-- [x] Recover SVG pictures containing embedded static PNG/JPEG data URLs, with
+- [x] Recover SVG pictures containing embedded static PNG/JPEG/WebP data URLs, with
   per-picture limits on image count and total decoded pixels.
 - [x] Recover static SVG stylesheets and inline styles with comments at rule or
   declaration boundaries, while rejecting comments that could obscure tokens.
@@ -460,7 +460,8 @@ The XMind subset permits simple static CSS and local fragment references
 inside tokens or functions are rejected. Validation examines the uncommented
 CSS so external URLs and animation cannot hide behind comments, and rejects CSS
 escapes. Embedded image
-elements are limited to 16 base64 PNG/JPEG images and four megapixels in total; APNG,
+elements are limited to 16 base64 PNG/JPEG/WebP images and four megapixels in total; APNG,
+animated WebP,
 invalid images and external references are rejected. Image links must use
 unqualified `href` or the XLink namespace, including its alternate prefixes.
 Images with orientation metadata requiring transformation are rejected because
