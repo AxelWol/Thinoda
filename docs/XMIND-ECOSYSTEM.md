@@ -138,7 +138,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 
 | Capability | Before | Gap | Target |
 |---|---|---|---|
-| Structure classes | ✅ 17 kinds | Unknown classes are not represented. | Keep recognized mappings; plain `org.xmind.ui.map` is clockwise. Warn under Formatting for unrecognized non-empty classes. |
+| Structure classes | ✅ 17 kinds | Unknown classes and variant-specific behavior are not represented. | Keep recognized mappings; plain `org.xmind.ui.map` is clockwise. Warn under Formatting for unrecognized classes and non-canonical variants approximated by a supported structure. |
 | Unbalanced `right-number` extension | ❌ | The left/right split is lost. | Set `branch_side` on import; write the extension on export (X2). |
 | Role theme and inline style properties | ✅ | Values are not trimmed; numeric `fo:font-weight` only partly parsed. | Trim values, treat `inherited` as unset, weights ≥ 600 are bold (X2). |
 | Line classes `bight`, `fold`, `roundedfold` | ❌ unset | Desktop default theme uses `roundedfold`. | Map to the nearest Thinoda line (X2). |
@@ -293,12 +293,11 @@ collections do not. This is a conservative warning, not preservation or
 verified interpretation of these settings. The checked-in desktop samples
 contain these settings and consequently now report Other alongside Formatting.
 
-**Malformed and unknown topic content follow-up:** Unknown structure classes,
-non-array marker data, malformed labels and malformed child collections now
+**Malformed and unknown topic content follow-up:** Unknown or approximated
+structure classes, non-array marker data, malformed labels and malformed child collections now
 produce loss warnings. Duck check: valid entries are still imported where
 possible, while a warning protects the source from in-place overwrite; the
-warning does not reconstruct missing content or guarantee exact layout for
-the lenient structure aliases already accepted by Thinoda.
+warning does not reconstruct missing content or guarantee exact layout.
 
 ### 4.1 X2 review critique
 

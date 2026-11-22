@@ -2783,10 +2783,12 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
     }
     if v.get("structureClass").is_some_and(|value| {
         non_empty(Some(value))
-            && value
-                .as_str()
-                .and_then(Structure::from_xmind_class)
-                .is_none()
+            && value.as_str().is_none_or(|class| {
+                let class = class.trim();
+                Structure::from_xmind_class(class).is_none_or(|structure| {
+                    class != "org.xmind.ui.map" && class != structure.xmind_class()
+                })
+            })
     }) {
         context.warn(ImportWarning::Formatting);
     }
@@ -7399,6 +7401,10 @@ mod tests {
             ),
             (
                 json!({"title": "Root", "structureClass": "org.vendor.future"}),
+                ImportWarning::Formatting,
+            ),
+            (
+                json!({"title": "Root", "structureClass": "org.xmind.ui.timeline.vertical.btt"}),
                 ImportWarning::Formatting,
             ),
             (
