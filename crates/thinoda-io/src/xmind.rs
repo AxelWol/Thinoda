@@ -2,6 +2,7 @@ use crate::{ImportWarning, IoError, zip_entry};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write};
 use thinoda_core::{
@@ -2759,17 +2760,6 @@ fn canonical_marker_id(id: &str) -> &str {
 }
 
 fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
-    if v.get("attributedTitle")
-        .and_then(Value::as_array)
-        .is_some_and(|runs| {
-            runs.iter().any(|run| {
-                run.as_object()
-                    .is_some_and(|run| run.keys().any(|key| key != "text"))
-            })
-        })
-    {
-        context.warn(ImportWarning::Formatting);
-    }
     if v.get("taskInfo").is_some_and(|task| !task.is_null()) {
         context.warn(ImportWarning::Markers);
     }
@@ -2805,6 +2795,38 @@ fn report_unsupported_topic_data(v: &Value, context: &TopicImportContext<'_>) {
         })
     {
         context.warn(ImportWarning::Other);
+    }
+}
+
+fn imported_topic_title<'a>(v: &'a Value, context: &TopicImportContext<'_>) -> Cow<'a, str> {
+    let plain = v.get("title").and_then(Value::as_str);
+    let source = v.get("attributedTitle");
+    let runs = source
+        .and_then(Value::as_array)
+        .filter(|runs| !runs.is_empty());
+    let attributed = runs.and_then(|runs| {
+        runs.iter()
+            .map(|run| run.get("text").and_then(Value::as_str))
+            .collect::<Option<String>>()
+    });
+    if v.get("title")
+        .is_some_and(|title| !title.is_null() && !title.is_string())
+        || (non_empty(source)
+            && (runs.is_none_or(|runs| {
+                runs.iter().any(|run| {
+                    run.as_object()
+                        .is_none_or(|run| run.keys().any(|key| key != "text"))
+                })
+            }) || attributed
+                .as_deref()
+                .is_none_or(|text| plain.is_some_and(|title| title != text))))
+    {
+        context.warn(ImportWarning::Formatting);
+    }
+    match (plain, attributed) {
+        (Some(title), _) => Cow::Borrowed(title),
+        (None, Some(title)) => Cow::Owned(title),
+        (None, None) => Cow::Borrowed("Untitled"),
     }
 }
 
@@ -2862,9 +2884,9 @@ fn parse_topic(
     if depth > 2000 {
         return Err(IoError::Invalid("XMind topic nesting exceeds 2000".into()));
     }
-    let title = v.get("title").and_then(Value::as_str).unwrap_or("Untitled");
+    let title = imported_topic_title(v, context);
     let id = match parent {
-        Some(parent_id) => s.add_child(parent_id, None, title),
+        Some(parent_id) => s.add_child(parent_id, None, title.as_ref()),
         None => s.root,
     };
     if parent.is_none() {
@@ -2898,7 +2920,7 @@ fn parse_topic(
             let name = title
                 .strip_prefix('📎')
                 .map(str::trim_start)
-                .unwrap_or(title);
+                .unwrap_or(&title);
             Ok(thinoda_core::attachments::Attachment {
                 resource: reference,
                 name: thinoda_core::attachments::safe_name(name),
@@ -7371,6 +7393,64 @@ mod tests {
         }));
         assert_eq!(warnings, vec![ImportWarning::Other]);
         let (_, warnings) = content_report(json!({"rootTopic": {"title": "Root"}, "zones": []}));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn attributed_title_text_is_recovered_or_disclosed() {
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"attributedTitle": [{"text": "Hello "}, {"text": "world"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Hello world");
+        assert!(warnings.is_empty());
+
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Pl"}, {"text": "ain"}]}
+        }));
+        assert!(warnings.is_empty());
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Different"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Plain");
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+        let archive = make_archive(&[(
+            "content.json".to_owned(),
+            serde_json::to_vec(&json!([{
+                "rootTopic": {"title": "Plain", "attributedTitle": [{"text": "Different"}]}
+            }]))
+            .unwrap(),
+        )]);
+        assert!(matches!(
+            import(&archive),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+
+        let (_, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": [{"text": 42}]}
+        }));
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Root", "children": {"attached": [
+                {"attributedTitle": [{"text": "Child"}]}
+            ]}}
+        }));
+        let root = book.active().root_topic();
+        assert_eq!(book.active().topics[&root.children[0]].title, "Child");
+        assert!(warnings.is_empty());
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"attributedTitle": [{"text": "Styled", "fo:font-weight": "bold"}]}
+        }));
+        assert_eq!(book.active().root_topic().title, "Styled");
+        assert_eq!(warnings, vec![ImportWarning::Formatting]);
+
+        let (book, warnings) = content_report(json!({
+            "rootTopic": {"title": "Plain", "attributedTitle": []}
+        }));
+        assert_eq!(book.active().root_topic().title, "Plain");
         assert!(warnings.is_empty());
     }
 

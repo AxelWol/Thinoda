@@ -278,6 +278,13 @@ branch for per-phase critiques.
 | X6 | Done. `.xmindmark` is a bounded, localized import/export format; supported hierarchy, boundaries, summaries and relationships round-trip deterministically, while export preflight identifies omitted topic details, annotation styling/routing and other sheets. |
 | X7 | Done. User guidance and this status/critique reflect the implemented behavior and its loss boundaries. |
 
+**Attributed-title safety follow-up:** When a JSON topic has no plain title,
+valid attributed runs now supply its visible text. A mismatch between plain
+and attributed text, malformed runs, or unsupported run formatting produces a
+Formatting warning; imports with that warning stay protected from in-place
+overwrite. Duck check: text recovery does not preserve run formatting or
+establish installed-XMind round-trip parity, so those gaps remain open.
+
 ### 4.1 X2 review critique
 
 - **Compatibility:** Adding public fields changes the serialized content, so
