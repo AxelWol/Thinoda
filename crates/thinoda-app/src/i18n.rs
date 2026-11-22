@@ -1918,6 +1918,7 @@ const DE: &[(&str, &str)] = &[
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),
+    ("WebP", "WebP"),
     ("PDF", "PDF"),
     ("Word", "Word"),
     ("PowerPoint", "PowerPoint"),

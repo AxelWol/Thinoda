@@ -876,6 +876,7 @@ Could not read an embedded draw.io diagram from this HTML. It may be invalid, to
 SVG|SVG|SVG|SVG|SVG|SVG|SVG|SVG
 PNG|PNG|PNG|PNG|PNG|PNG|PNG|PNG
 JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG|JPEG
+WebP|WebP|WebP|WebP|WebP|WebP|WebP|WebP
 PDF|PDF|PDF|PDF|PDF|PDF|PDF|PDF
 Word|Word|Word|Word|Word|Word|Word|Word
 Excel|Excel|Excel|Excel|Excel|Excel|Excel|Excel

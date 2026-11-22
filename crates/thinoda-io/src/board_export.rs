@@ -350,7 +350,7 @@ pub enum ExportLoss {
 /// Content lost when exporting `book` to `format` with `opts`, itemised with counts.
 ///
 /// Plain data for an export preflight; empty when nothing is lost. Thinoda keeps
-/// everything. SVG, PNG, JPEG and PDF apply frame clipping visually; this is not
+/// everything. SVG, PNG, JPEG, WebP and PDF apply frame clipping visually; this is not
 /// secure redaction of embedded resources or vector content. Flattened PowerPoint
 /// viewport slides also preserve visual clipping, while editable branch/zone slides
 /// may omit it and retain a clipping warning. Visual formats also omit the editing
@@ -472,7 +472,7 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     );
     if matches!(
         format,
-        Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
+        Format::Svg | Format::Png | Format::Jpeg | Format::WebP | Format::Pdf | Format::PowerPoint
     ) {
         let oriented_images = sheets
             .iter()

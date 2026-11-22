@@ -427,7 +427,15 @@ the main Edit menu.
 ### D13 — Other formats
 
 - [x] JPEG visual export through the shared raster renderer
-- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX, WebP and GIF export
+- [x] Lossless WebP visual export through the shared raster renderer
+- [ ] Embedded diagram in PDF import; VSDX, VSSX, Gliffy and Lucid import (VSD binary out of scope); VSDX and GIF export
+
+**WebP rubber-duck critique:** WebP uses the existing bounded raster pipeline
+and its lossless encoder, so alpha, theme, selected-sheet scope, clipping and
+export-loss disclosure follow PNG rather than a second renderer. This is a
+flattened visual export, not an editable draw.io container or WebP import.
+Pixel-for-pixel comparisons cover transparent and opaque output; other D13
+formats and real-browser download verification remain open.
 
 **JPEG rubber-duck critique:** JPEG is already available through the normal
 visual export path, so treating it as missing would duplicate existing work.
@@ -516,6 +524,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-22 | D13 WebP export (partial) | Added lossless WebP visual export with alpha and the same preflight as PNG; other D13 formats remain open. |
 | 2026-11-21 | D12 select by tag (partial) | Edit › Select › Select by Tag selects visible board objects carrying an exact tag; hidden layers and collapsed contents are excluded. |
 | 2026-11-21 | D12 exact geometry (partial) | The nearby Arrange section edits left, top, width, height and rotation of one ungrouped, unlocked canvas object, one undo step per completed field. |
 | 2026-11-21 | D11 automatic layouts | Vertical/horizontal tree, vertical/horizontal flow, radial, circle and organic layouts for the board selection, as one undoable command with rigid groups, containers and floating branches, lock-aware bend reset and guaranteed separation. |

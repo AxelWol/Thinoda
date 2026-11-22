@@ -819,7 +819,12 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
         }
         if matches!(
             format,
-            Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
+            Format::Svg
+                | Format::Png
+                | Format::Jpeg
+                | Format::WebP
+                | Format::Pdf
+                | Format::PowerPoint
         ) {
             has_label(&h, t("Board grid and snapping settings omitted"));
             let clip_loss = format!("1 — {}", t("Zone clipping not fully applied"));

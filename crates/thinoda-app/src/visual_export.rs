@@ -16,6 +16,7 @@ pub(crate) fn options_for_gui_export(
                 format,
                 Format::Png
                     | Format::Jpeg
+                    | Format::WebP
                     | Format::Svg
                     | Format::DrawIoSvg
                     | Format::DrawIoPng
@@ -142,6 +143,7 @@ mod tests {
             for format in [
                 Format::Png,
                 Format::Jpeg,
+                Format::WebP,
                 Format::Svg,
                 Format::DrawIoSvg,
                 Format::DrawIoPng,
