@@ -110,7 +110,7 @@ The *Before* column is the state at commit `5b94b80` (after the #136 fix).
 | Ancillary manifest entries (thumbnails) | ✅ | — | Keep (#136). |
 | Missing `manifest.json` with images | ❌ hard error | Third-party writers omit it. | Use the archive inventory (X1). |
 | Resources present but unreferenced | ❌ hard error | Note images and attachments leave bytes that the map does not reference. | Ignore them (still path- and size-checked) and record a warning (X1). |
-| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | SVG and animated GIF/WebP remain unsupported. | Static GIF and WebP pictures in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
+| Topic image in an undecodable format (GIF, SVG, WebP...) | ❌ hard error | Full SVG and animated GIF/WebP remain unsupported. | Static GIF, WebP and a bounded SVG subset in modern and legacy packages are converted to PNG with a Resources warning; unsupported pictures are skipped and warned. |
 | Attachment topics (`href: xap:resources/...`) | ❌ verbatim inert link | — | Import as an opaque Thinoda attachment (X2). |
 | Other `attachment(s)`, `resourceRefs`, note images | ❌ hard error | The whole map fails. | Drop the payload and warn under Resources (X1). |
 | Import warnings and consent | ❌ none for XMind | Lossy conversions are silent or fatal. | `xmind::import_with_report` plus the existing localized consent dialog (X1). |
