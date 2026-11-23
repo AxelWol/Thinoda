@@ -852,6 +852,9 @@ its pointed joins. Editable freeform polygons and polylines now use tight path
 bounds and local coordinates instead of a slide-sized bounding box; selecting the
 buffer triangle in PowerPoint showed handles around the triangle. Multipart
 stencils still export as separate shapes rather than a single editable group.
+Horizontal and vertical paths use a one-EMU minimum extent; serializer tests
+cover negative offsets and reject bounds that overflow, but off-slide rendering
+has not been verified in PowerPoint.
 Other joins, caps, hosts and slide-edge clipping remain unverified. Open XML SDK
 validation of the new fixture runs in CI because the local .NET runtime is
 unavailable.

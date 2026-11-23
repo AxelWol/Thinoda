@@ -1557,6 +1557,44 @@ mod tests {
                 .xml
                 .contains(r#"<a:path w="1000" h="1" fill="none">"#)
         );
+
+        drawing.xml.clear();
+        drawing
+            .poly(
+                "vertical",
+                &[Vec2::new(15.0, 15.0), Vec2::new(15.0, 35.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap();
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:off x="500" y="-500"/><a:ext cx="1" cy="2000"/>"#)
+        );
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:path w="1" h="2000" fill="none">"#)
+        );
+        assert!(drawing.xml.contains(r#"<a:pt x="0" y="0"/>"#));
+        assert!(drawing.xml.contains(r#"<a:pt x="0" y="2000"/>"#));
+
+        drawing.xml.clear();
+        let error = drawing
+            .poly(
+                "overflow",
+                &[Vec2::new(-f32::MAX, 0.0), Vec2::new(f32::MAX, 0.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(error, IoError::Invalid(_)));
+        assert!(drawing.xml.is_empty());
     }
 
     #[test]
