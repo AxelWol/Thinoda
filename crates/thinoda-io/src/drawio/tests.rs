@@ -4327,6 +4327,104 @@ fn drawio_js_shapes_bind_numeric_and_choice_style_keys() {
 }
 
 #[test]
+fn drawio_electrical_buffer_round_trips_and_scales() {
+    let cell = |id: &str, width: u32, height: u32, negating: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="shape=mxgraph.electrical.logic_gates.buffer2;{negating}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="{width}" height="{height}" as="geometry"/></mxCell>"#
+        )
+    };
+    let xml = page(
+        &[
+            cell("normal", 100, 80, ""),
+            cell("inverted", 200, 40, "negating=1;"),
+            cell("invalid", 100, 80, "negating=2;"),
+        ]
+        .concat(),
+    );
+    let sheet = clean(&xml);
+    let objects = shapes(&sheet);
+    assert_eq!(objects.len(), 3);
+    for (object, expected_negation) in objects.iter().zip([false, true, false]) {
+        let reference = object.stencil.as_ref().unwrap();
+        assert_eq!(reference.definition, "electrical-buffer");
+        let render = thinoda_core::stencil_object::render(object).unwrap();
+        assert_eq!(render.ports.len(), 2);
+        assert_eq!(render.ports[0].at, Vec2::new(0.0, object.rect.size.y / 2.0));
+        assert_eq!(
+            render.ports[1].at,
+            Vec2::new(object.rect.size.x, object.rect.size.y / 2.0)
+        );
+        assert!(render.ports.iter().all(|port| port.perimeter));
+        let visible: Vec<_> = render
+            .paths
+            .iter()
+            .filter(|path| {
+                path.stroke.is_some() || path.fill.as_ref().is_some_and(|fill| fill.alpha > 0.0)
+            })
+            .collect();
+        assert_eq!(visible.len(), if expected_negation { 3 } else { 2 });
+        assert_eq!(visible[0].subpaths.len(), 2);
+        assert_eq!(
+            visible[0].subpaths[0].points[0],
+            Vec2::new(0.0, object.rect.size.y * 0.5)
+        );
+        assert_eq!(
+            visible[0].subpaths[0].points[1],
+            Vec2::new(object.rect.size.x * 0.2, object.rect.size.y * 0.5)
+        );
+        assert_eq!(
+            visible[1].subpaths[0].points[0],
+            Vec2::new(object.rect.size.x * 0.2, 0.0)
+        );
+        if expected_negation {
+            let points = &visible[2].subpaths[0].points;
+            let min_x = points
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = points
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let diameter = (object.rect.size.x * 0.04).min(object.rect.size.y * 0.07);
+            assert!((min_x - object.rect.size.x * 0.8).abs() < 0.01);
+            assert!((max_x - min_x - diameter).abs() < 0.01);
+        }
+    }
+    let book = Workbook::new(sheet.clone());
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(exported.contains("negating=1;"));
+    let reopened = clean(&exported);
+    assert_eq!(
+        shapes(&reopened)
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+    let edited = exported.replacen("negating=1;", "negating=0;", 1);
+    let edited_sheet = clean(&edited);
+    let inverted = shapes(&edited_sheet)
+        .into_iter()
+        .find(|object| object.label() == "inverted")
+        .unwrap();
+    let render = thinoda_core::stencil_object::render(inverted).unwrap();
+    assert_eq!(
+        render
+            .paths
+            .iter()
+            .filter(|path| path.stroke.is_some())
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn inline_drawio_stencils_import_render_and_round_trip() {
     use base64::Engine as _;
     let encode = |stencil: &str| {

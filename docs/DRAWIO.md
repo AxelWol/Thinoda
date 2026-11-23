@@ -771,7 +771,12 @@ supports them, because they would otherwise warn on every insert. Deferred:
 `networks2.icon` and `aws4.resourceIcon` draw one of hundreds of embedded icons
 selected by a style key, and electrical `logic_gate` depends on operator and
 input-count keys. Each needs a table-driven definition rather than a single
-shape. These remain rectangle fallbacks with the usual warning. All new titles
+shape. These remain rectangle fallbacks with the usual warning. The separate
+electrical `buffer2` is implemented as an immutable data-defined stencil,
+including its optional negation bubble and endpoint constraints; it does not
+implement the variable-input gates. Its rectangular hit/perimeter outline is
+invisible, so its shadow behavior still needs visual comparison with draw.io.
+All new titles
 are translated into the eight UI languages. Choice options show readable
 labels (for example "Intermediate catching") while import and export keep
 draw.io's keywords. Parameter labels and option names are English only.

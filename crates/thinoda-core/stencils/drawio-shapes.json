@@ -47,6 +47,7 @@
       "mxgraph.floorplan.doorRight": "floorplan-door-right",
       "mxgraph.floorplan.doorDouble": "floorplan-door-double",
       "mxgraph.floorplan.stairs": "floorplan-stairs",
+      "mxgraph.electrical.logic_gates.buffer2": {"definition": "electrical-buffer", "absent": {"negating": 0}},
       "mxgraph.mockup.containers.marginRect": "mockup-margin-rect",
       "mxgraph.mockup.containers.marginRect2": "mockup-margin-rect2",
       "mxgraph.mockup.containers.leftButton": "mockup-left-button",
@@ -78,6 +79,27 @@
     }
   },
   "definitions": [
+    {
+      "id": "electrical-buffer",
+      "title": "Electrical buffer",
+      "tags": ["electrical", "logic", "buffer", "inverter"],
+      "frame": {"w": 100, "h": 80, "units": "instance"},
+      "parameters": {"negating": {"label": "Negating", "kind": "toggle", "default": 0}},
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "save"}, {"op": "fillAlpha", "value": 0}, {"op": "fill"}, {"op": "restore"},
+        {"op": "path", "commands": [{"op": "move", "x": 0, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.2]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "move", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": "w", "y": {"op": "mul", "args": ["h", 0.5]}}]},
+        {"op": "stroke"},
+        {"op": "path", "commands": [{"op": "move", "x": {"op": "mul", "args": ["w", 0.2]}, "y": 0}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.2]}, "y": "h"}, {"op": "close"}]},
+        {"op": "fillStroke"},
+        {"op": "if", "cond": "negating", "then": [
+          {"op": "ellipse", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "sub", "args": [{"op": "mul", "args": ["h", 0.5]}, {"op": "mul", "args": [0.5, {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}]}]}, "w": {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}, "h": {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}},
+          {"op": "fillStroke"}
+        ]}
+      ],
+      "connections": [{"x": 0, "y": 0.5, "perimeter": true}, {"x": 1, "y": 0.5, "perimeter": true}],
+      "interchange": {"drawio": {"style": "shape=mxgraph.electrical.logic_gates.buffer2;whiteSpace=wrap;html=1;", "parameters": {"negating": {"style": "negating", "values": ["0", "1"]}}}}
+    },
     {
       "id": "tape",
       "title": "Tape",
