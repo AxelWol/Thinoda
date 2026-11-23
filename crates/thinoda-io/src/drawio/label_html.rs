@@ -196,6 +196,7 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                     .try_parse(|parser| parser.expect_string().map(|name| name.to_string()))
                     .ok()
                     .filter(|_| parser.is_exhausted());
+                loss |= quoted.is_none() && value.contains(',');
                 let family = quoted.as_deref().unwrap_or(value).trim();
                 if family.is_empty()
                     || family.len() > MAX_INLINE_FONT_FAMILY_BYTES

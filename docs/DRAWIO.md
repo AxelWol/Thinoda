@@ -302,6 +302,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
+  - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -354,6 +355,11 @@ numeric weight, and numeric values other than 400 and 700 can differ visibly;
 the current bold/not-bold model cannot retain either distinction. The existing
 visual approximation is preserved, but import and clipboard conversion now
 report formatting loss instead of presenting it as exact.
+
+**Font-family critique:** CSS fallback lists are not native single-family names;
+retaining the written list as one family may fall back to the default font.
+Conversion warns rather than claiming fidelity. A single quoted family may
+contain a comma and does not trigger this warning.
 
 ### D10 — Save back to `.drawio`
 

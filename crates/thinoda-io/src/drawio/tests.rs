@@ -138,6 +138,49 @@ fn drawio_html_nonstandard_numeric_font_weights_warn() {
 }
 
 #[test]
+fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
+    for (family, expected, approximate) in [
+        ("Arial, sans-serif", "Arial, sans-serif", true),
+        ("&apos;A,B&apos;, sans-serif", "'A,B', sans-serif", true),
+        ("&apos;A,B&apos;", "A,B", false),
+        ("Courier New", "Courier New", false),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;span style=&quot;font-family:{family}&quot;&gt;Text&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(shape.label(), "Text");
+        assert_eq!(
+            shape.label_rich_text.as_ref().unwrap().runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            approximate,
+            "{family}: {:?}",
+            report.warnings
+        );
+        if approximate {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&ImportWarning::Formatting)
+            ));
+            assert!(
+                crate::drawio_clipboard::decode(&xml)
+                    .unwrap()
+                    .warnings
+                    .contains(&ImportWarning::Formatting)
+            );
+        }
+    }
+}
+
+#[test]
 fn drawio_shape_effects_import_natively_and_round_trip() {
     use thinoda_core::shape_style::{DashPattern, GradientDirection};
     let xml = page(concat!(
