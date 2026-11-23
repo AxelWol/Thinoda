@@ -1,4 +1,4 @@
-_Last updated: 2026-11-23 15:32:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-23 18:45:29 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
