@@ -1059,13 +1059,13 @@ pub(crate) fn reference_style(stencil: &StencilRef) -> String {
 
 /// Reads an explicit stencil reference from cell style entries. A draw.io-edited
 /// bound parameter wins over the stored override, so edits made in draw.io survive.
-fn explicit_reference(entries: &BTreeMap<&str, &str>) -> Option<StencilRef> {
+fn explicit_reference(entries: &BTreeMap<&str, &str>, shape: &str) -> Option<StencilRef> {
     let mut stencil = StencilRef::new(
         *entries.get(STYLE_PACKAGE_KEY)?,
         *entries.get(STYLE_DEFINITION_KEY)?,
     );
     read_parameter_overrides(&mut stencil, entries);
-    apply_bound_parameters(&mut stencil, entries, None);
+    apply_explicit_bound_parameters(&mut stencil, entries, shape);
     stencil.validate().ok().map(|()| stencil)
 }
 
@@ -1087,6 +1087,7 @@ fn apply_bound_parameters(
     stencil: &mut StencilRef,
     entries: &BTreeMap<&str, &str>,
     absent: Option<&serde_json::Map<String, Value>>,
+    preserve_missing: bool,
 ) {
     let parameter_updates = stencil
         .resolve()
@@ -1099,6 +1100,14 @@ fn apply_bound_parameters(
                     .iter()
                     .filter_map(|(name, binding)| {
                         let parameter = definition.parameters.get(name)?;
+                        let style_key = match binding {
+                            Value::String(key) => Some(key.as_str()),
+                            Value::Object(choice) => choice.get("style").and_then(Value::as_str),
+                            _ => None,
+                        }?;
+                        if preserve_missing && !entries.contains_key(style_key) {
+                            return None;
+                        }
                         let value = match binding {
                             Value::String(key) => entries
                                 .get(key.as_str())
@@ -1117,6 +1126,11 @@ fn apply_bound_parameters(
                                 }),
                             _ => None,
                         };
+                        let absent = if preserve_missing && !binding.is_object() {
+                            None
+                        } else {
+                            absent
+                        };
                         let value = value
                             .filter(|value| value.is_finite())
                             .or_else(|| absent_value(absent?.get(name)?, entries))?;
@@ -1131,6 +1145,19 @@ fn apply_bound_parameters(
     for (name, value) in parameter_updates {
         stencil.parameters.insert(name, value);
     }
+}
+
+fn apply_explicit_bound_parameters(
+    stencil: &mut StencilRef,
+    entries: &BTreeMap<&str, &str>,
+    shape: &str,
+) {
+    let absent = import_index().get(shape).and_then(|target| {
+        (target.package.id == stencil.package && target.definition == stencil.definition)
+            .then_some(target.absent)
+            .flatten()
+    });
+    apply_bound_parameters(stencil, entries, absent, true);
 }
 
 /// `absent` is a number or a list of `{"if": {key: value}, "value": n}` rules;
@@ -1378,7 +1405,7 @@ pub(crate) fn style_reference<'a>(
 ) -> Option<StencilRef> {
     let entries: BTreeMap<&str, &str> = entries.into_iter().collect();
     if entries.contains_key(STYLE_PACKAGE_KEY) {
-        let explicit = explicit_reference(&entries)?;
+        let explicit = explicit_reference(&entries, shape)?;
         if explicit.resolve().is_some() {
             return Some(explicit);
         }
@@ -1391,7 +1418,7 @@ pub(crate) fn style_reference<'a>(
         {
             let mut stencil = StencilRef::with_package(package, explicit.definition.clone());
             stencil.parameters = explicit.parameters.clone();
-            apply_bound_parameters(&mut stencil, &entries, None);
+            apply_explicit_bound_parameters(&mut stencil, &entries, shape);
             if stencil.resolve().is_some() && stencil.validate().is_ok() {
                 return Some(stencil);
             }
@@ -1407,7 +1434,7 @@ pub(crate) fn style_reference<'a>(
     } else if let Some(target) = import_index().get(shape) {
         let mut stencil =
             StencilRef::with_package(Arc::clone(&target.package), target.definition.clone());
-        apply_bound_parameters(&mut stencil, &entries, target.absent);
+        apply_bound_parameters(&mut stencil, &entries, target.absent, false);
         stencil
     } else {
         let (package, definition) = crate::drawio_bundle::bundle()

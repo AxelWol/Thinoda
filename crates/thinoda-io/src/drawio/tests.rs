@@ -4407,21 +4407,24 @@ fn drawio_electrical_buffer_round_trips_and_scales() {
             .map(|object| object.stencil.clone())
             .collect::<Vec<_>>()
     );
-    let edited = exported.replacen("negating=1;", "negating=0;", 1);
-    let edited_sheet = clean(&edited);
-    let inverted = shapes(&edited_sheet)
-        .into_iter()
-        .find(|object| object.label() == "inverted")
-        .unwrap();
-    let render = thinoda_core::stencil_object::render(inverted).unwrap();
-    assert_eq!(
-        render
-            .paths
-            .iter()
-            .filter(|path| path.stroke.is_some())
-            .count(),
-        2
-    );
+    for (replacement, expected_paths) in [("negating=0;", 2), ("negating=2;", 2), ("", 3)] {
+        let edited = exported.replacen("negating=1;", replacement, 1);
+        let edited_sheet = clean(&edited);
+        let inverted = shapes(&edited_sheet)
+            .into_iter()
+            .find(|object| object.label() == "inverted")
+            .unwrap();
+        let render = thinoda_core::stencil_object::render(inverted).unwrap();
+        assert_eq!(
+            render
+                .paths
+                .iter()
+                .filter(|path| path.stroke.is_some())
+                .count(),
+            expected_paths,
+            "{replacement:?}"
+        );
+    }
 }
 
 #[test]

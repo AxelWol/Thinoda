@@ -214,6 +214,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Corpus-ranked definitions (34 new, 35 draw.io names): floorplan wall, wall corner, window, doors (left, right, double) and stairs; mockup margin rects, buttons, scroll bar, checkbox, curly brace and browser window; bpmn event, shape, gateway2 and task/task2 (outlines, symbols, markers, loops); c4 person and person2; stylised arrow, shaded pyramid, circular callout, bar callout; lean_mapping inventory, push and pull arrows, data box, supermarket, outside sources, manufacturing process (plain and shared), FIFO lane
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
+- [x] Apply matching shape defaults to unknown edited choice values even when a Thinoda parameter override is embedded
 - [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
@@ -777,6 +778,12 @@ electrical `buffer2` is implemented as an immutable data-defined stencil,
 including its optional negation bubble and endpoint constraints; it does not
 implement the variable-input gates. Its rectangular hit/perimeter outline is
 invisible, so its shadow behavior still needs visual comparison with draw.io.
+For explicitly referenced stencils, a present but unknown choice uses the
+matching draw.io shape's declared absent value rather than reviving a stale
+Thinoda override; missing keys still preserve that override for older files,
+and mismatched shapes cannot supply another definition's defaults. Invalid
+numeric values keep their existing behavior rather than guessing draw.io's
+semantics.
 All new titles
 are translated into the eight UI languages. Choice options show readable
 labels (for example "Intermediate catching") while import and export keep
