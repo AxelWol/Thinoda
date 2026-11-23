@@ -147,7 +147,10 @@ fn layers_panel_can_be_dragged_and_reopened_in_place() {
         );
     harness.run_steps(4);
     let before = panel_rect(&harness);
-    let start = harness.get_by_label("Layers").rect().center();
+    let start = harness
+        .get_by_label("Drag or use arrow keys to move the Layers panel")
+        .rect()
+        .center();
     let start_layer = harness.ctx.layer_id_at(start);
     drag(&mut harness, start, vec2(-160.0, 100.0));
     let title_moved = panel_rect(&harness);
@@ -187,6 +190,146 @@ fn layers_panel_can_be_dragged_and_reopened_in_place() {
         );
     reopened.run_steps(5);
     assert_eq!(panel_rect(&reopened), moved);
+}
+
+#[test]
+fn layers_panel_can_be_moved_with_keyboard_and_restored() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::paths::Paths::from_root(directory.path());
+    paths.ensure().unwrap();
+    let mut app = ThinodaApp::headless();
+    app.services.paths = Some(paths.clone());
+    app.doc_mut().unwrap().show_layers = true;
+    let mut harness = Harness::builder()
+        .with_size(vec2(900.0, 500.0))
+        .build_ui_state(
+            |ui: &mut Ui, app: &mut ThinodaApp| {
+                app.board_layers_panel(ui.ctx(), ui.max_rect());
+            },
+            app,
+        );
+    harness.run_steps(4);
+    let title = "Drag or use arrow keys to move the Layers panel";
+    harness.get_by_label(title).focus();
+    harness.run_steps(2);
+    assert!(harness.get_by_label(title).is_focused());
+    let before = panel_rect(&harness);
+    harness.key_press(egui::Key::ArrowLeft);
+    harness.run_steps(3);
+    assert_eq!(panel_rect(&harness).min, before.min - vec2(10.0, 0.0));
+    harness.key_press(egui::Key::ArrowDown);
+    harness.run_steps(3);
+    let moved = panel_rect(&harness);
+    assert_eq!(moved.min, before.min + vec2(-10.0, 10.0));
+    let saved = thinoda_platform::settings::Settings::load(&paths).unwrap();
+    assert_eq!(
+        saved.layers_panel_position,
+        harness.state().settings.layers_panel_position
+    );
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+    assert!(!harness.get_by_label(title).is_focused());
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+    harness.run_steps(2);
+    assert!(harness.get_by_label(title).is_focused());
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+    harness.key_press(egui::Key::ArrowLeft);
+    harness.run_steps(2);
+    assert_eq!(panel_rect(&harness), moved);
+    click(&mut harness, "Close");
+    harness.state_mut().doc_mut().unwrap().show_layers = true;
+    harness.run_steps(3);
+    assert_eq!(panel_rect(&harness), moved);
+    let mut restarted = ThinodaApp::headless();
+    restarted.settings = saved;
+    restarted.doc_mut().unwrap().show_layers = true;
+    let mut reopened = Harness::builder()
+        .with_size(vec2(900.0, 500.0))
+        .build_ui_state(
+            |ui: &mut Ui, app: &mut ThinodaApp| {
+                app.board_layers_panel(ui.ctx(), ui.max_rect());
+            },
+            restarted,
+        );
+    reopened.run_steps(4);
+    assert_eq!(panel_rect(&reopened), moved);
+}
+
+#[test]
+fn keyboard_panel_movement_stays_inside_the_viewport() {
+    let mut app = ThinodaApp::headless();
+    app.settings.layers_panel_position = Some([0.0, 0.0]);
+    app.doc_mut().unwrap().show_layers = true;
+    let mut harness = Harness::builder()
+        .with_size(vec2(900.0, 500.0))
+        .build_ui_state(
+            |ui: &mut Ui, app: &mut ThinodaApp| {
+                app.board_layers_panel(ui.ctx(), ui.max_rect());
+            },
+            app,
+        );
+    harness.run_steps(4);
+    harness
+        .get_by_label("Drag or use arrow keys to move the Layers panel")
+        .focus();
+    harness.run_steps(2);
+    let before = panel_rect(&harness);
+    harness.key_press(egui::Key::ArrowLeft);
+    harness.run_steps(2);
+    harness.key_press(egui::Key::ArrowUp);
+    harness.run_steps(2);
+    assert_eq!(panel_rect(&harness), before);
+    assert!(harness.ctx.content_rect().contains_rect(before));
+}
+
+#[test]
+fn keyboard_panel_movement_does_not_move_selected_canvas_objects() {
+    let mut app = ThinodaApp::headless();
+    #[cfg(target_os = "windows")]
+    {
+        app.desktop_ribbon = true;
+    }
+    app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+    let shape = add_shape(&mut app, 0.0);
+    {
+        let doc = app.doc_mut().unwrap();
+        doc.show_layers = true;
+        doc.view.board_selection = vec![shape];
+    }
+    let object = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .canvas
+        .object(shape)
+        .unwrap()
+        .clone();
+    let mut harness = Harness::builder()
+        .with_size(vec2(900.0, 600.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    harness.run_steps(8);
+    harness
+        .get_by_label("Drag or use arrow keys to move the Layers panel")
+        .focus();
+    harness.run_steps(2);
+    let before = panel_rect(&harness);
+    harness.key_press(egui::Key::ArrowLeft);
+    harness.run_steps(3);
+    assert_eq!(panel_rect(&harness).min, before.min - vec2(10.0, 0.0));
+    assert_eq!(
+        harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(shape)
+            .unwrap(),
+        &object
+    );
 }
 
 #[test]

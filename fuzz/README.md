@@ -38,8 +38,13 @@ cargo +nightly fuzz run --release drawio_bundle -- -max_total_time=20 -rss_limit
 ```
 
 Inputs over 1 MiB are ignored by the targets. XMind accepts raw input as well as
-`JSON\n` and `CONTENT_XML\n` seed envelopes; the latter two are wrapped in a
-small generated ZIP package to exercise each XMind entry parser. The corpus also
+`JSON\n` and `CONTENT_XML\n` seed envelopes; those are wrapped in a
+small generated ZIP package to exercise each XMind entry parser. `IMAGE_SVG\n`
+and `IMAGE_SVGZ\n` wrap the following mutable bytes as a shared picture and
+attachment, exercising SVG validation and gzip decoding without having to
+preserve a ZIP structure during mutation. Raw SVG mutations reach deeper XML
+paths; arbitrary SVGZ mutations usually invalidate the gzip checksum, so they
+primarily exercise decoder rejection. The corpus also
 contains tiny ZIP package seeds, including PNG image resources with omitted and
 partial dimensions, so mutation reaches image/manifest validation and the
 archive structure; the raw XMind path includes legacy XML. FreeMind and OPML
@@ -98,6 +103,7 @@ clipboard seed actually reaches its intended importer:
 
 ```sh
 cargo test --locked -p thinoda-io --test drawio_fuzz_seeds
+cargo test --locked -p thinoda-io --test xmind_fuzz_seeds
 cargo test --locked -p thinoda-io --lib drawio_bundle::tests -- --test-threads=1
 ```
 

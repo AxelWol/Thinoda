@@ -10853,6 +10853,33 @@ fn drawio_import_reports_unrepresented_root_and_layer_data() {
 }
 
 #[test]
+fn drawio_import_reports_flattened_nested_structural_cells() {
+    for metadata in ["", r#" value="hidden data""#, r#" style="custom=1;""#] {
+        let xml = page(&format!(
+            r#"<mxCell id="structural" parent="1"{metadata}/><mxCell id="shape" value="Kept" vertex="1" parent="structural"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Other), "{xml}");
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Kept");
+    }
+}
+
+#[test]
+fn drawio_import_reports_hidden_or_empty_edge_children() {
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##;
+    let label = r#"<mxCell id="child" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"><mxGeometry x="0.5" relative="1" as="geometry"/></mxCell>"#;
+    assert!(load(&page(&format!("{edge}{label}"))).warnings.is_empty());
+    for child in [
+        label.replace("vertex=\"1\"", "vertex=\"1\" visible=\"0\""),
+        label.replace("value=\"Label\"", "value=\"\""),
+    ] {
+        let report = load(&page(&format!("{edge}{child}")));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{child}");
+        assert_eq!(connectors(&report.workbook.sheets[0]).len(), 1);
+    }
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,

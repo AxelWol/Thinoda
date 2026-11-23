@@ -2245,6 +2245,7 @@ Add|Añadir|Ajouter|Tilføj|Toevoegen|Adicionar|Aggiungi|Dodaj
 Format|Formato|Format|Format|Opmaak|Formato|Formato|Format
 Layers|Capas|Calques|Lag|Lagen|Camadas|Livelli|Warstwy
 Drag to move|Arrastra para mover|Faites glisser pour déplacer|Træk for at flytte|Sleep om te verplaatsen|Arraste para mover|Trascina per spostare|Przeciągnij, aby przesunąć
+Drag or use arrow keys to move the Layers panel|Arrastra o usa las flechas para mover el panel de capas|Faites glisser ou utilisez les flèches pour déplacer le panneau des calques|Træk eller brug piletasterne til at flytte lagpanelet|Sleep of gebruik de pijltjestoetsen om het lagenpaneel te verplaatsen|Arraste ou use as teclas de seta para mover o painel de camadas|Trascina o usa i tasti freccia per spostare il pannello dei livelli|Przeciągnij lub użyj klawiszy strzałek, aby przesunąć panel warstw
 Protection|Protección|Protection|Beskyttelse|Beveiliging|Proteção|Protezione|Ochrona
 Draw|Dibujar|Dessiner|Tegn|Tekenen|Desenhar|Disegna|Rysuj
 Canvas settings|Configuración del lienzo|Paramètres du canevas|Lærredsindstillinger|Canvasinstellingen|Definições da tela|Impostazioni area di lavoro|Ustawienia obszaru roboczego

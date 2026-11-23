@@ -4612,6 +4612,10 @@ const DE: &[(&str, &str)] = &[
     ("Format", "Format"),
     ("Layers", "Ebenen"),
     ("Drag to move", "Ziehen zum Verschieben"),
+    (
+        "Drag or use arrow keys to move the Layers panel",
+        "Ebenenbereich durch Ziehen oder mit den Pfeiltasten verschieben",
+    ),
     ("Container", "Container"),
     ("Software", "Software"),
     ("Human/service handoff", "Mensch-Service-Übergabe"),

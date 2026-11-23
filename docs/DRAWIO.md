@@ -216,12 +216,14 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
-### D6 — Ownership and passthrough envelope ✅
+### D6 — Ownership and passthrough envelope
 
-- [x] Source ids, unknown style keys and attributes kept per object and sheet (architecture §3.1.1), with copy/delete semantics and diagnostics
-- [x] Round-trip tests for unknown data through native save, clipboard and draw.io export
+- [x] Retain source IDs and supported passthrough data for represented objects and pages, with copy/delete semantics and diagnostics
+- [x] Round-trip tests for supported passthrough data through native save, clipboard and draw.io export
+- [ ] Preserve unmappable cells as visible, selectable opaque objects and retain unsupported workbook/page XML under bounded ownership rules
+- [ ] Preserve a source ID on a completed, same-document cut exactly once using the provenance contract in architecture §3.1.1
 
-### D7 — Connectors, links and data ✅
+### D7 — Connectors, links and data
 
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [x] Line jumps (arc, gap, sharp, line)
@@ -233,22 +235,26 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Object data model (link, tags, properties, placeholder flag), gates, draw.io round trip, inspector "Data" section, hover tooltip
   - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
   - [x] Page links (`data:page/id,`) navigate to the matching sheet
+- [ ] Named ports, remaining draw.io connection point sets and keyboard traversal between individual ports
 
-### D8 — Layers and tables ✅
+### D8 — Layers and tables
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
 - [x] Show at least six layers in a movable Layers dialog and remember its last position
+- [x] Make Layers dialog repositioning keyboard-accessible
 
 **Rubber-duck critique:** Constraining the panel to the drawing canvas left too
 little room for six rows beneath the ribbon at the minimum native window size,
 so it uses the app viewport instead and scrolls if even that viewport is too
 small. Dragging the title or empty background moves the panel without stealing
-the layer controls' interactions; position is saved only after dragging,
-validated before restoration and clamped again when the window shrinks. Tests
-cover six actionable rows at multiple interface scales, drag/reopen/restart,
-scrolling and smaller-window restoration. Keyboard repositioning is not
-implemented.
+the layer controls' interactions. The focusable title announces movement
+instructions, shows a focus ring and uses arrow keys to move in 10-point steps;
+Tab leaves it normally and the canvas selection does not move. Position is saved
+after a completed drag or successful keyboard movement, validated before
+restoration and clamped to the viewport. Tests cover six actionable rows at
+multiple interface scales, pointer and keyboard movement, focus traversal,
+viewport edges, reopen/restart, scrolling and smaller-window restoration.
 
 ### D9 — Style and text
 
@@ -341,6 +347,8 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Reserve retained object tombstones when generating connector-label and table-cell IDs
 - [x] Retain bounded source-ID tombstones for imported named layers and warn when the page budget drops them
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
+- [x] Warn when nested non-vertex structural cells are flattened, retaining their representable descendants and protecting the source
+- [x] Warn when hidden or empty edge-child vertices are skipped, retaining their connector and protecting the source
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
 - [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
@@ -349,13 +357,15 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Generate topic and Sankey node/edge IDs without source collisions, updating connectors and the version 2 Sankey semantic extension consistently
 - [ ] Source-preserving in-place save with loss preflight (architecture §3.5); requires D6
 
-### D11 — Automatic layouts ✅
+### D11 — Automatic layouts
 
 - [x] Tree, flow, radial, circle and organic layouts for selected board objects
   - [x] Pure, deterministic, bounded core algorithms (≤ 500 items, ≤ 5,000 connections) with a guaranteed non-overlap pass and a fixed top-left anchor
   - [x] One undoable board command per layout in the Board menu, context-menu Layout submenu and command palette, translated in all locales
   - [x] Groups, selected containers with their descendants and floating mind-map branches move rigidly; locked items are skipped as Align does
   - [x] Bends of unlocked connectors between items that moved apart are reset; locked connectors keep theirs
+- [ ] Support draw.io's remaining layout algorithms and options, including ELK and org-chart variants
+- [ ] Route edges as part of automatic layout, preserving supported attachment and waypoint semantics
 
 **D11 rubber-duck critique.** A pre-implementation review found five
 blocking traps, all addressed: a container and its selected child were
@@ -377,7 +387,7 @@ place items, not edges, so routes and fixed ports are unchanged and long
 flow edges are not given virtual bends; exactly coincident items fall back
 to selection order; each moved item is applied with one sheet move, so very
 large selections may be slow even within the 500-item bound. draw.io's ELK
-options, org-chart variants and edge routing are out of scope.
+options, org-chart variants and edge routing remain open.
 
 ### D12 — Insert tools and editors
 
@@ -1433,6 +1443,19 @@ the current model discards, including geometry, custom styles and regenerated
 IDs, now produce import warnings; normalized names are disclosed as well.
 Duck check: these warnings do not preserve structural data and are not an
 exhaustive semantic audit. Complete layer and source fidelity remain open.
+
+**D10 nested structural cells (partial).** Nested non-vertex cells are
+flattened while their children are imported, so even an empty cell loses its
+source identity and hierarchy. Import now reports this loss and requires the
+existing conversion consent; tests also check that the original file cannot be
+overwritten. This is a conservative warning, not opaque-cell preservation or
+permission to save in place.
+
+**D10 edge-child diagnostics (partial).** Hidden and empty edge-child vertices
+are not represented as connector labels and now require conversion consent.
+Their connector remains usable, but the omitted cells and their source
+identities are not preserved. Visible nonempty supported labels retain their
+existing warning-free path; opaque preservation remains open.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot

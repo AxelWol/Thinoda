@@ -11,6 +11,7 @@ use crate::{
 
 const PANEL_WIDTH: f32 = 300.0;
 const PANEL_TOP_INSET: f32 = crate::board_ui::CONTEXT_STRIP_HEIGHT + 16.0;
+const KEYBOARD_MOVE_STEP: f32 = 10.0;
 
 fn panel_id(ctx: &Context) -> egui::Id {
     egui::Id::unique(("thinoda_board_layers", ctx.viewport_id()))
@@ -75,6 +76,7 @@ impl ThinodaApp {
             });
         let mut action = None;
         let mut title_drag = None;
+        let mut keyboard_delta = egui::Vec2::ZERO;
         let id = panel_id(ctx);
         let panel = egui::Area::new(id)
             .order(egui::Order::Middle)
@@ -89,14 +91,43 @@ impl ThinodaApp {
                 widgets::card(ui).show(ui, |ui| {
                     ui.set_width(width);
                     ui.horizontal(|ui| {
-                        title_drag = Some(
-                            ui.add(
+                        let title = ui
+                            .add(
                                 egui::Label::new(egui::RichText::new(t("Layers")).strong())
-                                    .sense(egui::Sense::drag()),
+                                    .sense(egui::Sense::click_and_drag()),
                             )
                             .on_hover_cursor(egui::CursorIcon::Grab)
-                            .on_hover_text(t("Drag to move")),
-                        );
+                            .on_hover_text(t("Drag or use arrow keys to move the Layers panel"));
+                        title.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::Button,
+                                ui.is_enabled(),
+                                t("Drag or use arrow keys to move the Layers panel"),
+                            )
+                        });
+                        if title.has_focus() {
+                            ui.painter().rect_stroke(
+                                title.rect.expand(2.0),
+                                2.0,
+                                ui.visuals().widgets.active.fg_stroke,
+                                egui::StrokeKind::Outside,
+                            );
+                            keyboard_delta = ui.input_mut(|input| {
+                                let mut delta = egui::Vec2::ZERO;
+                                for (key, movement) in [
+                                    (egui::Key::ArrowLeft, vec2(-KEYBOARD_MOVE_STEP, 0.0)),
+                                    (egui::Key::ArrowRight, vec2(KEYBOARD_MOVE_STEP, 0.0)),
+                                    (egui::Key::ArrowUp, vec2(0.0, -KEYBOARD_MOVE_STEP)),
+                                    (egui::Key::ArrowDown, vec2(0.0, KEYBOARD_MOVE_STEP)),
+                                ] {
+                                    if input.consume_key(egui::Modifiers::NONE, key) {
+                                        delta += movement;
+                                    }
+                                }
+                                delta
+                            });
+                        }
+                        title_drag = Some(title);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if widgets::icon_button(ui, icons::CLOSE, t("Close"), false).clicked()
                                 && touch
@@ -160,12 +191,16 @@ impl ThinodaApp {
                 });
             });
         let mut panel_pos = panel.response.rect.min;
-        if let Some(title) = &title_drag
-            && title.dragged()
-        {
+        let mut keyboard_moved = false;
+        let title_delta = title_drag
+            .as_ref()
+            .filter(|title| title.dragged())
+            .map_or(egui::Vec2::ZERO, egui::Response::drag_delta);
+        if title_delta != egui::Vec2::ZERO || keyboard_delta != egui::Vec2::ZERO {
             // The title is a separate widget, so its drag must move the Area.
             let max = (bounds.max - panel.response.rect.size()).max(bounds.min);
-            let position = (panel.response.rect.min + title.drag_delta()).clamp(bounds.min, max);
+            let position =
+                (panel.response.rect.min + title_delta + keyboard_delta).clamp(bounds.min, max);
             if let Some(mut state) = egui::AreaState::load(ctx, id) {
                 state.set_left_top_pos(position);
                 ctx.memory_mut(|memory| {
@@ -174,12 +209,15 @@ impl ThinodaApp {
                         .set_state(egui::LayerId::new(egui::Order::Middle, id), state);
                 });
                 panel_pos = position;
+                keyboard_moved =
+                    keyboard_delta != egui::Vec2::ZERO && position != panel.response.rect.min;
                 ctx.request_repaint();
             } else {
                 log::warn!("Could not move the Layers panel: its area state is missing");
             }
         }
-        if panel.response.drag_stopped()
+        if keyboard_moved
+            || panel.response.drag_stopped()
             || title_drag
                 .as_ref()
                 .is_some_and(|title| title.drag_stopped())

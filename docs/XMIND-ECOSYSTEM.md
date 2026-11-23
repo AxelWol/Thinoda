@@ -422,6 +422,8 @@ undocumented XMind payload.
   attachments.
 - [x] Recover gzip-compressed SVG/SVGZ pictures within the same XML size and
   feature limits, preserving the original compressed attachment.
+- [x] Exercise mutable SVG and SVGZ picture bytes through the XMind fuzz
+  target, including shared attachments and deterministic seed checks.
 - [x] Recover SVG pictures containing embedded static PNG/JPEG/WebP/GIF data URLs, with
   per-picture limits on image count and total decoded pixels.
 - [x] Recover static SVG stylesheets and inline styles with comments at rule or
@@ -482,6 +484,12 @@ same static-SVG validator runs. Invalid, truncated, concatenated or oversized
 gzip streams are rejected rather than partially decoded. The original bytes
 remain attached when shared, and rasterization still requires loss consent;
 compression support does not make SVG vectors editable.
+
+**Picture fuzzing critique:** Structured picture envelopes mutate resource
+bytes without breaking the ZIP container and exercise source preservation.
+Raw SVG mutations can reach XML parsing, while most gzip mutations fail their
+checksum before reaching it. These seeds do not replace bounded-decoder tests,
+legacy-package coverage, or the sanitizer acceptance campaign.
 
 **Embedded WebP and GIF critique:** Static WebP uses the same bounded decoder as
 standalone pictures, and rejects animation and orientation transforms before
