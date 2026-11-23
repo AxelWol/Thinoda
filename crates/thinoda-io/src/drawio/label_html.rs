@@ -152,11 +152,16 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
         let lower = value.to_ascii_lowercase();
         match name.as_str() {
             "font-weight" => match lower.as_str() {
-                "bold" | "bolder" => style.bold = Some(true),
-                "normal" | "lighter" => style.bold = Some(false),
+                "bold" => style.bold = Some(true),
+                "normal" => style.bold = Some(false),
+                "bolder" | "lighter" => {
+                    style.bold = Some(lower == "bolder");
+                    loss = true;
+                }
                 _ => match lower.parse::<u16>() {
                     Ok(weight) if (100..=900).contains(&weight) => {
                         style.bold = Some(weight >= 600);
+                        loss |= weight != 400 && weight != 700;
                     }
                     _ => loss = true,
                 },

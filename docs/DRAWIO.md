@@ -301,6 +301,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Preserve existing formatted-card runs and lists during search/replace
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
+  - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -347,6 +348,12 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
+
+**Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
+numeric weight, and numeric values other than 400 and 700 can differ visibly;
+the current bold/not-bold model cannot retain either distinction. The existing
+visual approximation is preserved, but import and clipboard conversion now
+report formatting loss instead of presenting it as exact.
 
 ### D10 — Save back to `.drawio`
 
