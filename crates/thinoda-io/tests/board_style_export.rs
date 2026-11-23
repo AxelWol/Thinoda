@@ -27,6 +27,40 @@ fn slide_xml(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn stencil_miter_is_not_clipped_by_the_raster_export_bounds() {
+    use thinoda_core::stencil_object::StencilRef;
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 30.0)),
+    );
+    object.stencil = Some(StencilRef::new("thinoda.drawio", "electrical-buffer-v2"));
+    object.style.stroke = Some(Color::BLACK);
+    object.style.stroke_width = 30.0;
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    let options = ExportOptions {
+        transparent: true,
+        padding: 4.0,
+        ..Default::default()
+    };
+    let png = export_bytes_with_consent(&book, Format::Png, &options, true).unwrap();
+    let image = image::load_from_memory(&png).unwrap().to_rgba8();
+    let (width, height) = image.dimensions();
+    assert!(image.pixels().any(|pixel| pixel[3] != 0));
+    for x in 0..width {
+        assert_eq!(image.get_pixel(x, 0)[3], 0);
+        assert_eq!(image.get_pixel(x, height - 1)[3], 0);
+    }
+    for y in 0..height {
+        assert_eq!(image.get_pixel(0, y)[3], 0);
+        assert_eq!(image.get_pixel(width - 1, y)[3], 0);
+    }
+}
+
+#[test]
 fn formatted_card_titles_render_in_visual_exports() {
     use thinoda_core::{InlineParagraph, ListKind};
     use thinoda_io::{ExportLoss, export_losses};

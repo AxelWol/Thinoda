@@ -605,7 +605,13 @@ fn svg_layout_with_fonts(
         s.topic(*id)
             .is_some_and(|topic| !topic.inline_text.is_empty())
     });
-    let measure_visible_bounds = frame.is_none() && (has_clipped_frames || has_rich_card);
+    let has_stencil_stroke = scene.items.iter().any(|item| {
+        item.stencil_render
+            .as_ref()
+            .is_some_and(|render| render.paths.iter().any(|path| path.stroke.is_some()))
+    });
+    let measure_visible_bounds =
+        frame.is_none() && (has_clipped_frames || has_rich_card || has_stencil_stroke);
     let background = |bounds: Rect| {
         let max = bounds.max();
         let width = max.x - bounds.min.x;
@@ -1052,13 +1058,16 @@ fn svg_layout_with_fonts(
             out.push_str("</g>");
         }
     }
-    if measure_visible_bounds && (has_rich_card || out.contains("<clipPath id=\"scene-clip-")) {
+    if measure_visible_bounds
+        && (has_rich_card || has_stencil_stroke || out.contains("<clipPath id=\"scene-clip-"))
+    {
         // The layout's raw topic/decorations bounds can be arbitrarily far outside
         // their owning clips. Besides whitespace, that can make raster exports
         // truncate genuinely visible content at their size limit. Measure the
         // actual un-clipped SVG nodes (including text and rotated shapes); each
         // skipped clip group is bounded by the corresponding zone frame. Rich
         // card text can also extend outside its fixed frame or estimated width.
+        // Stencil miters and caps can extend beyond the scene's outline bounds.
         let source = format!("{out}</svg>");
         let visible = zones.iter().fold(
             visible_svg_bounds(&source, b.min, fontdb)?,
@@ -1338,6 +1347,7 @@ fn board_object_svg(
                 fill,
                 stroke,
                 round,
+                stencil_stroke,
             } => {
                 let Some(first) = points.first() else {
                     continue;
@@ -1356,10 +1366,26 @@ fn board_object_svg(
                         format!("stroke=\"{}\" stroke-width=\"{width:.2}\"", col(color))
                     },
                 );
-                let caps = if round {
-                    " stroke-linecap=\"round\" stroke-linejoin=\"round\""
+                let caps = if let Some(geometry) = stencil_stroke {
+                    use thinoda_core::stencil::{LineCap, LineJoin};
+                    let join = match geometry.join {
+                        LineJoin::Miter => "miter",
+                        LineJoin::Round => "round",
+                        LineJoin::Bevel => "bevel",
+                    };
+                    let cap = match geometry.cap {
+                        LineCap::Flat => "butt",
+                        LineCap::Round => "round",
+                        LineCap::Square => "square",
+                    };
+                    format!(
+                        " stroke-linecap=\"{cap}\" stroke-linejoin=\"{join}\" stroke-miterlimit=\"{}\"",
+                        geometry.miter_limit
+                    )
+                } else if round {
+                    " stroke-linecap=\"round\" stroke-linejoin=\"round\"".to_owned()
                 } else {
-                    " stroke-linejoin=\"round\""
+                    " stroke-linejoin=\"round\"".to_owned()
                 };
                 out.push_str(&format!("<path d=\"{d}\" fill=\"{fill}\" {stroke}{caps}/>"));
             }
@@ -2035,6 +2061,95 @@ mod tests {
         let svg = colored_marker_svg("task-pause", rect, Color::rgb(60, 179, 113));
         assert!(svg.contains("<path"));
         assert!(!svg.contains("<polyline"));
+    }
+
+    #[test]
+    fn stencil_stroke_geometry_reaches_svg_and_raster_for_solid_and_dashed_paths() {
+        use thinoda_core::{
+            ApproxMeasure, CanvasObject, SceneId, ShapeKind, SheetRootMode,
+            layout::layout_sheet,
+            scene::build_scene,
+            stencil::{LineCap, LineJoin},
+            stencil_object::StencilRef,
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(20.0, 20.0), Vec2::new(120.0, 80.0)),
+        );
+        object.stencil = Some(StencilRef::new("thinoda.general", "message"));
+        object.style.stroke = Some(Color::rgb(18, 52, 86));
+        let id = sheet.add_canvas_object(object).unwrap();
+        let scene = build_scene(&sheet, &layout_sheet(&sheet, &ApproxMeasure, false));
+        let mut item = scene.item(SceneId::Object(id)).unwrap().clone();
+        let object = sheet.canvas.object(id).unwrap();
+        let draw = |item: &thinoda_core::SceneItem| {
+            board_object_svg(
+                item,
+                object,
+                Color::WHITE,
+                false,
+                VisualExportContext::default(),
+            )
+        };
+
+        let mut raster_images = Vec::new();
+        for (join, cap, limit, expected_join, expected_cap) in [
+            (LineJoin::Miter, LineCap::Flat, 10.0, "miter", "butt"),
+            (LineJoin::Bevel, LineCap::Square, 7.0, "bevel", "square"),
+            (LineJoin::Round, LineCap::Round, 4.0, "round", "round"),
+        ] {
+            for path in &mut item.stencil_render.as_mut().unwrap().paths {
+                if let Some(stroke) = &mut path.stroke {
+                    stroke.width = 8.0;
+                    stroke.join = join;
+                    stroke.cap = cap;
+                    stroke.miter_limit = limit;
+                    stroke.dashed = Some(false);
+                }
+            }
+            let svg = draw(&item);
+            let strokes: Vec<_> = svg
+                .split("<path ")
+                .skip(1)
+                .filter(|path| path.contains("stroke=\"#123456\""))
+                .collect();
+            assert!(!strokes.is_empty(), "{svg}");
+            for path in strokes {
+                assert!(path.contains(&format!("stroke-linejoin=\"{expected_join}\"")));
+                assert!(path.contains(&format!("stroke-linecap=\"{expected_cap}\"")));
+                assert!(path.contains(&format!("stroke-miterlimit=\"{limit}\"")));
+            }
+            let page = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"120\">{svg}</svg>"
+            );
+            raster_images.push(raster_svg(&page, 1.0, image::ImageFormat::Png).unwrap());
+        }
+        assert_ne!(raster_images[0], raster_images[1]);
+
+        for path in &mut item.stencil_render.as_mut().unwrap().paths {
+            if let Some(stroke) = &mut path.stroke {
+                stroke.join = LineJoin::Bevel;
+                stroke.cap = LineCap::Square;
+                stroke.miter_limit = 7.0;
+                stroke.dashed = Some(true);
+                stroke.dash_pattern = vec![2.0, 2.0];
+            }
+        }
+        let svg = draw(&item);
+        let dashes: Vec<_> = svg
+            .split("<path ")
+            .skip(1)
+            .filter(|path| path.contains("stroke=\"#123456\""))
+            .collect();
+        assert!(dashes.len() > 1, "{svg}");
+        for dash in dashes {
+            assert!(dash.contains("stroke-linejoin=\"bevel\""));
+            assert!(dash.contains("stroke-linecap=\"square\""));
+            assert!(dash.contains("stroke-miterlimit=\"7\""));
+        }
     }
 
     #[test]
