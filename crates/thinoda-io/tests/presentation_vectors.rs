@@ -270,14 +270,15 @@ fn assert_rotated(original: &Transform, actual: &Transform, pivot: (f64, f64), d
 }
 
 fn points(element: &str) -> Vec<(f64, f64)> {
+    let offset = transform(element);
     element
         .split("<a:pt ")
         .skip(1)
         .map(|part| {
             let tag = part.split_once("/>").unwrap().0;
             (
-                attr(tag, "x").unwrap() as f64,
-                attr(tag, "y").unwrap() as f64,
+                offset.x + attr(tag, "x").unwrap() as f64,
+                offset.y + attr(tag, "y").unwrap() as f64,
             )
         })
         .collect()

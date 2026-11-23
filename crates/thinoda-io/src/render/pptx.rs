@@ -527,13 +527,40 @@ impl Drawing {
         stroke: Option<(Color, f32)>,
         stencil_stroke: Option<super::board::StencilStrokeGeometry>,
     ) -> Result<(), IoError> {
-        let Some(first) = points.first() else {
+        if points.is_empty() {
             return Ok(());
-        };
+        }
         let id = self.id();
-        let mut path = format!("<a:moveTo>{}</a:moveTo>", self.point(*first));
-        for point in &points[1..] {
-            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", self.point(*point)));
+        let coordinates: Vec<_> = points
+            .iter()
+            .map(|point| {
+                let point = self.rotation.map_or(*point, |rotation| {
+                    rotate_around(*point, rotation.center, rotation.degrees)
+                });
+                (
+                    self.emu(point.x - self.frame.min.x),
+                    self.emu(point.y - self.frame.min.y),
+                )
+            })
+            .collect();
+        let (min_x, min_y, max_x, max_y) = coordinates.iter().fold(
+            (i64::MAX, i64::MAX, i64::MIN, i64::MIN),
+            |(min_x, min_y, max_x, max_y), &(x, y)| {
+                (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+            },
+        );
+        let width = max_x
+            .checked_sub(min_x)
+            .ok_or_else(|| IoError::Invalid("PowerPoint path width is out of range".into()))?
+            .max(1);
+        let height = max_y
+            .checked_sub(min_y)
+            .ok_or_else(|| IoError::Invalid("PowerPoint path height is out of range".into()))?
+            .max(1);
+        let point = |(x, y): (i64, i64)| format!(r#"<a:pt x="{}" y="{}"/>"#, x - min_x, y - min_y);
+        let mut path = format!("<a:moveTo>{}</a:moveTo>", point(coordinates[0]));
+        for &coordinate in &coordinates[1..] {
+            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", point(coordinate)));
         }
         if closed {
             path.push_str("<a:close/>");
@@ -572,8 +599,8 @@ impl Drawing {
             "<a:ln><a:noFill/></a:ln>".to_owned()
         };
         self.xml.push_str(&format!(
-            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}"{}>{path}</a:path></a:pathLst></a:custGeom>{}{line}</p:spPr></p:sp>"#,
-            esc(name), self.width, self.height, self.width, self.height,
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="{min_x}" y="{min_y}"/><a:ext cx="{width}" cy="{height}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{width}" h="{height}"{}>{path}</a:path></a:pathLst></a:custGeom>{}{line}</p:spPr></p:sp>"#,
+            esc(name),
             if color.is_some() { "" } else { r#" fill="none""# },
             fill(color)));
         Ok(())
@@ -1474,6 +1501,101 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn editable_polylines_use_tight_bounds_and_local_coordinates() {
+        let mut drawing = Drawing {
+            xml: String::new(),
+            next_id: 1,
+            frame: Rect::from_min_size(Vec2::new(10.0, 20.0), Vec2::new(100.0, 100.0)),
+            scale: 100.0,
+            width: 10_000,
+            height: 10_000,
+            rotation: None,
+        };
+        drawing
+            .poly(
+                "path",
+                &[Vec2::new(15.0, 25.0), Vec2::new(35.0, 45.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap();
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:off x="500" y="500"/><a:ext cx="2000" cy="2000"/>"#)
+        );
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:path w="2000" h="2000" fill="none">"#)
+        );
+        assert!(drawing.xml.contains(r#"<a:pt x="0" y="0"/>"#));
+        assert!(drawing.xml.contains(r#"<a:pt x="2000" y="2000"/>"#));
+
+        drawing.xml.clear();
+        drawing
+            .poly(
+                "horizontal",
+                &[Vec2::new(5.0, 25.0), Vec2::new(15.0, 25.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap();
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:off x="-500" y="500"/><a:ext cx="1000" cy="1"/>"#)
+        );
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:path w="1000" h="1" fill="none">"#)
+        );
+
+        drawing.xml.clear();
+        drawing
+            .poly(
+                "vertical",
+                &[Vec2::new(15.0, 15.0), Vec2::new(15.0, 35.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap();
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:off x="500" y="-500"/><a:ext cx="1" cy="2000"/>"#)
+        );
+        assert!(
+            drawing
+                .xml
+                .contains(r#"<a:path w="1" h="2000" fill="none">"#)
+        );
+        assert!(drawing.xml.contains(r#"<a:pt x="0" y="0"/>"#));
+        assert!(drawing.xml.contains(r#"<a:pt x="0" y="2000"/>"#));
+
+        drawing.xml.clear();
+        let error = drawing
+            .poly(
+                "overflow",
+                &[Vec2::new(-f32::MAX, 0.0), Vec2::new(f32::MAX, 0.0)],
+                false,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(error, IoError::Invalid(_)));
+        assert!(drawing.xml.is_empty());
+    }
 
     #[test]
     fn stencil_poly_uses_drawingml_stroke_geometry_and_rejects_unrepresentable_miters() {

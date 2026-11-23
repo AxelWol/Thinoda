@@ -848,8 +848,13 @@ miter limits fail explicitly instead of producing invalid Office XML; ordinary
 paths retain their previous round geometry. Viewport slides remain rasterized.
 The canvas and stencil shadows still need the same geometry. The electrical
 buffer fixture opened in Windows PowerPoint without a repair prompt and displayed
-its pointed joins; selecting a stroke exposed a slide-sized bounding box rather
-than a tight object box. That editable-geometry UX still needs improvement.
+its pointed joins. Editable freeform polygons and polylines now use tight path
+bounds and local coordinates instead of a slide-sized bounding box; selecting the
+buffer triangle in PowerPoint showed handles around the triangle. Multipart
+stencils still export as separate shapes rather than a single editable group.
+Horizontal and vertical paths use a one-EMU minimum extent; serializer tests
+cover negative offsets and reject bounds that overflow, but off-slide rendering
+has not been verified in PowerPoint.
 Other joins, caps, hosts and slide-edge clipping remain unverified. Open XML SDK
 validation of the new fixture runs in CI because the local .NET runtime is
 unavailable.
