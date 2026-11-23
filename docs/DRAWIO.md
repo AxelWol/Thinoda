@@ -406,6 +406,7 @@ options, org-chart variants and edge routing remain open.
 - [ ] draw.io templates in the template gallery (CC BY 4.0 attribution)
 - [ ] Edit style (raw key/value), edit geometry, raw diagram XML import/export dialog
   - [x] Exact geometry (left, top, width, height, rotation) for one canvas object in the nearby menu's Arrange section
+  - [x] Exact geometry for one floating sticky, text or image card in the same section
   - [ ] Raw style key/value editor and raw diagram XML dialog
 
 **D12 geometry rubber-duck critique.** A separate dialog would contradict the
@@ -416,10 +417,12 @@ step, not dozens. Edits use the existing lock- and hierarchy-aware move,
 resize and rotate operations; fields are hidden for connectors, grouped
 members (editing one would move its group), multi-selections, and directly
 or inherited locked objects, and Rotation is hidden for containers, which
-cannot rotate. Left/Top describe the unrotated frame as in draw.io. Duck
-check: cards still edit size and rotation under More style options without
-position fields; stack-managed children and table cells can reject a value,
-which is then reported and kept as a correctable draft rather than hidden.
+cannot rotate. Left/Top describe the unrotated frame as in draw.io. Cards now expose the same fields in Arrange, keeping the unrotated top-left
+fixed while resizing; their existing More style options keep their prior
+center-anchored behavior. Grouped and locked cards do not expose these fields,
+and Sankey-linked cards do not expose rotation. Stack-managed children and
+table cells can reject a value, which is then reported and kept as a
+correctable draft rather than hidden.
 - [ ] Find/replace and tags on boards, ruler, units and page view
   - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
   - [x] Select board objects by exact tag from Edit › Select › Select by Tag, limited to visible objects

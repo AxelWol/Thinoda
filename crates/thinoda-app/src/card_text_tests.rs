@@ -231,7 +231,7 @@ fn selected_cards_default_to_actions_and_text_is_an_explicit_scope() {
             Some(Toggled::True)
         );
         assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
-        assert!(h.query_by_role_and_label(Role::Button, "Arrange").is_none());
+        assert!(h.query_by_role_and_label(Role::Button, "Arrange").is_some());
         let before = h.state().doc().unwrap().doc.state_id();
         open_toolbar(&mut h);
         assert_eq!(

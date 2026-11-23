@@ -30,6 +30,24 @@ fn app_with_shape() -> (ThinodaApp, CanvasObjectId) {
     (app, id)
 }
 
+fn app_with_card(kind: thinoda_core::CardKind) -> (ThinodaApp, thinoda_core::TopicId) {
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.enabled = false;
+    app.settings.show_format_panel = false;
+    app.new_doc(templates::instantiate("blank-canvas"));
+    let doc = app.doc_mut().unwrap();
+    let id = doc
+        .doc
+        .add_card(
+            "Card",
+            Vec2::ZERO,
+            thinoda_core::Card::new(kind, Vec2::new(180.0, 120.0)),
+        )
+        .unwrap();
+    doc.view.select_only(id);
+    (app, id)
+}
+
 fn harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
     harness_with_size(app, vec2(1000.0, 700.0))
 }
@@ -1691,6 +1709,144 @@ fn arrange_geometry_is_not_offered_for_grouped_or_multiple_objects() {
     open_arrange(&mut h);
     assert!(
         h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+}
+
+#[test]
+fn arrange_card_geometry_preserves_top_left_and_is_undoable() {
+    for kind in [
+        thinoda_core::CardKind::Sticky,
+        thinoda_core::CardKind::Text,
+        thinoda_core::CardKind::Image,
+    ] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        open_arrange(&mut h);
+        for (label, value) in [
+            ("Left", 100.0),
+            ("Top", 80.0),
+            ("Width", 240.0),
+            ("Height", 160.0),
+            ("Rotation", 30.0),
+        ] {
+            h.get_by_role_and_label(Role::SpinButton, label)
+                .set_value_accesskit(value);
+            h.run_steps(3);
+        }
+
+        let topic = h.state().doc().unwrap().doc.sheet().topic(id).unwrap();
+        let card = topic.card.unwrap();
+        assert_eq!(topic.position, Some(Vec2::new(220.0, 160.0)));
+        assert_eq!(card.size, Vec2::new(240.0, 160.0));
+        assert_eq!(card.rotation, 30.0);
+        assert_eq!(h.state().doc().unwrap().doc.undo_label(), Some("Geometry"));
+        for _ in 0..5 {
+            undo(&mut h);
+        }
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert!(h.state().toasts.is_empty());
+    }
+}
+
+#[test]
+fn arrange_card_geometry_rejects_locked_grouped_and_out_of_bounds_edits() {
+    use thinoda_core::board::{BoardMember, MAX_BOARD_COORDINATE};
+    let (mut app, id) = app_with_card(thinoda_core::CardKind::Sticky);
+    let card = BoardMember::Card(id);
+    let other = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(80.0, 60.0)),
+        ))
+        .unwrap();
+    let group = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .group_board_members(&[card, BoardMember::Object(other)])
+        .unwrap();
+    let mut h = harness(app);
+    if let Some(arrange) = h.query_by_role_and_label(Role::Button, "Arrange") {
+        arrange.click();
+        h.run_steps(4);
+    }
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .ungroup_board_members(group)
+        .unwrap();
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .set_board_members_locked(&[card], true)
+        .unwrap();
+    h.run_steps(5);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_none()
+    );
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .set_board_members_locked(&[card], false)
+        .unwrap();
+    h.run_steps(5);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    open_arrange(&mut h);
+    h.get_by_role_and_label(Role::SpinButton, "Left")
+        .set_value_accesskit(f64::from(MAX_BOARD_COORDINATE));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(!h.state().toasts.is_empty());
+}
+
+#[test]
+fn arrange_card_geometry_hides_rotation_for_sankey_connections() {
+    let (mut app, id) = app_with_card(thinoda_core::CardKind::Sticky);
+    let doc = app.doc_mut().unwrap();
+    let other = doc
+        .doc
+        .add_card(
+            "Other",
+            Vec2::new(300.0, 0.0),
+            thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(180.0, 120.0)),
+        )
+        .unwrap();
+    let mut connector = thinoda_core::CanvasConnector::new(
+        thinoda_core::Endpoint::Topic(id),
+        thinoda_core::Endpoint::Topic(other),
+    );
+    connector.sankey = Some(thinoda_core::sankey::Flow { weight: Some(1) });
+    doc.doc
+        .edit_sheet("Sankey", |sheet| {
+            sheet.sankey = Some(thinoda_core::sankey::SankeySettings::default());
+            sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .map_err(thinoda_core::EditError::Invalid)?;
+            Ok(())
+        })
+        .unwrap();
+    doc.view.select_only(id);
+    let mut h = harness(app);
+    open_arrange(&mut h);
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Left")
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Rotation")
             .is_none()
     );
 }
