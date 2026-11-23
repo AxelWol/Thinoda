@@ -864,7 +864,9 @@ opacity unchanged. SVG shadow-only raster comparisons cover different joins
 and caps; a thick miter with a shadow exercises export bounds, and the editable
 PowerPoint test checks the shadow line itself. Canvas strokes and shadows still
 need equivalent geometry and antialiasing. PowerPoint shadow paths are
-serialized but still need host visual verification. The electrical
+serialized; the shadow-enabled fixture opens in Windows PowerPoint without a
+repair prompt and exposes the separate shadow paths, but visual verification
+remains open because the captured slide surface was blank. The electrical
 buffer fixture opened in Windows PowerPoint without a repair prompt and displayed
 its pointed joins. Editable freeform polygons and polylines now use tight path
 bounds and local coordinates instead of a slide-sized bounding box; selecting the
