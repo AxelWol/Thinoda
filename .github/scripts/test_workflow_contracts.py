@@ -128,6 +128,30 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(expected, office)
         self.assertIn("office", dependencies(job(source, "pages")))
 
+    def test_linux_dependency_installation_has_bounded_network_waits(self):
+        for workflow, job_name in [("ci.yml", "test"), ("package-target.yml", "package")]:
+            with self.subTest(workflow=workflow):
+                source = job((WORKFLOWS / workflow).read_text(encoding="utf-8"), job_name)
+                step = source.split("      - name: Linux system libraries\n", 1)[1]
+                step = step.split("\n      - name:", 1)[0]
+                timeout = re.search(r"(?m)^\s+timeout-minutes: (\d+)$", step)
+                self.assertIsNotNone(timeout)
+                self.assertGreater(int(timeout[1]), 0)
+                self.assertLessEqual(int(timeout[1]), 30)
+                for command in ("update", "install"):
+                    line = next(line for line in step.splitlines() if f" {command}" in line)
+                    if command == "update":
+                        self.assertIn("--error-on=any", line)
+                    for option, maximum in (
+                        ("Acquire::http::Timeout", 60),
+                        ("Acquire::https::Timeout", 60),
+                        ("Acquire::Retries", 5),
+                    ):
+                        value = re.search(rf"-o {re.escape(option)}=(\d+)", line)
+                        self.assertIsNotNone(value)
+                        self.assertGreater(int(value[1]), 0)
+                        self.assertLessEqual(int(value[1]), maximum)
+
     def test_release_please_calls_packaging_without_relying_on_tag_events(self):
         source = (WORKFLOWS / "release-please.yml").read_text(encoding="utf-8")
         release = job(source, "release-please")
