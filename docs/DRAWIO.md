@@ -801,6 +801,16 @@ electrical `buffer2` is implemented as an immutable data-defined stencil,
 including its optional negation bubble and endpoint constraints; it does not
 implement the variable-input gates. Its rectangular hit/perimeter outline is
 invisible, so its shadow behavior still needs visual comparison with draw.io.
+For `logic_gate`, draw.io 32.6.10 derives both the lead positions and connection
+constraints from `numInputs` (up to 1,000), and selects AND, OR or XOR geometry
+from `operation`; `negating` and `negSize` also affect the output. Thinoda's
+stencil connections currently use fixed numeric positions and are limited to
+256 per definition. Unrolling a few leads would silently change connection
+semantics, while simply raising the limit would not make ports parameterized.
+A complete data-defined solution needs bounded repeated geometry and dynamic
+connection generation, with explicit budget and compatibility rules; until
+then the warned fallback must remain. Source:
+[draw.io 32.6.10 `mxElectrical.js`](https://github.com/jgraph/drawio/blob/v32.6.10/src/main/webapp/shapes/mxElectrical.js).
 The separate transmission `testPoint` is data-defined too: the head follows
 the stroke colour rather than the fill colour, and a lead appears only when
 the height exceeds the width. Its rectangular hit/perimeter outline preserves
