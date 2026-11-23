@@ -509,7 +509,8 @@ output. Other D13 gaps and draw.io visual parity remain open.
   - [ ] Preserve stencil stroke joins, caps and miter limits across canvas and visual exports
     - [x] Carry joins, caps and miter limits into the renderer-neutral stencil primitives
     - [x] Apply them to solid and dashed SVG paths and SVG-based raster and PDF exports, including miter-aware export bounds
-    - [ ] Apply them to the canvas, PPTX and stencil shadows
+    - [x] Apply them to solid and split-dash paths in editable PowerPoint slides
+    - [ ] Apply them to the canvas and stencil shadows; verify PowerPoint host rendering and frame-edge clipping
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -841,8 +842,14 @@ join, cap and miter limit in `StrokePaint`. Renderer-neutral `StencilStroke`
 now retains all three, and SVG and SVG-based raster and PDF exports apply
 them to solid and dashed paths. Export bounds measure the painted stencil so
 long miters are not clipped; a thick, acute buffer regression verifies this.
-This intentionally improves exports only: the canvas, PPTX and stencil shadows
-still need the same geometry. Ellipses also use sampled polygon paths in
+Editable PowerPoint branch and zone slides now emit the corresponding DrawingML
+caps, joins and miter limits, including on split dash segments. Out-of-range
+miter limits fail explicitly instead of producing invalid Office XML; ordinary
+paths retain their previous round geometry. Viewport slides remain rasterized.
+The canvas and stencil shadows still need the same geometry. PowerPoint host
+rendering and clipping at slide edges remain unverified; Open XML SDK validation
+of the new fixture runs in CI because the local .NET runtime is unavailable.
+Ellipses also use sampled polygon paths in
 Thinoda rather than native SVG ellipses. These are separate sources of visual
 difference, not evidence that the stencil definition is wrong. With the same
 whole-image translation search before and after the SVG change, mean RGB

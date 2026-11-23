@@ -221,6 +221,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Format::PowerPoint,
         &Default::default(),
     )?;
+    let mut stencil_board = Workbook::new(Sheet::new("Stencil board", ""));
+    let sheet = stencil_board.active_mut();
+    sheet.hide_central_topic()?;
+    let mut stencil = thinoda_core::CanvasObject::shape(
+        thinoda_core::ShapeKind::Rectangle,
+        thinoda_core::Rect::from_min_size(Vec2::new(20.0, 20.0), Vec2::new(120.0, 80.0)),
+    );
+    stencil.stencil = Some(thinoda_core::stencil_object::StencilRef::new(
+        "thinoda.drawio",
+        "electrical-buffer-v2",
+    ));
+    stencil.style.stroke = Some(Color::BLACK);
+    let object = sheet.add_canvas_object(stencil)?;
+    let root = sheet.add_floating("Topic", Vec2::new(0.0, 100.0));
+    let frame = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 240.0));
+    let zone = sheet.create_zone("Zone", vec![root], frame)?;
+    sheet.set_zone_members(zone, vec![root], vec![object])?;
+    sheet.add_presentation_slide(
+        "Stencil",
+        thinoda_core::PresentationSource::Zone(zone),
+        frame,
+    )?;
+    export_file(
+        &stencil_board,
+        &output.join("stencil-editable.pptx"),
+        Format::PowerPoint,
+        &Default::default(),
+    )?;
     println!(
         "Generated Office validation fixtures in {}",
         output.display()

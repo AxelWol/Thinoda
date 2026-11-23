@@ -525,9 +525,10 @@ impl Drawing {
         closed: bool,
         color: Option<Color>,
         stroke: Option<(Color, f32)>,
-    ) {
+        stencil_stroke: Option<super::board::StencilStrokeGeometry>,
+    ) -> Result<(), IoError> {
         let Some(first) = points.first() else {
-            return;
+            return Ok(());
         };
         let id = self.id();
         let mut path = format!("<a:moveTo>{}</a:moveTo>", self.point(*first));
@@ -537,21 +538,45 @@ impl Drawing {
         if closed {
             path.push_str("<a:close/>");
         }
-        let line = stroke.map_or_else(
-            || "<a:ln><a:noFill/></a:ln>".to_owned(),
-            |(color, width)| {
-                format!(
-                    r#"<a:ln w="{}" cap="rnd">{}<a:round/></a:ln>"#,
-                    self.emu(width).clamp(0, 20_116_800),
-                    fill(Some(color))
-                )
-            },
-        );
+        let line = if let Some((color, width)) = stroke {
+            let (cap, join) = if let Some(geometry) = stencil_stroke {
+                use thinoda_core::stencil::{LineCap, LineJoin};
+                let cap = match geometry.cap {
+                    LineCap::Flat => "flat",
+                    LineCap::Round => "rnd",
+                    LineCap::Square => "sq",
+                };
+                let join = match geometry.join {
+                    LineJoin::Miter => {
+                        let limit = f64::from(geometry.miter_limit) * 100_000.0;
+                        if !limit.is_finite() || !(0.0..=f64::from(i32::MAX)).contains(&limit) {
+                            return Err(IoError::Invalid(
+                                "stencil miter limit is outside the PPTX range".into(),
+                            ));
+                        }
+                        format!(r#"<a:miter lim="{}"/>"#, limit.round() as i32)
+                    }
+                    LineJoin::Round => "<a:round/>".to_owned(),
+                    LineJoin::Bevel => "<a:bevel/>".to_owned(),
+                };
+                (cap, join)
+            } else {
+                ("rnd", "<a:round/>".to_owned())
+            };
+            format!(
+                r#"<a:ln w="{}" cap="{cap}">{}{join}</a:ln>"#,
+                self.emu(width).clamp(0, 20_116_800),
+                fill(Some(color))
+            )
+        } else {
+            "<a:ln><a:noFill/></a:ln>".to_owned()
+        };
         self.xml.push_str(&format!(
             r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}"{}>{path}</a:path></a:pathLst></a:custGeom>{}{line}</p:spPr></p:sp>"#,
             esc(name), self.width, self.height, self.width, self.height,
             if color.is_some() { "" } else { r#" fill="none""# },
             fill(color)));
+        Ok(())
     }
 
     /// Closed polygon with a gradient fill. The shape box is the polygon's
@@ -667,7 +692,7 @@ impl Drawing {
         background: Color,
         dark: bool,
         visual: VisualExportContext,
-    ) {
+    ) -> Result<(), IoError> {
         for prim in super::board::object_prims(item, object, background, dark, visual) {
             match prim {
                 super::board::Prim::Path {
@@ -675,6 +700,7 @@ impl Drawing {
                     closed,
                     fill,
                     stroke,
+                    stencil_stroke,
                     ..
                 } => self.poly(
                     &format!("Canvas object {}", object.id),
@@ -682,7 +708,8 @@ impl Drawing {
                     closed,
                     fill,
                     stroke,
-                ),
+                    stencil_stroke,
+                )?,
                 super::board::Prim::Gradient { points, paint } => {
                     self.gradient_poly(&format!("Canvas object {}", object.id), &points, &paint)
                 }
@@ -832,6 +859,7 @@ impl Drawing {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -893,7 +921,7 @@ pub(crate) fn editable_slide(
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
     {
         let object = &*object;
-        draw.board_object(item, object, page, options.dark, visual);
+        draw.board_object(item, object, page, options.dark, visual)?;
     }
     for boundary in &layout.boundaries {
         let source = sheet
@@ -1264,7 +1292,7 @@ pub(crate) fn editable_slide(
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
     {
         let object = &*object;
-        draw.board_object(item, object, page, options.dark, visual);
+        draw.board_object(item, object, page, options.dark, visual)?;
     }
     if sheet
         .sankey
@@ -1446,6 +1474,139 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn stencil_poly_uses_drawingml_stroke_geometry_and_rejects_unrepresentable_miters() {
+        use super::super::board::StencilStrokeGeometry;
+        use thinoda_core::stencil::{LineCap, LineJoin};
+
+        let mut drawing = Drawing {
+            xml: String::new(),
+            next_id: 1,
+            frame: Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+            scale: 12_700.0,
+            width: 9_144_000,
+            height: 6_858_000,
+            rotation: None,
+        };
+        let points = [Vec2::ZERO, Vec2::new(10.0, 20.0), Vec2::new(20.0, 0.0)];
+        for (join, cap, expected) in [
+            (LineJoin::Miter, LineCap::Flat, r#"<a:miter lim="750000"/>"#),
+            (LineJoin::Bevel, LineCap::Square, "<a:bevel/>"),
+            (LineJoin::Round, LineCap::Round, "<a:round/>"),
+        ] {
+            drawing.xml.clear();
+            drawing
+                .poly(
+                    "stencil",
+                    &points,
+                    true,
+                    None,
+                    Some((Color::BLACK, 2.0)),
+                    Some(StencilStrokeGeometry {
+                        join,
+                        cap,
+                        miter_limit: 7.5,
+                    }),
+                )
+                .unwrap();
+            assert!(drawing.xml.contains(expected));
+            let cap = match cap {
+                LineCap::Flat => "flat",
+                LineCap::Square => "sq",
+                LineCap::Round => "rnd",
+            };
+            assert!(drawing.xml.contains(&format!(r#"cap="{cap}""#)));
+        }
+        for invalid in [-1.0, f32::MAX] {
+            let error = drawing
+                .poly(
+                    "stencil",
+                    &points,
+                    true,
+                    None,
+                    Some((Color::BLACK, 2.0)),
+                    Some(StencilStrokeGeometry {
+                        join: LineJoin::Miter,
+                        cap: LineCap::Flat,
+                        miter_limit: invalid,
+                    }),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("miter limit"));
+        }
+        drawing.xml.clear();
+        drawing
+            .poly(
+                "ordinary",
+                &points,
+                true,
+                None,
+                Some((Color::BLACK, 2.0)),
+                None,
+            )
+            .unwrap();
+        assert!(drawing.xml.contains(r#"cap="rnd""#));
+        assert!(drawing.xml.contains("<a:round/>"));
+    }
+
+    #[test]
+    fn dashed_stencil_segments_keep_geometry_in_powerpoint() {
+        use thinoda_core::{
+            ApproxMeasure, CanvasObject, SceneId, ShapeKind, SheetRootMode, layout::layout_sheet,
+            scene::build_scene, stencil::LineCap, stencil::LineJoin, stencil_object::StencilRef,
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(20.0, 20.0), Vec2::new(120.0, 80.0)),
+        );
+        object.stencil = Some(StencilRef::new("thinoda.general", "message"));
+        object.style.stroke = Some(Color::rgb(18, 52, 86));
+        let id = sheet.add_canvas_object(object).unwrap();
+        let scene = build_scene(&sheet, &layout_sheet(&sheet, &ApproxMeasure, false));
+        let mut item = scene.item(SceneId::Object(id)).unwrap().clone();
+        for path in &mut item.stencil_render.as_mut().unwrap().paths {
+            if let Some(stroke) = &mut path.stroke {
+                stroke.join = LineJoin::Bevel;
+                stroke.cap = LineCap::Square;
+                stroke.dashed = Some(true);
+                stroke.dash_pattern = vec![2.0, 2.0];
+            }
+        }
+        let mut drawing = Drawing {
+            xml: String::new(),
+            next_id: 1,
+            frame: Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0)),
+            scale: 12_700.0,
+            width: 9_144_000,
+            height: 6_858_000,
+            rotation: None,
+        };
+        drawing
+            .board_object(
+                &item,
+                sheet.canvas.object(id).unwrap(),
+                Color::WHITE,
+                false,
+                VisualExportContext::default(),
+            )
+            .unwrap();
+        let strokes: Vec<_> = drawing
+            .xml
+            .split("<a:ln ")
+            .skip(1)
+            .filter(|line| line.contains("123456"))
+            .collect();
+        assert!(strokes.len() > 1);
+        for stroke in strokes {
+            let line = stroke.split("</a:ln>").next().unwrap();
+            assert!(line.contains(r#"cap="sq""#));
+            assert!(line.contains("<a:bevel/>"));
+        }
+    }
 
     #[test]
     fn editable_card_list_blocks_use_shared_layout_alignment() {
