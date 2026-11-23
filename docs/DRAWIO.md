@@ -506,6 +506,7 @@ output. Other D13 gaps and draw.io visual parity remain open.
 - [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
   - [x] Compare three electrical symbols at tall and wide aspect ratios; retain remaining family and tolerance work
+  - [ ] Preserve stencil stroke joins, caps and miter limits across canvas and visual exports
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -828,6 +829,19 @@ and 4.348 respectively on a 0–255 scale. The three horizontal regions
 tolerance or proof of per-symbol parity; the larger buffer differences merit
 geometry and antialiasing investigation. Effects, other sizes and other
 instance-unit definitions remain to be audited.
+
+**D15 stroke geometry critique.** The tall buffer's draw.io SVG and Thinoda
+SVG have matching triangle vertices, but draw.io emits a miter join while
+Thinoda emits a round join; a one-pixel horizontal realignment reduces the
+buffer-region mean difference from 9.410 to 3.095. The interpreter retains
+join, cap and miter limit in `StrokePaint`, but `StencilStroke` drops them before
+the canvas and export paths, and the SVG exporter emits round joins. The
+ellipses also use sampled polygon paths in Thinoda rather than native SVG
+ellipses. These are separate sources of visual difference, not evidence that
+the stencil definition is wrong. A fix must carry stroke geometry through the
+shared primitives and implement it consistently for canvas, raster, SVG and
+PPTX, including dashed paths, without changing unrelated shape or ink
+rendering. Until then, the reference comparison is diagnostic only.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,
