@@ -61,6 +61,33 @@ fn stencil_miter_is_not_clipped_by_the_raster_export_bounds() {
 }
 
 #[test]
+fn stencil_stroke_geometry_is_written_to_editable_powerpoint_shapes() {
+    use thinoda_core::stencil_object::StencilRef;
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+    );
+    object.stencil = Some(StencilRef::new("thinoda.drawio", "electrical-buffer-v2"));
+    object.style.stroke = Some(Color::BLACK);
+    let object_id = sheet.add_canvas_object(object).unwrap();
+    let root = sheet.add_floating("Topic", Vec2::new(0.0, 100.0));
+    let frame = Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(300.0, 240.0));
+    let zone = sheet.create_zone("Zone", vec![root], frame).unwrap();
+    sheet
+        .set_zone_members(zone, vec![root], vec![object_id])
+        .unwrap();
+    sheet
+        .add_presentation_slide("Board", PresentationSource::Zone(zone), frame)
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    assert!(slide.contains(r#"cap="flat""#), "{slide}");
+    assert!(slide.contains(r#"<a:miter lim="1000000"/>"#));
+}
+
+#[test]
 fn formatted_card_titles_render_in_visual_exports() {
     use thinoda_core::{InlineParagraph, ListKind};
     use thinoda_io::{ExportLoss, export_losses};

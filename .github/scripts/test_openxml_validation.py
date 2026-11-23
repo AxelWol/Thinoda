@@ -28,19 +28,20 @@ class OpenXmlValidationTests(unittest.TestCase):
 
     def test_all_generated_exports_are_schema_valid(self):
         fixtures = Path(FIXTURES)
+        expected = {
+            "plain.docx", "rich-notes.docx", "plain.xlsx", "map.xlsx",
+            "slides-light-16x9.pptx", "slides-dark-16x9.pptx",
+            "slides-light-4x3.pptx", "slides-dark-4x3.pptx",
+            "viewport-board.pptx", "rotated-editable-board.pptx", "stencil-editable.pptx",
+        }
         self.assertEqual(
             {path.name for path in fixtures.iterdir() if not path.name.startswith("~$")},
-            {
-                "plain.docx", "rich-notes.docx", "plain.xlsx", "map.xlsx",
-                "slides-light-16x9.pptx", "slides-dark-16x9.pptx",
-                "slides-light-4x3.pptx", "slides-dark-4x3.pptx",
-                "viewport-board.pptx", "rotated-editable-board.pptx",
-            },
+            expected,
         )
         result = self.run_validator(fixtures)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Validated 10 Office file(s)", result.stdout)
-        self.assertEqual(result.stdout.count(": 0 validation error(s)"), 10)
+        self.assertIn(f"Validated {len(expected)} Office file(s)", result.stdout)
+        self.assertEqual(result.stdout.count(": 0 validation error(s)"), len(expected))
 
     def test_viewport_slide_contains_the_flattened_board(self):
         with zipfile.ZipFile(Path(FIXTURES) / "viewport-board.pptx") as package:
