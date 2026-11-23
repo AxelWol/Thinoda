@@ -233,6 +233,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "electrical-buffer-v2",
     ));
     stencil.style.stroke = Some(Color::BLACK);
+    stencil.style.stroke_width = 6.0;
+    stencil.style.shadow = true;
     let object = sheet.add_canvas_object(stencil)?;
     let root = sheet.add_floating("Topic", Vec2::new(0.0, 100.0));
     let frame = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 240.0));

@@ -329,6 +329,8 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
     - [ ] Preserve event order across multiple editor clicks and text events in one frame; the ignored `two_editor_clicks_keep_batched_text_at_each_clicked_caret` regression currently produces `ABxy` instead of `xABy`
+    - [ ] Design ordered input replay with per-event pointer state and text layout at each edit; the current single-press pass removes keyboard events while egui sees frame-aggregated pointer state, so splitting the event list alone cannot reproduce earlier clicks
+    - [ ] Preserve double/triple-click selection, Shift extension, drag and touch gestures, IME composition, accessibility actions and toolbar/outside-click ownership across replay; validate undo and mixed formatting on shape and connector labels before enabling the regression
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -864,7 +866,9 @@ opacity unchanged. SVG shadow-only raster comparisons cover different joins
 and caps; a thick miter with a shadow exercises export bounds, and the editable
 PowerPoint test checks the shadow line itself. Canvas strokes and shadows still
 need equivalent geometry and antialiasing. PowerPoint shadow paths are
-serialized but still need host visual verification. The electrical
+serialized; the shadow-enabled fixture opens in Windows PowerPoint without a
+repair prompt and exposes the separate shadow paths, but visual verification
+remains open because the captured slide surface was blank. The electrical
 buffer fixture opened in Windows PowerPoint without a repair prompt and displayed
 its pointed joins. Editable freeform polygons and polylines now use tight path
 bounds and local coordinates instead of a slide-sized bounding box; selecting the
