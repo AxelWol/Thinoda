@@ -39,6 +39,51 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.29.0](https://github.com/AxelWol/Thinoda/compare/v0.28.1...v0.29.0) (2026-11-23)
+
+
+### Features
+
+* accept safe SVG CSS value comments ([ede80d8](https://github.com/AxelWol/Thinoda/commit/ede80d82ac475e828158c4439eff83350ee36a96))
+* accept SVG comments after CSS property colons ([68eb800](https://github.com/AxelWol/Thinoda/commit/68eb800d71352105f42e9744cd6224caedf714e3))
+* add WebP and GIF visual exports ([#150](https://github.com/AxelWol/Thinoda/issues/150)) ([fa8509d](https://github.com/AxelWol/Thinoda/commit/fa8509ddd1299884fb18e78aaf55ffda26197f49))
+* improve draw.io and XMind image interoperability ([be93b32](https://github.com/AxelWol/Thinoda/commit/be93b3265a900a80ab49ebdb51edaa6d0467a6ec))
+* move layers panel with keyboard ([22fdbdf](https://github.com/AxelWol/Thinoda/commit/22fdbdf83d9f0f14bc7efd12480418960f43cff2))
+* preserve shared XMind WebP images and attachments ([65aa05e](https://github.com/AxelWol/Thinoda/commit/65aa05e7811062b1bc5e18151e034e8487601b72))
+* recover compressed XMind SVG pictures ([ec61f3d](https://github.com/AxelWol/Thinoda/commit/ec61f3d8924783010158e7137bd25e804ac4679e))
+* recover embedded JPEGs in XMind SVG pictures ([53da1c0](https://github.com/AxelWol/Thinoda/commit/53da1c05bec36e506554dae0d856139e071d8013))
+* recover embedded PNGs in XMind SVG pictures ([7892d6a](https://github.com/AxelWol/Thinoda/commit/7892d6a6659f3b59e3b7e4af114d3f2e39134132))
+* recover embedded static GIFs in XMind SVG ([b184b25](https://github.com/AxelWol/Thinoda/commit/b184b25904a0ac897883fd45683d0fd13201bf69))
+* recover embedded static WebP in XMind SVG ([28d8153](https://github.com/AxelWol/Thinoda/commit/28d81535a6414983968d8c87b9731043bfd52697))
+* recover legacy XMind WebP pictures ([dc204f2](https://github.com/AxelWol/Thinoda/commit/dc204f2900de58be4cea0fe9a6eb7996faf3d40a))
+* recover static XMind GIF pictures ([4ae90c5](https://github.com/AxelWol/Thinoda/commit/4ae90c5379f82aae902ebbb415fe41a6d304475c))
+* recover static XMind WebP pictures ([3e6898e](https://github.com/AxelWol/Thinoda/commit/3e6898e83b2992b24ed76394d5e716bdf8ab94a9))
+* recover SVG styles with safe CSS comments ([2162f32](https://github.com/AxelWol/Thinoda/commit/2162f3255b5f5e396e770693628c65f4f22604f8))
+
+
+### Bug Fixes
+
+* disclose dropped edge label backgrounds ([7c31efc](https://github.com/AxelWol/Thinoda/commit/7c31efc1a47121b1dd8d8abbb017d8e11f66ca66))
+* disclose dropped edge label geometry ([195e5e6](https://github.com/AxelWol/Thinoda/commit/195e5e6e8d5593ed118523011a205aee2fb6bbf1))
+* gate Windows ribbon in layers test ([e4f61e0](https://github.com/AxelWol/Thinoda/commit/e4f61e00f5f7bc422960918638b02e8592bced2c))
+* preserve folded drawio connector label formatting ([eb42674](https://github.com/AxelWol/Thinoda/commit/eb4267433bf867b6c09bb5d65a5fee87fdf2067a))
+* preserve sheet background in JPEG export ([b34b3fb](https://github.com/AxelWol/Thinoda/commit/b34b3fbad4efe3a8a62b01c6c4775399d7919aa5))
+* protect XMind resource limits during recovery ([d694c60](https://github.com/AxelWol/Thinoda/commit/d694c604a9b07390c62f623459c1a771a63e3093))
+* report flattened drawio structural cells ([cfc2054](https://github.com/AxelWol/Thinoda/commit/cfc2054cd1d4702b88340dec29ad1df1bd081ad6))
+* report invalid edge label text opacity ([b0b5632](https://github.com/AxelWol/Thinoda/commit/b0b5632e78d804c75ae822f38bd902701725c523))
+* report omitted drawio edge children ([5c1f799](https://github.com/AxelWol/Thinoda/commit/5c1f799ebcd52bbe40409a45bfc92e428bba5134))
+* require SVG namespace for embedded images ([c212250](https://github.com/AxelWol/Thinoda/commit/c2122500e970dd6c67f120e8bdebdd852ead940d))
+* reserve XMind pictures per sheet ([2d0d53f](https://github.com/AxelWol/Thinoda/commit/2d0d53f681980f2f8f9eaed47a96e9d118c538d9))
+* validate SVG image link namespaces ([23d40a7](https://github.com/AxelWol/Thinoda/commit/23d40a7b67527e8b6473f11dd7c0451ae4d48448))
+* validate SVG presentation references ([71689c2](https://github.com/AxelWol/Thinoda/commit/71689c27e3a4617def3a092ded939c85321deb2b))
+
+
+### Documentation
+
+* critique embedded SVG WebP recovery ([1a4d538](https://github.com/AxelWol/Thinoda/commit/1a4d538eeef3617389357eb73aa27ad540e87d4b))
+* keep partial drawio phases open ([31ab1f8](https://github.com/AxelWol/Thinoda/commit/31ab1f8ed999a79ec359a6b0ab656400648a9bd1))
+* track completed keyboard port cycling ([3035763](https://github.com/AxelWol/Thinoda/commit/3035763e3118a800342bad6d87990468b5da42ca))
+
 ## [0.28.1](https://github.com/AxelWol/Thinoda/compare/v0.28.0...v0.28.1) (2026-11-22)
 
 
