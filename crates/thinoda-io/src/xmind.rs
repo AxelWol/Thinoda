@@ -94,6 +94,7 @@ fn supported_static_svg_css(css: &str) -> bool {
             let whitespace_delimited = normalized.chars().next_back().is_some_and(css_whitespace)
                 && rest[end + 4..].chars().next().is_some_and(css_whitespace);
             let at_boundary = rest[end + 4..]
+                .trim_start_matches(css_whitespace)
                 .chars()
                 .next()
                 .is_none_or(|ch| matches!(ch, '{' | '}' | ';' | ':' | ','));
@@ -7907,6 +7908,8 @@ mod tests {
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.other,/**/.box { fill: #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.box/**/{fill/**/:#1255aa/**/;}</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="fill:#1255aa/**/"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.box/**/ {fill/**/ :#1255aa/**/ ;}</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="fill:#1255aa/**/  "/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
@@ -8431,6 +8434,9 @@ mod tests {
             "animation:slide/**/",
             "fill:url(https://example.com/image)/**/",
             "fill:var(--color)/**/",
+            "animation/**/ :slide",
+            "fill/**/ :url(https://example.com/image)",
+            "fill:u/**/ rl(https://example.com/image)",
         ] {
             assert!(!supported_static_svg_css(css), "{css}");
         }
@@ -8439,6 +8445,11 @@ mod tests {
         ));
         assert!(supported_static_svg_css(".box/**/{fill/**/:#1255aa/**/;}"));
         assert!(supported_static_svg_css("fill:#1255aa/**/"));
+        assert!(supported_static_svg_css(
+            ".box/**/ {fill/**/ :#1255aa/**/ ;}"
+        ));
+        assert!(supported_static_svg_css("fill:#1255aa/**/  "));
+        assert!(supported_static_svg_css("fill:#1255aa/**/\t\n\r\u{c}"));
     }
 
     #[test]

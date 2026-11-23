@@ -39,6 +39,7 @@ fn stencil_miter_is_not_clipped_by_the_raster_export_bounds() {
     object.stencil = Some(StencilRef::new("thinoda.drawio", "electrical-buffer-v2"));
     object.style.stroke = Some(Color::BLACK);
     object.style.stroke_width = 30.0;
+    object.style.shadow = true;
     sheet.add_canvas_object(object).unwrap();
     let book = Workbook::new(sheet);
     let options = ExportOptions {
@@ -85,6 +86,20 @@ fn stencil_stroke_geometry_is_written_to_editable_powerpoint_shapes() {
     let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
     assert!(slide.contains(r#"cap="flat""#), "{slide}");
     assert!(slide.contains(r#"<a:miter lim="1000000"/>"#));
+    sheet.canvas.object_mut(object_id).unwrap().style.shadow = true;
+    let with_shadow =
+        slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let shadow_lines: Vec<_> = with_shadow
+        .split("<a:ln ")
+        .skip(1)
+        .filter_map(|line| line.split("</a:ln>").next())
+        .filter(|line| line.contains(r#"<a:alpha val="25098"/>"#))
+        .collect();
+    assert!(!shadow_lines.is_empty(), "{with_shadow}");
+    for line in shadow_lines {
+        assert!(line.contains(r#"cap="flat""#), "{line}");
+        assert!(line.contains(r#"<a:miter lim="1000000"/>"#), "{line}");
+    }
 }
 
 #[test]

@@ -2081,6 +2081,7 @@ mod tests {
         );
         object.stencil = Some(StencilRef::new("thinoda.general", "message"));
         object.style.stroke = Some(Color::rgb(18, 52, 86));
+        object.style.shadow = true;
         let id = sheet.add_canvas_object(object).unwrap();
         let scene = build_scene(&sheet, &layout_sheet(&sheet, &ApproxMeasure, false));
         let mut item = scene.item(SceneId::Object(id)).unwrap().clone();
@@ -2096,6 +2097,7 @@ mod tests {
         };
 
         let mut raster_images = Vec::new();
+        let mut shadow_images = Vec::new();
         for (join, cap, limit, expected_join, expected_cap) in [
             (LineJoin::Miter, LineCap::Flat, 10.0, "miter", "butt"),
             (LineJoin::Bevel, LineCap::Square, 7.0, "bevel", "square"),
@@ -2122,12 +2124,32 @@ mod tests {
                 assert!(path.contains(&format!("stroke-linecap=\"{expected_cap}\"")));
                 assert!(path.contains(&format!("stroke-miterlimit=\"{limit}\"")));
             }
+            let shadows: Vec<_> = svg
+                .split("<path ")
+                .skip(1)
+                .filter(|path| path.contains("stroke=\"#00000040\""))
+                .collect();
+            assert!(!shadows.is_empty(), "{svg}");
+            for path in &shadows {
+                assert!(path.contains(&format!("stroke-linejoin=\"{expected_join}\"")));
+                assert!(path.contains(&format!("stroke-linecap=\"{expected_cap}\"")));
+                assert!(path.contains(&format!("stroke-miterlimit=\"{limit}\"")));
+            }
+            let shadow_paths: String = shadows
+                .iter()
+                .map(|path| format!("<path {}/>", path.split("/>").next().unwrap()))
+                .collect();
+            let shadow_page = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"120\">{shadow_paths}</svg>"
+            );
+            shadow_images.push(raster_svg(&shadow_page, 1.0, image::ImageFormat::Png).unwrap());
             let page = format!(
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"120\">{svg}</svg>"
             );
             raster_images.push(raster_svg(&page, 1.0, image::ImageFormat::Png).unwrap());
         }
         assert_ne!(raster_images[0], raster_images[1]);
+        assert_ne!(shadow_images[0], shadow_images[1]);
 
         for path in &mut item.stencil_render.as_mut().unwrap().paths {
             if let Some(stroke) = &mut path.stroke {

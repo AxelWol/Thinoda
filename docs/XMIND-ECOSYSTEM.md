@@ -437,6 +437,8 @@ undocumented XMind payload.
   delimiters outside parentheses, in modern and legacy packages.
 - [x] Recover static SVG styles with a trailing comment after a complete value,
   including inline styles in modern and legacy packages.
+- [x] Recover static SVG styles when CSS whitespace separates those comments
+  from a structural delimiter or the end of the style.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -461,6 +463,8 @@ Comments immediately before structural delimiters are likewise accepted, but
 comments splitting identifiers and functions remain rejected. A trailing
 comment after a complete value cannot conceal a following token; the normalized
 value is still checked for unsupported dynamic features and external URLs.
+Whitespace after a comment is skipped only to identify a following delimiter or
+the end of the style; it cannot conceal a continuation of an identifier.
 Rasterization still loses SVG metadata and unsupported dynamic features.
 
 The legacy parser reserves the original package plus each converted PNG for

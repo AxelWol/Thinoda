@@ -299,6 +299,11 @@ pub(crate) fn object_prims(
                     &path.subpaths,
                     path.stroke.as_ref().map_or(0.0, |stroke| stroke.width),
                     opacity,
+                    path.stroke.as_ref().map(|stroke| StencilStrokeGeometry {
+                        join: stroke.join,
+                        cap: stroke.cap,
+                        miter_limit: stroke.miter_limit,
+                    }),
                 );
             }
         }
@@ -452,7 +457,7 @@ pub(crate) fn object_prims(
                 } else {
                     Vec::new()
                 };
-                shadow_prims(&mut out, &fills, &strokes, width, opacity);
+                shadow_prims(&mut out, &fills, &strokes, width, opacity, None);
             }
             let fill = match fill {
                 Some(color)
@@ -848,6 +853,7 @@ fn shadow_prims(
     strokes: &[(Vec<Vec2>, bool)],
     width: f32,
     opacity: f32,
+    stencil_stroke: Option<StencilStrokeGeometry>,
 ) {
     let color = shape_style::shadow_color(opacity);
     let shift = |points: &[Vec2]| -> Vec<Vec2> {
@@ -874,7 +880,7 @@ fn shadow_prims(
                 fill: None,
                 stroke: Some((color, width)),
                 round: false,
-                stencil_stroke: None,
+                stencil_stroke,
             });
         }
     }
