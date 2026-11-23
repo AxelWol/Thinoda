@@ -508,7 +508,8 @@ output. Other D13 gaps and draw.io visual parity remain open.
   - [x] Compare three electrical symbols at tall and wide aspect ratios; retain remaining family and tolerance work
   - [ ] Preserve stencil stroke joins, caps and miter limits across canvas and visual exports
     - [x] Carry joins, caps and miter limits into the renderer-neutral stencil primitives
-    - [ ] Apply those primitives consistently in canvas and visual exports
+    - [x] Apply them to solid and dashed SVG paths and SVG-based raster and PDF exports, including miter-aware export bounds
+    - [ ] Apply them to the canvas, PPTX and stencil shadows
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -837,14 +838,16 @@ SVG have matching triangle vertices, but draw.io emits a miter join while
 Thinoda emits a round join; a one-pixel horizontal realignment reduces the
 buffer-region mean difference from 9.410 to 3.095. The interpreter retains
 join, cap and miter limit in `StrokePaint`. Renderer-neutral `StencilStroke`
-now retains all three, but canvas and export paths do not yet apply them, and
-the SVG exporter emits round joins. The
-ellipses also use sampled polygon paths in Thinoda rather than native SVG
-ellipses. These are separate sources of visual difference, not evidence that
-the stencil definition is wrong. Applying the retained stroke geometry must
-cover canvas, raster, SVG and PPTX, including dashed paths, without changing
-unrelated shape or ink rendering. Until then, the reference comparison is
-diagnostic only.
+now retains all three, and SVG and SVG-based raster and PDF exports apply
+them to solid and dashed paths. Export bounds measure the painted stencil so
+long miters are not clipped; a thick, acute buffer regression verifies this.
+This intentionally improves exports only: the canvas, PPTX and stencil shadows
+still need the same geometry. Ellipses also use sampled polygon paths in
+Thinoda rather than native SVG ellipses. These are separate sources of visual
+difference, not evidence that the stencil definition is wrong. With the same
+whole-image translation search before and after the SVG change, mean RGB
+difference fell from 3.703 to 3.129 for tall and from 4.202 to 2.603 for wide.
+These whitespace-inclusive values are diagnostic, not visual acceptance.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,

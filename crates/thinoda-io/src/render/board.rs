@@ -31,6 +31,7 @@ pub(crate) enum Prim {
         stroke: Option<(Color, f32)>,
         /// Round caps and joins (ink).
         round: bool,
+        stencil_stroke: Option<StencilStrokeGeometry>,
     },
     /// All visible rectangle sides are stroked as one compound path.
     RectangleSides {
@@ -79,6 +80,13 @@ pub(crate) enum Prim {
         /// Object opacity applied to the label background and border.
         opacity: f32,
     },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct StencilStrokeGeometry {
+    pub join: thinoda_core::stencil::LineJoin,
+    pub cap: thinoda_core::stencil::LineCap,
+    pub miter_limit: f32,
 }
 
 /// The styled label of a shape whose default text area is `base`.
@@ -315,6 +323,11 @@ pub(crate) fn object_prims(
                 .as_ref()
                 .and_then(|s| s.dash.clone())
                 .filter(|dash| dash.len() >= 2);
+            let stencil_stroke = path.stroke.as_ref().map(|s| StencilStrokeGeometry {
+                join: s.join,
+                cap: s.cap,
+                miter_limit: s.miter_limit,
+            });
             let stroke = path.stroke.map(|s| (s.color, s.width));
             for (points, closed) in path.subpaths {
                 if let (Some(dash), Some(stroke)) = (&dash, stroke) {
@@ -325,9 +338,10 @@ pub(crate) fn object_prims(
                             fill,
                             stroke: None,
                             round: false,
+                            stencil_stroke: None,
                         });
                     }
-                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                    dashed_prims(&mut out, &points, closed, dash, stroke, stencil_stroke);
                     continue;
                 }
                 out.push(Prim::Path {
@@ -336,6 +350,7 @@ pub(crate) fn object_prims(
                     fill: if closed { fill } else { None },
                     stroke,
                     round: false,
+                    stencil_stroke,
                 });
             }
         }
@@ -463,6 +478,7 @@ pub(crate) fn object_prims(
                         fill,
                         stroke,
                         round: false,
+                        stencil_stroke: None,
                     });
                 }
                 out.push(Prim::Path {
@@ -471,6 +487,7 @@ pub(crate) fn object_prims(
                     fill: None,
                     stroke,
                     round: false,
+                    stencil_stroke: None,
                 });
             } else if let Some(sides) = sides {
                 out.push(Prim::Path {
@@ -479,6 +496,7 @@ pub(crate) fn object_prims(
                     fill,
                     stroke: None,
                     round: false,
+                    stencil_stroke: None,
                 });
                 if let Some((stroke, width)) = stroke {
                     let paths = rectangle_side_paths(object.rect, object.rotation, sides);
@@ -497,6 +515,7 @@ pub(crate) fn object_prims(
                     fill,
                     stroke,
                     round: false,
+                    stencil_stroke: None,
                 });
             }
             if *shape != ShapeKind::FinalState {
@@ -514,13 +533,14 @@ pub(crate) fn object_prims(
                             Some(stroke.unwrap_or((ink, 1.0)))
                         },
                         round: false,
+                        stencil_stroke: None,
                     });
                 }
             }
             if let (Some(dash), Some(stroke)) = (&dash, dashed_stroke) {
                 for (points, closed) in shape_style::builtin_stroke_paths(object, outline, details)
                 {
-                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                    dashed_prims(&mut out, &points, closed, dash, stroke, None);
                 }
             }
             glass_prims(
@@ -579,6 +599,7 @@ pub(crate) fn object_prims(
                 fill: None,
                 stroke: Some((faded(stroke.color, alpha), width.max(0.1))),
                 round: true,
+                stencil_stroke: None,
             });
         }
         (
@@ -600,6 +621,7 @@ pub(crate) fn object_prims(
                 fill: Some(faded(color, opacity * 0.75)),
                 stroke: None,
                 round: false,
+                stencil_stroke: None,
             });
             let text_color = faded(
                 object
@@ -695,6 +717,7 @@ pub(crate) fn object_prims(
                     fill: fill.map(|fill| faded(fill, opacity)),
                     stroke: Some((color, width)),
                     round: false,
+                    stencil_stroke: None,
                 });
             }
             let inner = match body {
@@ -712,6 +735,7 @@ pub(crate) fn object_prims(
                         fill: None,
                         stroke: Some((color, width)),
                         round: true,
+                        stencil_stroke: None,
                     });
                     out.push(Prim::Path {
                         points: path,
@@ -719,6 +743,7 @@ pub(crate) fn object_prims(
                         fill: None,
                         stroke: Some(inner),
                         round: true,
+                        stencil_stroke: None,
                     });
                 } else {
                     out.push(Prim::Path {
@@ -727,6 +752,7 @@ pub(crate) fn object_prims(
                         fill: None,
                         stroke: Some((color, width)),
                         round: true,
+                        stencil_stroke: None,
                     });
                 }
             }
@@ -837,6 +863,7 @@ fn shadow_prims(
             fill: Some(color),
             stroke: None,
             round: false,
+            stencil_stroke: None,
         });
     }
     if width > 0.0 {
@@ -847,6 +874,7 @@ fn shadow_prims(
                 fill: None,
                 stroke: Some((color, width)),
                 round: false,
+                stencil_stroke: None,
             });
         }
     }
@@ -869,6 +897,7 @@ fn fill_prims(
                     fill: Some(*color),
                     stroke: None,
                     round: false,
+                    stencil_stroke: None,
                 });
             }
         }
@@ -895,6 +924,7 @@ fn fill_prims(
                     fill: None,
                     stroke: Some((*color, marks.width)),
                     round: false,
+                    stencil_stroke: None,
                 });
             }
             for center in marks.dots {
@@ -917,6 +947,7 @@ fn dashed_prims(
     closed: bool,
     dash: &[f32],
     stroke: (Color, f32),
+    stencil_stroke: Option<StencilStrokeGeometry>,
 ) {
     for points in shape_style::dash_polyline(points, closed, dash) {
         out.push(Prim::Path {
@@ -925,6 +956,7 @@ fn dashed_prims(
             fill: None,
             stroke: Some(stroke),
             round: false,
+            stencil_stroke,
         });
     }
 }
@@ -973,6 +1005,7 @@ fn marker_primitive(
             fill: marker.filled.then_some(color),
             stroke: Some((color, width)),
             round: false,
+            stencil_stroke: None,
         }
     }
 }
@@ -1004,6 +1037,7 @@ fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
         fill: Some(color),
         stroke: None,
         round: false,
+        stencil_stroke: None,
     }
 }
 
