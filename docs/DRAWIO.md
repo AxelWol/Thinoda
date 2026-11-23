@@ -345,6 +345,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
     - [ ] Preserve event order across multiple editor clicks and text events in one frame; the ignored `two_editor_clicks_keep_batched_text_at_each_clicked_caret` regression currently produces `ABxy` instead of `xABy`
     - [ ] Design ordered input replay with per-event pointer state and text layout at each edit; the current single-press pass removes keyboard events while egui sees frame-aggregated pointer state, so splitting the event list alone cannot reproduce earlier clicks
+    - [ ] Evaluate replay from a retained prior-frame egui `InputState`, including first-frame and multi-pass behavior, event consumption and restoring the host input after editor processing
     - [ ] Preserve double/triple-click selection, Shift extension, drag and touch gestures, IME composition, accessibility actions and toolbar/outside-click ownership across replay; validate undo and mixed formatting on shape and connector labels before enabling the regression
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -355,6 +356,13 @@ numeric weight, and numeric values other than 400 and 700 can differ visibly;
 the current bold/not-bold model cannot retain either distinction. The existing
 visual approximation is preserved, but import and clipboard conversion now
 report formatting loss instead of presenting it as exact.
+
+**Ordered-input critique:** egui 0.37 exposes `InputState::begin_pass` but not
+`PointerState::begin_pass`. Rebuilding successive input states from a retained
+prior-frame snapshot is a candidate for replay, not an established fix: using
+the already aggregated current state as the starting point would reuse later
+click and drag history. Replay must not consume input twice on extra egui
+passes, invent event timing or change the host's final pointer and focus state.
 
 **Font-family critique:** CSS fallback lists are not native single-family names;
 retaining the written list as one family may fall back to the default font.
