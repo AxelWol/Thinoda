@@ -680,6 +680,17 @@ A synthetic regression demonstrates the defect and remains ignored rather
 than hiding it or claiming a fix. Drag, touch, IME and real-platform input
 still need separate validation.
 
+The egui 0.37 `TextEdit` derives its caret from one response interaction
+position and applies `TextCursorState::pointer_interaction` using aggregate
+press and click state. Its raw pointer-button events retain event positions and
+modifiers but not per-event timestamps or click counts; the per-event click
+records are private to egui, and clicks in one input pass share its frame time.
+Consequently, replaying raw clicks by assigning a caret would bypass word/line
+selection, Shift extension and granular dragging. A complete fix needs an
+ordered input contract that preserves those semantics (or an upstream egui
+facility), plus mixed text, touch and IME tests; the existing failure remains
+open until that contract is implemented.
+
 **D0.** The inventory is regex-based over minified code, so counts are
 approximate; the gap table is limited to user-visible features and treats cloud
 and collaboration features as out of scope. The coverage probe proves that
