@@ -4327,6 +4327,107 @@ fn drawio_js_shapes_bind_numeric_and_choice_style_keys() {
 }
 
 #[test]
+fn drawio_electrical_buffer_round_trips_and_scales() {
+    let cell = |id: &str, width: u32, height: u32, negating: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="shape=mxgraph.electrical.logic_gates.buffer2;{negating}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="{width}" height="{height}" as="geometry"/></mxCell>"#
+        )
+    };
+    let xml = page(
+        &[
+            cell("normal", 100, 80, ""),
+            cell("inverted", 200, 40, "negating=1;"),
+            cell("invalid", 100, 80, "negating=2;"),
+        ]
+        .concat(),
+    );
+    let sheet = clean(&xml);
+    let objects = shapes(&sheet);
+    assert_eq!(objects.len(), 3);
+    for (object, expected_negation) in objects.iter().zip([false, true, false]) {
+        let reference = object.stencil.as_ref().unwrap();
+        assert_eq!(reference.definition, "electrical-buffer");
+        let render = thinoda_core::stencil_object::render(object).unwrap();
+        assert_eq!(render.ports.len(), 2);
+        assert_eq!(render.ports[0].at, Vec2::new(0.0, object.rect.size.y / 2.0));
+        assert_eq!(
+            render.ports[1].at,
+            Vec2::new(object.rect.size.x, object.rect.size.y / 2.0)
+        );
+        assert!(render.ports.iter().all(|port| port.perimeter));
+        let visible: Vec<_> = render
+            .paths
+            .iter()
+            .filter(|path| {
+                path.stroke.is_some() || path.fill.as_ref().is_some_and(|fill| fill.alpha > 0.0)
+            })
+            .collect();
+        assert_eq!(visible.len(), if expected_negation { 3 } else { 2 });
+        assert_eq!(visible[0].subpaths.len(), 2);
+        assert_eq!(
+            visible[0].subpaths[0].points[0],
+            Vec2::new(0.0, object.rect.size.y * 0.5)
+        );
+        assert_eq!(
+            visible[0].subpaths[0].points[1],
+            Vec2::new(object.rect.size.x * 0.2, object.rect.size.y * 0.5)
+        );
+        assert_eq!(
+            visible[1].subpaths[0].points[0],
+            Vec2::new(object.rect.size.x * 0.2, 0.0)
+        );
+        if expected_negation {
+            let points = &visible[2].subpaths[0].points;
+            let min_x = points
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = points
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let diameter = (object.rect.size.x * 0.04).min(object.rect.size.y * 0.07);
+            assert!((min_x - object.rect.size.x * 0.8).abs() < 0.01);
+            assert!((max_x - min_x - diameter).abs() < 0.01);
+        }
+    }
+    let book = Workbook::new(sheet.clone());
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(exported.contains("negating=1;"));
+    let reopened = clean(&exported);
+    assert_eq!(
+        shapes(&reopened)
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+    for (replacement, expected_paths) in [("negating=0;", 2), ("negating=2;", 2), ("", 3)] {
+        let edited = exported.replacen("negating=1;", replacement, 1);
+        let edited_sheet = clean(&edited);
+        let inverted = shapes(&edited_sheet)
+            .into_iter()
+            .find(|object| object.label() == "inverted")
+            .unwrap();
+        let render = thinoda_core::stencil_object::render(inverted).unwrap();
+        assert_eq!(
+            render
+                .paths
+                .iter()
+                .filter(|path| path.stroke.is_some())
+                .count(),
+            expected_paths,
+            "{replacement:?}"
+        );
+    }
+}
+
+#[test]
 fn inline_drawio_stencils_import_render_and_round_trip() {
     use base64::Engine as _;
     let encode = |stencil: &str| {
@@ -10880,6 +10981,70 @@ fn drawio_import_reports_hidden_or_empty_edge_children() {
 }
 
 #[test]
+fn drawio_import_reports_unrepresented_edge_label_geometry() {
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##;
+    for (attributes, geometry) in [
+        (r#" collapsed="1""#, ""),
+        (r#" source="e""#, ""),
+        ("", r#"<mxPoint x="4" y="5" as="sourcePoint"/>"#),
+        ("", r#"<mxPoint x="4" y="5" as="targetPoint"/>"#),
+        ("", r#"<Array as="points"><mxPoint x="4" y="5"/></Array>"#),
+        (
+            "",
+            r#"<mxRectangle x="4" y="5" width="6" height="7" as="alternateBounds"/>"#,
+        ),
+    ] {
+        let label = format!(
+            r##"<mxCell id="child" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;" vertex="1" parent="e"{attributes}><mxGeometry x="0.5" relative="1" as="geometry">{geometry}</mxGeometry></mxCell>"##
+        );
+        let report = load(&page(&format!("{edge}{label}")));
+        assert!(report.warnings.contains(&ImportWarning::Other), "{label}");
+        assert_eq!(
+            connectors(&report.workbook.sheets[0])[0].extra_labels[0].text,
+            "Label"
+        );
+    }
+}
+
+#[test]
+fn drawio_import_warns_about_edge_label_background_colors() {
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##;
+    for color in ["none", "#ff0000"] {
+        let label = format!(
+            r##"<mxCell id="child" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;labelBackgroundColor={color};" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        );
+        let report = load(&page(&format!("{edge}{label}")));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{color}"
+        );
+        assert_eq!(
+            connectors(&report.workbook.sheets[0])[0].extra_labels[0].text,
+            "Label"
+        );
+    }
+}
+
+#[test]
+fn drawio_import_warns_about_invalid_edge_label_text_opacity() {
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##;
+    for opacity in ["invalid", "101"] {
+        let label = format!(
+            r##"<mxCell id="child" value="Label" style="edgeLabel;fontSize=12;fontColor=#000000;textOpacity={opacity};" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        );
+        let report = load(&page(&format!("{edge}{label}")));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{opacity}"
+        );
+        assert_eq!(
+            connectors(&report.workbook.sheets[0])[0].extra_labels[0].text,
+            "Label"
+        );
+    }
+}
+
+#[test]
 fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
     let xml = page(concat!(
         r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
@@ -12030,6 +12195,102 @@ fn connector_labels_import_positioned_and_round_trip() {
             "{extra}"
         );
     }
+}
+
+#[test]
+fn absolute_edge_children_keep_inline_formatting_when_folded() {
+    let xml = page(concat!(
+        r#"<mxCell id="e" value="&lt;b&gt;Ä&lt;/b&gt;" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+        r#"<mxCell id="c" value="&lt;i&gt;猫&lt;/i&gt;" style="html=1;" vertex="1" parent="e"><mxGeometry x="10" y="10" width="5" height="5" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(object.label(), "Ä\n猫");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!((rich.runs[1].start, rich.runs[1].end), (2, 3));
+    assert_eq!(rich.runs[1].style.italic, Some(true));
+    let reopened = import(&export(&report.workbook).unwrap()).unwrap();
+    let restored = reopened
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+}
+
+#[test]
+fn folded_edge_child_lists_keep_paragraph_offsets_and_truncated_styles() {
+    use thinoda_core::ListKind;
+
+    let parent = format!("<b>{}</b>", "a".repeat(9995));
+    let child = "<ul><li><i>猫🙂</i></li><li>last</li></ul>";
+    let xml = page(&format!(
+        r#"<mxCell id="e" value="{}" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="c" value="{}" style="html=1;" vertex="1" parent="e"><mxGeometry width="5" height="5" as="geometry"/></mxCell>"#,
+        esc(&parent),
+        esc(child),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert_eq!(object.label().chars().count(), 10_000);
+    assert!(object.label().ends_with("\n猫🙂\nl"));
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert!(rich.validate(object.label()).is_ok());
+    assert_eq!((rich.runs[1].start, rich.runs[1].end), (9996, 9998));
+    assert_eq!(rich.runs[1].style.italic, Some(true));
+    assert_eq!(
+        rich.paragraphs
+            .iter()
+            .map(|p| (p.index, p.list))
+            .collect::<Vec<_>>(),
+        vec![(1, ListKind::Bulleted), (2, ListKind::Bulleted)]
+    );
+}
+
+#[test]
+fn folded_edge_child_exceeding_run_limit_keeps_primary_formatting() {
+    let parent = "<b>a</b><i>b</i>".repeat(512);
+    let xml = page(&format!(
+        r#"<mxCell id="e" value="{}" style="html=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="c" value="{}" style="html=1;" vertex="1" parent="e"><mxGeometry width="5" height="5" as="geometry"/></mxCell>"#,
+        esc(&parent),
+        esc("<b>child</b>"),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report
+        .workbook
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(&object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap();
+    assert!(object.label().ends_with("\nchild"));
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs.len(), 1024);
+    assert_eq!(rich.runs.last().unwrap().end, 1024);
+    assert!(rich.validate(object.label()).is_ok());
 }
 
 #[test]

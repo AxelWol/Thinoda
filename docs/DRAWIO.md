@@ -214,6 +214,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Corpus-ranked definitions (34 new, 35 draw.io names): floorplan wall, wall corner, window, doors (left, right, double) and stairs; mockup margin rects, buttons, scroll bar, checkbox, curly brace and browser window; bpmn event, shape, gateway2 and task/task2 (outlines, symbols, markers, loops); c4 person and person2; stylised arrow, shaded pyramid, circular callout, bar callout; lean_mapping inventory, push and pull arrows, data box, supermarket, outside sources, manufacturing process (plain and shared), FIFO lane
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
+- [x] Apply matching shape defaults to unknown edited choice values even when a Thinoda parameter override is embedded
+- [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
@@ -236,6 +238,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
   - [x] Page links (`data:page/id,`) navigate to the matching sheet
 - [ ] Named ports, remaining draw.io connection point sets and keyboard traversal between individual ports
+  - [x] Cycle supported connection points for a focused connector endpoint with Home/End, including stencil shapes
+  - [ ] Expose named ports and Tab traversal between individual ports
 
 ### D8 — Layers and tables
 
@@ -349,6 +353,10 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
 - [x] Retain bounded source-ID tombstones for imported scene containers and represented table cells, with native save/reopen and budget warnings
 - [x] Warn when nested non-vertex structural cells are flattened, retaining their representable descendants and protecting the source
 - [x] Warn when hidden or empty edge-child vertices are skipped, retaining their connector and protecting the source
+- [x] Warn when connector-label children carry collapsed state, terminals or geometry not represented by label placement
+- [x] Warn when a positioned connector-label child specifies an unsupported background color
+- [x] Warn when a positioned connector-label child's color or text opacity cannot be interpreted faithfully
+- [x] Preserve supported inline runs and list paragraphs when folding absolute connector child labels, within text and formatting limits
 - [x] Preserve imported zone source IDs with bounded owner metadata, tombstones, native v54, XMind and recovery; clear ownership on sheet copy and duplication
 - [x] Preserve imported card and converted Sankey topic source IDs with bounded owner metadata, tombstones, native v55, XMind and recovery; retain IDs on moves and clear ownership on copies
 - [x] Preserve representable flat group source IDs with bounded owner metadata, tombstones, native v56, XMind and recovery; disclose flattened or undersized groups and clear ownership on copies
@@ -765,7 +773,18 @@ supports them, because they would otherwise warn on every insert. Deferred:
 `networks2.icon` and `aws4.resourceIcon` draw one of hundreds of embedded icons
 selected by a style key, and electrical `logic_gate` depends on operator and
 input-count keys. Each needs a table-driven definition rather than a single
-shape. These remain rectangle fallbacks with the usual warning. All new titles
+shape. These remain rectangle fallbacks with the usual warning. The separate
+electrical `buffer2` is implemented as an immutable data-defined stencil,
+including its optional negation bubble and endpoint constraints; it does not
+implement the variable-input gates. Its rectangular hit/perimeter outline is
+invisible, so its shadow behavior still needs visual comparison with draw.io.
+For explicitly referenced stencils, a present but unknown choice uses the
+matching draw.io shape's declared absent value rather than reviving a stale
+Thinoda override; missing keys still preserve that override for older files,
+and mismatched shapes cannot supply another definition's defaults. Invalid
+numeric values keep their existing behavior rather than guessing draw.io's
+semantics.
+All new titles
 are translated into the eight UI languages. Choice options show readable
 labels (for example "Intermediate catching") while import and export keep
 draw.io's keywords. Parameter labels and option names are English only.
@@ -1456,6 +1475,34 @@ are not represented as connector labels and now require conversion consent.
 Their connector remains usable, but the omitted cells and their source
 identities are not preserved. Visible nonempty supported labels retain their
 existing warning-free path; opaque preservation remains open.
+
+**D10 edge-label geometry diagnostics (partial).** A connector label's
+collapsed state, cell terminals, source or target points, waypoints and
+alternate bounds are not represented by label placement. Their presence now
+requires conversion consent while the readable label remains available.
+Duck check: this detects those losses rather than preserving the geometry;
+other source-identity and opaque-data gaps still prevent in-place save.
+
+**D10 edge-label backgrounds (partial).** Explicit child-label background
+colors now produce a formatting warning because extra connector labels cannot
+store their own backgrounds. Duck check: this conservatively warns even when a
+specified color happens to match the canvas background; the label remains
+editable, but the specified background is not retained.
+
+**D10 edge-label text opacity diagnostics (partial).** Positioned child
+labels now apply the same color and opacity loss checks as other cells, so
+invalid or out-of-range values cannot silently become an ordinary opaque
+label. Duck check: the warning protects the source but does not preserve the
+unrecognized source value on the label.
+
+**D10 absolute edge-child rich text (partial).** Folding an absolute child
+into its connector label now retains supported inline styles and list
+paragraphs, including Unicode offsets and bounded truncation. Existing
+formatting is retained when the combined formatting exceeds model limits.
+Duck check: folding still loses the child's independent position and identity,
+and exceeding limits loses text or formatting; import warnings continue to
+protect the source. This does not establish round-trip fidelity for in-place
+save.
 
 **D10 generated-cell ID reservation (partial).** Generated connector-label
 and table IDs now avoid retained object and layer tombstones, so these new cells cannot

@@ -4,6 +4,21 @@ use thinoda_core::stencil::{Instance, PaintRef, StencilError, StencilRender};
 
 use super::*;
 
+#[test]
+fn edited_invalid_choices_use_only_matching_shape_defaults() {
+    let entries = [
+        (STYLE_PACKAGE_KEY, "thinoda.drawio"),
+        (STYLE_DEFINITION_KEY, "bpmn-event"),
+        ("thinodaStencilParam.outline", "8"),
+        ("outline", "invalid"),
+    ];
+    let mapped = style_reference(entries, "mxgraph.bpmn.event", true).unwrap();
+    assert_eq!(mapped.parameters.get("outline"), Some(&0.0));
+
+    let unrelated = style_reference(entries, "anotherShape", true).unwrap();
+    assert_eq!(unrelated.parameters.get("outline"), Some(&8.0));
+}
+
 const LIBRARY: &str = r##"<shapes name="Test library">
 <shape name="Gate &amp; Port" w="200" h="100" aspect="fixed" strokewidth="inherit">
   <connections>
