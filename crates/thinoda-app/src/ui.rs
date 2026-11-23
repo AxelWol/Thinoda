@@ -5116,48 +5116,91 @@ impl ThinodaApp {
         picked
     }
 
-    /// Exact position, size and angle of one selected canvas object, like
-    /// draw.io's Arrange geometry. Each completed field edit is one undo step.
+    fn context_geometry_target(
+        &self,
+    ) -> Option<(
+        thinoda_core::board::BoardMember,
+        thinoda_core::Rect,
+        f32,
+        bool,
+        f64,
+    )> {
+        use thinoda_core::Rect;
+        use thinoda_core::board::{BoardMember, MIN_CARD_SIZE};
+        let doc = self.doc()?;
+        let sheet = doc.doc.sheet();
+        let (member, rect, rotation, rotatable, min_size) = match (
+            doc.view.selection.as_slice(),
+            doc.view.board_selection.as_slice(),
+        ) {
+            ([], [id]) => {
+                let object = sheet.canvas.object(*id)?;
+                if object.is_connector()
+                    || (sheet.canvas.scene.contains(*id)
+                        && thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(
+                            &sheet.canvas,
+                        )
+                        .is_ok_and(|hierarchy| hierarchy.is_locked(*id)))
+                {
+                    return None;
+                }
+                (
+                    BoardMember::Object(*id),
+                    object.rect,
+                    object.rotation,
+                    !sheet.canvas.scene.containers.contains(id),
+                    1.0,
+                )
+            }
+            ([id], []) => {
+                let topic = sheet.topic(*id)?;
+                let (card, center) = (topic.card?, topic.position?);
+                let weighted = sheet.canvas.objects.iter().any(|object| {
+                    matches!(&object.kind, thinoda_core::CanvasObjectKind::Connector(connector)
+                        if connector.sankey.is_some()
+                            && [connector.from, connector.to].contains(&thinoda_core::Endpoint::Topic(*id)))
+                });
+                (
+                    BoardMember::Card(*id),
+                    Rect::from_center_size(center, card.size),
+                    card.rotation,
+                    !weighted,
+                    f64::from(MIN_CARD_SIZE),
+                )
+            }
+            _ => return None,
+        };
+        // A grouped member would drag its group along; connectors follow ends.
+        if sheet.board_member_group(member).is_some() || sheet.is_board_member_locked(member) {
+            return None;
+        }
+        Some((member, rect, rotation, rotatable, min_size))
+    }
+
+    /// Exact geometry for one ungrouped board item. Each edit is one undo step.
     fn context_geometry_controls(&mut self, ui: &mut Ui) {
         use thinoda_core::board::{BoardMember, MAX_BOARD_COORDINATE};
         use thinoda_core::{Rect, Vec2};
-        let Some(doc) = self.doc() else { return };
-        if !doc.view.selection.is_empty() || doc.view.board_selection.len() != 1 {
-            return;
-        }
-        let id = doc.view.board_selection[0];
-        let sheet = doc.doc.sheet();
-        let Some(object) = sheet.canvas.object(id) else {
+        let Some((member, rect, rotation, rotatable, min_size)) = self.context_geometry_target()
+        else {
             return;
         };
-        // A grouped member would drag its group along; connectors follow ends.
-        if object.is_connector()
-            || object.group.is_some()
-            || sheet.is_board_member_locked(BoardMember::Object(id))
-            || (sheet.canvas.scene.contains(id)
-                && thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)
-                    .is_ok_and(|hierarchy| hierarchy.is_locked(id)))
-        {
-            return;
-        }
-        let rect = object.rect;
-        let rotation = object.rotation;
+        let Some(doc) = self.doc() else { return };
         // Object ids are per sheet, so drafts are scoped to this document sheet.
         let owner = egui::Id::unique((&doc.key, doc.doc.active_index()));
-        let rotatable = !sheet.canvas.scene.containers.contains(&id);
         let max = f64::from(MAX_BOARD_COORDINATE);
         let mut commits = Vec::new();
         let mut changed = None;
         ui.separator();
-        egui::Grid::new(("geometry", id.0))
+        egui::Grid::new(("geometry", member))
             .num_columns(4)
             .spacing([6.0, 4.0])
             .show(ui, |ui| {
                 let fields = [
                     ("Left", f64::from(rect.min.x), -max..=max),
                     ("Top", f64::from(rect.min.y), -max..=max),
-                    ("Width", f64::from(rect.size.x), 1.0..=max),
-                    ("Height", f64::from(rect.size.y), 1.0..=max),
+                    ("Width", f64::from(rect.size.x), min_size..=max),
+                    ("Height", f64::from(rect.size.y), min_size..=max),
                     ("Rotation", f64::from(rotation), 0.0..=359.9),
                 ];
                 for (index, (label, stored, range)) in fields.into_iter().enumerate() {
@@ -5165,7 +5208,7 @@ impl ThinodaApp {
                         continue;
                     }
                     let label = ui.label(t(label));
-                    let key = egui::Id::unique(("board-geometry", owner, id.0, index));
+                    let key = egui::Id::unique(("board-geometry", owner, member, index));
                     if let Some(value) = crate::sankey_ui::number_edit(
                         ui,
                         key,
@@ -5200,10 +5243,7 @@ impl ThinodaApp {
                                     Vec2::new(rect.min.x, value)
                                 };
                                 sheet
-                                    .move_board_members(
-                                        &[BoardMember::Object(id)],
-                                        target - rect.min,
-                                    )
+                                    .move_board_members(&[member], target - rect.min)
                                     .map_err(invalid)
                             }
                             2 | 3 => {
@@ -5213,11 +5253,35 @@ impl ThinodaApp {
                                 } else {
                                     size.y = value;
                                 }
-                                sheet
-                                    .resize_canvas_object(id, Rect::from_min_size(rect.min, size))
-                                    .map_err(invalid)
+                                let resized = Rect::from_min_size(rect.min, size);
+                                match member {
+                                    BoardMember::Object(id) => {
+                                        sheet.resize_canvas_object(id, resized).map_err(invalid)
+                                    }
+                                    BoardMember::Card(id) => {
+                                        let mut card = sheet
+                                            .topic(id)
+                                            .and_then(|topic| topic.card)
+                                            .ok_or(thinoda_core::EditError::NoSuchTopic(id))?;
+                                        card.size = size;
+                                        sheet.set_position(id, resized.center())?;
+                                        sheet.set_topic_card(id, Some(card)).map_err(invalid)
+                                    }
+                                }
                             }
-                            _ => sheet.rotate_canvas_object(id, value).map_err(invalid),
+                            _ => match member {
+                                BoardMember::Object(id) => {
+                                    sheet.rotate_canvas_object(id, value).map_err(invalid)
+                                }
+                                BoardMember::Card(id) => {
+                                    let mut card = sheet
+                                        .topic(id)
+                                        .and_then(|topic| topic.card)
+                                        .ok_or(thinoda_core::EditError::NoSuchTopic(id))?;
+                                    card.rotation = value;
+                                    sheet.set_topic_card(id, Some(card)).map_err(invalid)
+                                }
+                            },
                         }
                     })
                     .map_err(|error| error.to_string())
@@ -5233,16 +5297,17 @@ impl ThinodaApp {
     pub(crate) fn has_context_arrange_controls(&self) -> bool {
         use thinoda_canvas::BoardAction;
         use thinoda_core::{Band, ZOrder};
-        [
-            BoardAction::ZOrder(ZOrder::Front),
-            BoardAction::ZOrder(ZOrder::Forward),
-            BoardAction::ZOrder(ZOrder::Backward),
-            BoardAction::ZOrder(ZOrder::Back),
-            BoardAction::SetBand(Band::Above),
-            BoardAction::SetBand(Band::Below),
-        ]
-        .into_iter()
-        .any(|action| self.command_available(&Cmd::BoardAction(action)))
+        self.context_geometry_target().is_some()
+            || [
+                BoardAction::ZOrder(ZOrder::Front),
+                BoardAction::ZOrder(ZOrder::Forward),
+                BoardAction::ZOrder(ZOrder::Backward),
+                BoardAction::ZOrder(ZOrder::Back),
+                BoardAction::SetBand(Band::Above),
+                BoardAction::SetBand(Band::Below),
+            ]
+            .into_iter()
+            .any(|action| self.command_available(&Cmd::BoardAction(action)))
     }
 
     pub(crate) fn selection_context_actions(&mut self, ui: &mut Ui) -> Option<Cmd> {

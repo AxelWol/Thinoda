@@ -1,4 +1,4 @@
-_Last updated: 2026-11-21 10:14:13 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-23 04:16:07 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io integration: binding architecture contracts
 
@@ -521,7 +521,12 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   draw.io canvas state machine is mirrored: the background geometry is painted
   by the first foreground paint, geometry ops replace the current path,
   `save`/`restore` scope paint state, fixed aspect scales uniformly and centres,
-  and `strokeWidth` is `inherit` or a frame-scaled factor. Expressions are a
+  and `strokeWidth` is `inherit`, `inheritObject`, or a frame-scaled factor.
+  `inheritObject` requires `core.objectStrokeWidth` and, for the root canvas
+  object, uses its stored width even when Thinoda's automatic outline would
+  otherwise use two units. Included definitions receive their root instance's
+  width; the included definition does not change the root's width policy.
+  The existing `inherit` behavior is unchanged. Expressions are a
   typed AST (no string evaluation); handles map pointer positions back to
   clamped parameter values. Steps, points, depth and include nesting share
   trusted budgets. Definitions requiring unknown capabilities load but refuse to

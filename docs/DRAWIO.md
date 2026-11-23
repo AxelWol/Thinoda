@@ -1,4 +1,4 @@
-_Last updated: 2026-11-23 02:51:20 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-23 04:59:30 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
@@ -216,6 +216,9 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [x] Apply matching shape defaults to unknown edited choice values even when a Thinoda parameter override is embedded
 - [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
+- [x] Electrical transmission `testPoint`: stroke-coloured circular head, aspect-dependent lead and endpoint constraints in a data-defined stencil
+- [x] Electrical `dc_source_3_v2`: elliptical source with size-dependent polarity marks and endpoint constraints in a data-defined stencil
+- [x] Inherit edited/imported stroke widths for these three electrical stencils using new definitions; retain the old definitions for existing documents
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
@@ -403,6 +406,7 @@ options, org-chart variants and edge routing remain open.
 - [ ] draw.io templates in the template gallery (CC BY 4.0 attribution)
 - [ ] Edit style (raw key/value), edit geometry, raw diagram XML import/export dialog
   - [x] Exact geometry (left, top, width, height, rotation) for one canvas object in the nearby menu's Arrange section
+  - [x] Exact geometry for one floating sticky, text or image card in the same section
   - [ ] Raw style key/value editor and raw diagram XML dialog
 
 **D12 geometry rubber-duck critique.** A separate dialog would contradict the
@@ -413,10 +417,12 @@ step, not dozens. Edits use the existing lock- and hierarchy-aware move,
 resize and rotate operations; fields are hidden for connectors, grouped
 members (editing one would move its group), multi-selections, and directly
 or inherited locked objects, and Rotation is hidden for containers, which
-cannot rotate. Left/Top describe the unrotated frame as in draw.io. Duck
-check: cards still edit size and rotation under More style options without
-position fields; stack-managed children and table cells can reject a value,
-which is then reported and kept as a correctable draft rather than hidden.
+cannot rotate. Left/Top describe the unrotated frame as in draw.io. Cards now expose the same fields in Arrange, keeping the unrotated top-left
+fixed while resizing; their existing More style options keep their prior
+center-anchored behavior. Grouped and locked cards do not expose these fields,
+and Sankey-linked cards do not expose rotation. Stack-managed children and
+table cells can reject a value, which is then reported and kept as a
+correctable draft rather than hidden.
 - [ ] Find/replace and tags on boards, ruler, units and page view
   - [x] Board find covers labels, descriptions, tags and property values; replacement changes labels, descriptions and property values atomically, and locks block only objects that would change
   - [x] Select board objects by exact tag from Edit › Select › Select by Tag, limited to visible objects
@@ -680,6 +686,17 @@ A synthetic regression demonstrates the defect and remains ignored rather
 than hiding it or claiming a fix. Drag, touch, IME and real-platform input
 still need separate validation.
 
+The egui 0.37 `TextEdit` derives its caret from one response interaction
+position and applies `TextCursorState::pointer_interaction` using aggregate
+press and click state. Its raw pointer-button events retain event positions and
+modifiers but not per-event timestamps or click counts; the per-event click
+records are private to egui, and clicks in one input pass share its frame time.
+Consequently, replaying raw clicks by assigning a caret would bypass word/line
+selection, Shift extension and granular dragging. A complete fix needs an
+ordered input contract that preserves those semantics (or an upstream egui
+facility), plus mixed text, touch and IME tests; the existing failure remains
+open until that contract is implemented.
+
 **D0.** The inventory is regex-based over minified code, so counts are
 approximate; the gap table is limited to user-visible features and treats cloud
 and collaboration features as out of scope. The coverage probe proves that
@@ -778,6 +795,30 @@ electrical `buffer2` is implemented as an immutable data-defined stencil,
 including its optional negation bubble and endpoint constraints; it does not
 implement the variable-input gates. Its rectangular hit/perimeter outline is
 invisible, so its shadow behavior still needs visual comparison with draw.io.
+The separate transmission `testPoint` is data-defined too: the head follows
+the stroke colour rather than the fill colour, and a lead appears only when
+the height exceeds the width. Its rectangular hit/perimeter outline preserves
+both endpoint constraints; like the buffer, visual shadow parity is still
+unverified. The separate `dc_source_3_v2` uses an elliptical perimeter and
+draw.io's minimum-sized polarity marks, including for non-square bounds;
+reference-image comparison remains open beyond the bounded check below.
+
+**Electrical stroke-width duck check.** The original three definitions used
+the interpreter's fixed one-unit default, so imported and edited stroke widths
+were ignored. New `-v2` definitions explicitly inherit the stored object width,
+including when both colours use automatic defaults; all 69 previous definitions
+remain unchanged so their saved hashes and appearance still resolve.
+Explicit legacy references keep their old behavior, including on draw.io
+round-trip; changing those existing objects requires a separate migration.
+The new root-object policy is capability-gated so older interpreters cannot
+silently evaluate it with different stroke semantics. Older builds without
+the new definitions still fall back to their legacy shape.
+Using draw.io 32.6.10 and one unlabelled 100×80 instance of each symbol at
+stroke width 2, the raster probe showed a thinner Thinoda outline before this
+change. With image padding aligned, mean RGB difference fell from 6.826 to
+5.292 on a 0–255 scale; antialiasing and geometry still differ. This is not a
+visual acceptance threshold or evidence for other sizes, effects, or the other
+instance-unit definitions, whose stroke behavior remains to be audited.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,

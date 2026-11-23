@@ -36,6 +36,19 @@ fn close(a: Vec2, b: Vec2) -> bool {
 const RECT_BOX: &str = r#"{"op":"rect","x":0,"y":0,"w":100,"h":100}"#;
 
 #[test]
+fn object_stroke_width_policy_requires_its_capability() {
+    let without_capability = r#"{"id":"a","title":"A","frame":{"strokeWidth":"inheritObject"}}"#;
+    assert!(
+        load_err(without_capability)
+            .to_string()
+            .contains("core.objectStrokeWidth")
+    );
+    let with_capability = r#"{"id":"a","title":"A","requires":["core.objectStrokeWidth"],"frame":{"strokeWidth":"inheritObject"},"background":{"op":"rect","x":0,"y":0,"w":100,"h":100},"foreground":[{"op":"stroke"}]}"#;
+    let output = render(&load(with_capability), "a", 100.0, 100.0);
+    assert_eq!(output.paths[0].stroke.as_ref().unwrap().width, 2.0);
+}
+
+#[test]
 fn builtin_library_loads_and_every_definition_evaluates() {
     assert_eq!(builtin_packages().len(), builtin_sources().len());
     let general = &builtin_packages()[0];
@@ -137,7 +150,22 @@ fn drawio_shape_package_validates_and_every_definition_evaluates() {
         assert!(package.definition(id).is_some(), "missing {id}");
         imported.insert(id);
     }
-    assert_eq!(imported.len(), package.definitions.len());
+    let legacy: std::collections::BTreeSet<_> = package
+        .definitions
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .filter(|id| !imported.contains(id))
+        .collect();
+    assert_eq!(
+        legacy,
+        [
+            "electrical-buffer",
+            "electrical-dc-source",
+            "electrical-test-point"
+        ]
+        .into_iter()
+        .collect()
+    );
 }
 
 #[test]
