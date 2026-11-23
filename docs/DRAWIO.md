@@ -802,10 +802,14 @@ reference-image comparison remains open beyond the bounded check below.
 
 **Electrical stroke-width duck check.** The original three definitions used
 the interpreter's fixed one-unit default, so imported and edited stroke widths
-were ignored. New `-v2` definitions inherit the object width; all 69 previous
-definitions remain unchanged so their saved hashes and appearance still resolve.
+were ignored. New `-v2` definitions explicitly inherit the stored object width,
+including when both colours use automatic defaults; all 69 previous definitions
+remain unchanged so their saved hashes and appearance still resolve.
 Explicit legacy references keep their old behavior, including on draw.io
 round-trip; changing those existing objects requires a separate migration.
+The new root-object policy is capability-gated so older interpreters cannot
+silently evaluate it with different stroke semantics. Older builds without
+the new definitions still fall back to their legacy shape.
 Using draw.io 32.6.10 and one unlabelled 100×80 instance of each symbol at
 stroke width 2, the raster probe showed a thinner Thinoda outline before this
 change. With image padding aligned, mean RGB difference fell from 6.826 to

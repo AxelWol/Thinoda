@@ -4575,6 +4575,50 @@ fn drawio_electrical_stroke_width_inherits_without_changing_legacy_definitions()
         ),
     ];
     for (alias, legacy) in aliases {
+        let default_cell = format!(
+            r#"<mxCell id="shape" style="shape={alias};" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="80" as="geometry"/></mxCell>"#
+        );
+        let default_sheet = clean(&page(&default_cell));
+        let default_object = shapes(&default_sheet)[0];
+        let default_render = thinoda_core::stencil_object::render(default_object).unwrap();
+        assert!(
+            default_render
+                .paths
+                .iter()
+                .filter_map(|path| path.stroke.as_ref())
+                .all(|stroke| stroke.width == 1.0),
+            "{alias}: draw.io default stroke width"
+        );
+        let mut edited_default = default_object.clone();
+        edited_default.style.stroke_width = 4.0;
+        let edited_render = thinoda_core::stencil_object::render(&edited_default).unwrap();
+        assert!(
+            edited_render
+                .paths
+                .iter()
+                .filter_map(|path| path.stroke.as_ref())
+                .all(|stroke| stroke.width == 4.0),
+            "{alias}: edited stroke width with automatic colours"
+        );
+        let default_book = Workbook::new(default_sheet);
+        let exported_default = String::from_utf8(export(&default_book).unwrap()).unwrap();
+        let reopened_default = clean(&exported_default);
+        let reopened_render =
+            thinoda_core::stencil_object::render(shapes(&reopened_default)[0]).unwrap();
+        assert!(
+            reopened_render
+                .paths
+                .iter()
+                .filter_map(|path| path.stroke.as_ref())
+                .all(|stroke| stroke.width == 1.0),
+            "{alias}: default stroke width after draw.io round-trip"
+        );
+        let native =
+            export_bytes(&default_book, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(
+            crate::import_bytes(Format::Thinoda, &native).unwrap(),
+            default_book
+        );
         let cell = |extra: &str| {
             format!(
                 r##"<mxCell id="shape" style="shape={alias};fillColor=#ffffff;strokeColor=#000000;strokeWidth=4;{extra}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="80" as="geometry"/></mxCell>"##
