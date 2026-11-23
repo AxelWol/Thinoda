@@ -216,6 +216,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [x] Apply matching shape defaults to unknown edited choice values even when a Thinoda parameter override is embedded
 - [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
+- [x] Electrical transmission `testPoint`: stroke-coloured circular head, aspect-dependent lead and endpoint constraints in a data-defined stencil
+- [x] Electrical `dc_source_3_v2`: elliptical source with size-dependent polarity marks and endpoint constraints in a data-defined stencil
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
@@ -680,6 +682,17 @@ A synthetic regression demonstrates the defect and remains ignored rather
 than hiding it or claiming a fix. Drag, touch, IME and real-platform input
 still need separate validation.
 
+The egui 0.37 `TextEdit` derives its caret from one response interaction
+position and applies `TextCursorState::pointer_interaction` using aggregate
+press and click state. Its raw pointer-button events retain event positions and
+modifiers but not per-event timestamps or click counts; the per-event click
+records are private to egui, and clicks in one input pass share its frame time.
+Consequently, replaying raw clicks by assigning a caret would bypass word/line
+selection, Shift extension and granular dragging. A complete fix needs an
+ordered input contract that preserves those semantics (or an upstream egui
+facility), plus mixed text, touch and IME tests; the existing failure remains
+open until that contract is implemented.
+
 **D0.** The inventory is regex-based over minified code, so counts are
 approximate; the gap table is limited to user-visible features and treats cloud
 and collaboration features as out of scope. The coverage probe proves that
@@ -778,6 +791,13 @@ electrical `buffer2` is implemented as an immutable data-defined stencil,
 including its optional negation bubble and endpoint constraints; it does not
 implement the variable-input gates. Its rectangular hit/perimeter outline is
 invisible, so its shadow behavior still needs visual comparison with draw.io.
+The separate transmission `testPoint` is data-defined too: the head follows
+the stroke colour rather than the fill colour, and a lead appears only when
+the height exceeds the width. Its rectangular hit/perimeter outline preserves
+both endpoint constraints; like the buffer, visual shadow parity is still
+unverified. The separate `dc_source_3_v2` uses an elliptical perimeter and
+draw.io's minimum-sized polarity marks, including for non-square bounds;
+reference-image comparison remains open.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,
