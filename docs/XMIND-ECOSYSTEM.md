@@ -431,6 +431,8 @@ undocumented XMind payload.
 - [x] Recover static SVG styles with whitespace-delimited comments between a
   property and its value in both modern and legacy packages.
 - [x] Recover SVG styles with comments immediately following a property colon.
+- [x] Recover static SVG styles with comments after a comma outside parentheses,
+  including selector lists, in modern and legacy packages.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -448,6 +450,9 @@ both where a sheet uses both; the attachment is never replaced.
 separation during safety checks, and comments after a colon cannot merge
 property-name tokens. Both permit common generated styles without accepting
 comments embedded in URLs, animation names or other tokens.
+Comments following commas are also accepted outside parentheses because the
+comma remains a token boundary; comments inside functions remain rejected,
+and normalized CSS still undergoes the external-URL and dynamic-feature checks.
 Rasterization still loses SVG metadata and unsupported dynamic features.
 
 The legacy parser reserves the original package plus each converted PNG for

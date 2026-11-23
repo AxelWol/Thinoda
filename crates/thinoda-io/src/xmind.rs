@@ -94,7 +94,7 @@ fn supported_static_svg_css(css: &str) -> bool {
             let whitespace_delimited = normalized.chars().next_back().is_some_and(css_whitespace)
                 && rest[end + 4..].chars().next().is_some_and(css_whitespace);
             if parentheses != 0
-                || (previous.is_some_and(|ch| !matches!(ch, '{' | '}' | ';' | ':'))
+                || (previous.is_some_and(|ch| !matches!(ch, '{' | '}' | ';' | ':' | ','))
                     && !whitespace_delimited)
             {
                 return false;
@@ -7899,6 +7899,7 @@ mod tests {
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.box { fill: /* Fill */ #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="fill: /* Fill */ #1255aa"/></svg>"##.to_vec(),
             br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" style="fill:/**/#1255aa"/></svg>"##.to_vec(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.other,/**/.box { fill: #1255aa; }</style><rect class="box" width="10" height="4"/></svg>"##.to_vec(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><image width="10" height="4" href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" xlink:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
             format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:ref="http://www.w3.org/1999/xlink" width="10" height="4"><image width="10" height="4" ref:href="data:image/png;base64,{embedded}"/></svg>"#).into_bytes(),
@@ -8413,9 +8414,16 @@ mod tests {
             "fill:/**/url(https://example.com/image)",
             "fill:/**/var(--color)",
             "animation:/**/slide",
+            ".a,/**/.b { fill: url(https://example.com/image) }",
+            ".a,/**/.b { anima/**/tion: slide }",
+            ".a,/**/.b { fill: u/**/rl(https://example.com/image) }",
+            "fill: rgb(1,/**/2,3)",
         ] {
             assert!(!supported_static_svg_css(css), "{css}");
         }
+        assert!(supported_static_svg_css(
+            ".other,/**/.box { fill: #1255aa; }"
+        ));
     }
 
     #[test]
