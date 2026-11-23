@@ -507,6 +507,8 @@ output. Other D13 gaps and draw.io visual parity remain open.
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
   - [x] Compare three electrical symbols at tall and wide aspect ratios; retain remaining family and tolerance work
   - [ ] Preserve stencil stroke joins, caps and miter limits across canvas and visual exports
+    - [x] Carry joins, caps and miter limits into the renderer-neutral stencil primitives
+    - [ ] Apply those primitives consistently in canvas and visual exports
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -834,14 +836,15 @@ instance-unit definitions remain to be audited.
 SVG have matching triangle vertices, but draw.io emits a miter join while
 Thinoda emits a round join; a one-pixel horizontal realignment reduces the
 buffer-region mean difference from 9.410 to 3.095. The interpreter retains
-join, cap and miter limit in `StrokePaint`, but `StencilStroke` drops them before
-the canvas and export paths, and the SVG exporter emits round joins. The
+join, cap and miter limit in `StrokePaint`. Renderer-neutral `StencilStroke`
+now retains all three, but canvas and export paths do not yet apply them, and
+the SVG exporter emits round joins. The
 ellipses also use sampled polygon paths in Thinoda rather than native SVG
 ellipses. These are separate sources of visual difference, not evidence that
-the stencil definition is wrong. A fix must carry stroke geometry through the
-shared primitives and implement it consistently for canvas, raster, SVG and
-PPTX, including dashed paths, without changing unrelated shape or ink
-rendering. Until then, the reference comparison is diagnostic only.
+the stencil definition is wrong. Applying the retained stroke geometry must
+cover canvas, raster, SVG and PPTX, including dashed paths, without changing
+unrelated shape or ink rendering. Until then, the reference comparison is
+diagnostic only.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,

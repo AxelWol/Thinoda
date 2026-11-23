@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::board::{CanvasObject, CanvasObjectKind, ShapeGeometry};
 use crate::geometry::{Color, Rect, Vec2};
 use crate::stencil::{
-    Instance, PaintRef, StencilDefinition, StencilPackage, StencilRender, StrokeKeyword,
-    StrokeWidthPolicy, TextAlign, TextVAlign, builtin_packages,
+    Instance, LineCap, LineJoin, PaintRef, StencilDefinition, StencilPackage, StencilRender,
+    StrokeKeyword, StrokeWidthPolicy, TextAlign, TextVAlign, builtin_packages,
 };
 
 /// Longest package or definition identifier stored in a document.
@@ -531,6 +531,9 @@ pub struct StencilStroke {
     pub width: f32,
     /// Dash and gap lengths in sheet units; `None` is solid.
     pub dash: Option<Vec<f32>>,
+    pub join: LineJoin,
+    pub cap: LineCap,
+    pub miter_limit: f32,
 }
 
 /// One painted path in sheet coordinates.
@@ -615,6 +618,9 @@ pub fn primitives(
                     } else {
                         None
                     },
+                    join: s.join,
+                    cap: s.cap,
+                    miter_limit: s.miter_limit,
                 })
             });
             (fill.is_some() || stroke.is_some()).then(|| StencilPrimitive {

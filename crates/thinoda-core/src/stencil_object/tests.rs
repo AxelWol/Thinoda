@@ -47,6 +47,27 @@ fn stencil_slots_follow_transparent_shape_convention() {
 }
 
 #[test]
+fn stencil_primitives_preserve_stroke_geometry() {
+    let object = message();
+    let mut render = render(&object).expect("resolves");
+    let source = render.paths[0].stroke.as_mut().expect("stroked");
+    source.join = LineJoin::Bevel;
+    source.cap = LineCap::Square;
+    source.miter_limit = 7.0;
+    let slots = StencilSlots {
+        fill: None,
+        stroke: Some(Color::BLACK),
+        font: Color::BLACK,
+        opacity: 1.0,
+    };
+    let (paths, _) = primitives(&object, &render, &slots);
+    let stroke = paths[0].stroke.as_ref().expect("stroked");
+    assert_eq!(stroke.join, LineJoin::Bevel);
+    assert_eq!(stroke.cap, LineCap::Square);
+    assert_eq!(stroke.miter_limit, 7.0);
+}
+
+#[test]
 fn stencil_handles_map_rotated_sheet_pointer_to_clamped_parameter_value() {
     let package = find_package("thinoda.general").unwrap();
     let definition = package.definition("rounded-rectangle").unwrap();
