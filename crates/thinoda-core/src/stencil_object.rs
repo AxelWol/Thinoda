@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::board::{CanvasObject, CanvasObjectKind, ShapeGeometry};
 use crate::geometry::{Color, Rect, Vec2};
 use crate::stencil::{
-    Instance, PaintRef, StencilDefinition, StencilPackage, StencilRender, TextAlign, TextVAlign,
-    builtin_packages,
+    Instance, PaintRef, StencilDefinition, StencilPackage, StencilRender, StrokeKeyword,
+    StrokeWidthPolicy, TextAlign, TextVAlign, builtin_packages,
 };
 
 /// Longest package or definition identifier stored in a document.
@@ -306,6 +306,17 @@ pub fn find_package(id: &str) -> Option<&'static StencilPackage> {
     builtin_packages().iter().find(|package| package.id == id)
 }
 
+fn instance_stroke_width(object: &CanvasObject, definition: &StencilDefinition) -> f64 {
+    f64::from(
+        if definition.frame.stroke_width == StrokeWidthPolicy::Keyword(StrokeKeyword::InheritObject)
+        {
+            object.style.stroke_width
+        } else {
+            object.style.effective_shape_stroke_width()
+        },
+    )
+}
+
 /// Evaluates the object's stencil, or `None` to use its legacy shape.
 pub fn render(object: &CanvasObject) -> Option<StencilRender> {
     render_with_header_policy(object, None)
@@ -347,7 +358,7 @@ pub fn render_with_header_policy(
             &Instance {
                 width: f64::from(object.rect.size.x),
                 height: f64::from(object.rect.size.y),
-                stroke_width: f64::from(object.style.effective_shape_stroke_width()),
+                stroke_width: instance_stroke_width(object, definition),
                 parameters: &parameters,
             },
         )
@@ -664,7 +675,7 @@ pub fn drag_handle(
     let instance = Instance {
         width: f64::from(object.rect.size.x),
         height: f64::from(object.rect.size.y),
-        stroke_width: f64::from(object.style.effective_shape_stroke_width()),
+        stroke_width: instance_stroke_width(object, definition),
         parameters: &parameters,
     };
     let local = crate::shape_style::unplace(&object.style, pointer, object.rect, object.rotation)

@@ -39,6 +39,7 @@ pub const CAPABILITIES: &[&str] = &[
     "core.parameters",
     "core.handles",
     "core.connections",
+    "core.objectStrokeWidth",
 ];
 
 /// Trusted engine limits. Libraries can never raise them.
@@ -233,6 +234,9 @@ impl Default for StrokeWidthPolicy {
 #[serde(rename_all = "camelCase")]
 pub enum StrokeKeyword {
     Inherit,
+    /// Use the stored object width rather than Thinoda's automatic outline
+    /// width when the definition is instantiated as the root object.
+    InheritObject,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -894,6 +898,16 @@ impl StencilDefinition {
         {
             return Err(context("stroke width scale must be finite".into()));
         }
+        if frame.stroke_width == StrokeWidthPolicy::Keyword(StrokeKeyword::InheritObject)
+            && !self
+                .requires
+                .iter()
+                .any(|name| name == "core.objectStrokeWidth")
+        {
+            return Err(context(
+                "inheritObject requires core.objectStrokeWidth".into(),
+            ));
+        }
         if let Some([w, h]) = self.default_size
             && !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0)
         {
@@ -1474,7 +1488,9 @@ fn frame_paint(frame: &Frame, xf: &Xform, style_width: f64) -> (f64, f64) {
         Units::Instance => 1.0,
     };
     let width = match frame.stroke_width {
-        StrokeWidthPolicy::Keyword(StrokeKeyword::Inherit) => style_width,
+        StrokeWidthPolicy::Keyword(StrokeKeyword::Inherit | StrokeKeyword::InheritObject) => {
+            style_width
+        }
         StrokeWidthPolicy::Scale(width) => width * min_scale,
     };
     (min_scale, width)
