@@ -439,6 +439,8 @@ undocumented XMind payload.
   including inline styles in modern and legacy packages.
 - [x] Recover static SVG styles when CSS whitespace separates those comments
   from a structural delimiter or the end of the style.
+- [x] Recover static SVG pictures using identifiers such as the `burlywood`
+  color, without treating their `url` substring as an external reference.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -465,6 +467,10 @@ comment after a complete value cannot conceal a following token; the normalized
 value is still checked for unsupported dynamic features and external URLs.
 Whitespace after a comment is skipped only to identify a following delimiter or
 the end of the style; it cannot conceal a continuation of an identifier.
+The URL check skips occurrences inside identifiers, but still validates URL
+functions and rejects escapes and token-obscuring comments. This is a bounded
+compatibility improvement, not support for arbitrary CSS or external resources;
+an identifier exactly named `url` still fails closed.
 Rasterization still loses SVG metadata and unsupported dynamic features.
 
 The legacy parser reserves the original package plus each converted PNG for

@@ -143,9 +143,23 @@ fn supported_static_svg_css(css: &str) -> bool {
     {
         return false;
     }
-    let mut remaining = css.as_str();
-    while let Some(index) = remaining.find("url") {
-        let Some(reference) = remaining[index + 3..].strip_prefix('(') else {
+    let identifier_byte =
+        |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') || !byte.is_ascii();
+    let mut search_from = 0;
+    while let Some(relative) = css[search_from..].find("url") {
+        let index = search_from + relative;
+        if index
+            .checked_sub(1)
+            .is_some_and(|previous| identifier_byte(css.as_bytes()[previous]))
+            || css
+                .as_bytes()
+                .get(index + 3)
+                .is_some_and(|&next| identifier_byte(next))
+        {
+            search_from = index + 3;
+            continue;
+        }
+        let Some(reference) = css[index + 3..].strip_prefix('(') else {
             return false;
         };
         let Some(end) = reference.find(')') else {
@@ -170,7 +184,7 @@ fn supported_static_svg_css(css: &str) -> bool {
         {
             return false;
         }
-        remaining = &reference[end + 1..];
+        search_from = index + 4 + end + 1;
     }
     true
 }
@@ -7918,6 +7932,14 @@ mod tests {
             .into_iter()
             .map(|svg| (svg, [18, 85, 170, 255]))
             .collect();
+        examples.push((
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.burlywood { fill: burlywood; }</style><rect class="burlywood" width="10" height="4"/></svg>"#.to_vec(),
+            [222, 184, 135, 255],
+        ));
+        examples.push((
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="burlywood"/></svg>"#.to_vec(),
+            [222, 184, 135, 255],
+        ));
         let mut jpeg = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
             10,
@@ -8407,6 +8429,22 @@ mod tests {
         }
         for css in ["fill:url(#local)", "fill:URL( '#local-id' )"] {
             assert!(supported_static_svg_css(css), "{css}");
+        }
+    }
+
+    #[test]
+    fn svg_css_accepts_url_inside_identifiers_without_accepting_external_urls() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><style>.burlywood { fill: burlywood; }</style><rect class="burlywood" width="4" height="4"/></svg>"#;
+        let png = transcode_package_picture("picture.svg", svg).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(1, 1).0, [222, 184, 135, 255]);
+        assert!(supported_static_svg_css(".urlcolor { fill: burlywood }"));
+        for css in [
+            ".burlywood { fill: url(https://example.com/image) }",
+            "fill:burlywood;stroke:url(https://example.com/image)",
+            "fill:burlywood;stroke:u/**/rl(https://example.com/image)",
+        ] {
+            assert!(!supported_static_svg_css(css), "{css}");
         }
     }
 
