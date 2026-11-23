@@ -159,8 +159,16 @@ fn supported_static_svg_css(css: &str) -> bool {
             search_from = index + 3;
             continue;
         }
-        let Some(reference) = css[index + 3..].strip_prefix('(') else {
-            return false;
+        let suffix = &css[index + 3..];
+        let Some(reference) = suffix.strip_prefix('(') else {
+            if suffix
+                .trim_start_matches([' ', '\t', '\n', '\r', '\u{c}'])
+                .starts_with('(')
+            {
+                return false;
+            }
+            search_from = index + 3;
+            continue;
         };
         let Some(end) = reference.find(')') else {
             return false;
@@ -7940,6 +7948,10 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="burlywood"/></svg>"#.to_vec(),
             [222, 184, 135, 255],
         ));
+        examples.push((
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><style>.url { fill: burlywood; }</style><rect class="url" width="10" height="4"/></svg>"#.to_vec(),
+            [222, 184, 135, 255],
+        ));
         let mut jpeg = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
             10,
@@ -8439,10 +8451,15 @@ mod tests {
         let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!(pixels.get_pixel(1, 1).0, [222, 184, 135, 255]);
         assert!(supported_static_svg_css(".urlcolor { fill: burlywood }"));
+        assert!(supported_static_svg_css(".url { fill: burlywood }"));
+        assert!(supported_static_svg_css("[url=x] { fill: burlywood }"));
         for css in [
             ".burlywood { fill: url(https://example.com/image) }",
             "fill:burlywood;stroke:url(https://example.com/image)",
             "fill:burlywood;stroke:u/**/rl(https://example.com/image)",
+            "fill:url (https://example.com/image)",
+            "fill:url\t\n(https://example.com/image)",
+            ".url { fill: url(https://example.com/image) }",
         ] {
             assert!(!supported_static_svg_css(css), "{css}");
         }

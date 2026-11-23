@@ -441,6 +441,8 @@ undocumented XMind payload.
   from a structural delimiter or the end of the style.
 - [x] Recover static SVG pictures using identifiers such as the `burlywood`
   color, without treating their `url` substring as an external reference.
+- [x] Recover static SVG selectors containing a standalone `url` identifier,
+  while continuing to reject ambiguous whitespace before URL function calls.
 - [ ] Preserve GIF/WebP/SVG metadata and animation; expand SVG picture support
   beyond the bounded static subset; validate interoperability in installed XMind.
 
@@ -469,8 +471,9 @@ Whitespace after a comment is skipped only to identify a following delimiter or
 the end of the style; it cannot conceal a continuation of an identifier.
 The URL check skips occurrences inside identifiers, but still validates URL
 functions and rejects escapes and token-obscuring comments. This is a bounded
-compatibility improvement, not support for arbitrary CSS or external resources;
-an identifier exactly named `url` still fails closed.
+compatibility improvement, not support for arbitrary CSS or external resources.
+Standalone `url` identifiers are accepted, but `url` followed by whitespace
+and an opening parenthesis still fails closed.
 Rasterization still loses SVG metadata and unsupported dynamic features.
 
 The legacy parser reserves the original package plus each converted PNG for
