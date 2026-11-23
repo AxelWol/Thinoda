@@ -4994,6 +4994,7 @@ const DE: &[(&str, &str)] = &[
     ("Xor gate", "XOR-Gatter"),
     ("Electrical buffer", "Elektrischer Puffer"),
     ("Electrical test point", "Elektrischer Messpunkt"),
+    ("Electrical DC source", "Elektrische Gleichstromquelle"),
     ("Loop limit", "Schleifengrenze"),
     ("Display", "Anzeige"),
     ("Curly bracket", "Geschweifte Klammer"),

@@ -4496,6 +4496,69 @@ fn drawio_electrical_test_point_preserves_geometry_and_stroke_fill() {
 }
 
 #[test]
+fn drawio_electrical_dc_source_preserves_polarity_and_ports() {
+    let cell = |id: &str, width: u32, height: u32| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="shape=mxgraph.electrical.signal_sources.dc_source_3_v2;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="{width}" height="{height}" as="geometry"/></mxCell>"#
+        )
+    };
+    let sheet = clean(&page(
+        &[cell("large", 200, 100), cell("small", 40, 20)].concat(),
+    ));
+    let objects = shapes(&sheet);
+    for object in &objects {
+        assert_eq!(
+            object.stencil.as_ref().unwrap().definition,
+            "electrical-dc-source"
+        );
+        let render = thinoda_core::stencil_object::render(object).unwrap();
+        let width = object.rect.size.x;
+        let height = object.rect.size.y;
+        let half_sign = (0.05 * width.min(height)).max(3.0);
+        assert_eq!(render.paths.len(), 2);
+        assert!(render.paths[0].fill.is_some() && render.paths[0].stroke.is_some());
+        let signs = &render.paths[1].subpaths;
+        assert_eq!(signs.len(), 3);
+        let expected = [
+            [
+                Vec2::new(width / 2.0 - half_sign, height * 0.05 + 3.0),
+                Vec2::new(width / 2.0 + half_sign, height * 0.05 + 3.0),
+            ],
+            [
+                Vec2::new(width / 2.0, height * 0.05 + 3.0 - half_sign),
+                Vec2::new(width / 2.0, height * 0.05 + 3.0 + half_sign),
+            ],
+            [
+                Vec2::new(width / 2.0 - half_sign, height * 0.95 - 3.0),
+                Vec2::new(width / 2.0 + half_sign, height * 0.95 - 3.0),
+            ],
+        ];
+        for (subpath, expected) in signs.iter().zip(expected) {
+            assert_eq!(subpath.points, expected);
+        }
+        assert!((render.ports[0].at - Vec2::new(width / 2.0, 0.0)).length() < 0.001);
+        assert!((render.ports[1].at - Vec2::new(width / 2.0, height)).length() < 0.001);
+        assert!(render.ports.iter().all(|port| port.perimeter));
+    }
+    let book = Workbook::new(sheet.clone());
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(exported.contains("shape=mxgraph.electrical.signal_sources.dc_source_3_v2;"));
+    let reopened = clean(&exported);
+    assert_eq!(
+        shapes(&reopened)
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn inline_drawio_stencils_import_render_and_round_trip() {
     use base64::Engine as _;
     let encode = |stencil: &str| {
