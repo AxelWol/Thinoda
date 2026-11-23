@@ -846,9 +846,13 @@ Editable PowerPoint branch and zone slides now emit the corresponding DrawingML
 caps, joins and miter limits, including on split dash segments. Out-of-range
 miter limits fail explicitly instead of producing invalid Office XML; ordinary
 paths retain their previous round geometry. Viewport slides remain rasterized.
-The canvas and stencil shadows still need the same geometry. PowerPoint host
-rendering and clipping at slide edges remain unverified; Open XML SDK validation
-of the new fixture runs in CI because the local .NET runtime is unavailable.
+The canvas and stencil shadows still need the same geometry. The electrical
+buffer fixture opened in Windows PowerPoint without a repair prompt and displayed
+its pointed joins; selecting a stroke exposed a slide-sized bounding box rather
+than a tight object box. That editable-geometry UX still needs improvement.
+Other joins, caps, hosts and slide-edge clipping remain unverified. Open XML SDK
+validation of the new fixture runs in CI because the local .NET runtime is
+unavailable.
 Ellipses also use sampled polygon paths in
 Thinoda rather than native SVG ellipses. These are separate sources of visual
 difference, not evidence that the stencil definition is wrong. With the same
