@@ -2334,6 +2334,7 @@ Tee|Forma de T|Forme en T|T-form|T-vorm|Forma em T|Forma a T|Kształt T
 Or gate|Puerta OR|Porte OU|ELLER-gate|OF-poort|Porta OU|Porta OR|Bramka OR
 Xor gate|Puerta XOR|Porte OU exclusif|XOR-gate|XOR-poort|Porta XOR|Porta XOR|Bramka XOR
 Electrical buffer|Búfer eléctrico|Tampon électrique|Elektrisk buffer|Elektrische buffer|Buffer elétrico|Buffer elettrico|Bufor elektryczny
+Electrical test point|Punto de prueba eléctrico|Point de test électrique|Elektrisk målepunkt|Elektrisch meetpunt|Ponto de teste elétrico|Punto di prova elettrico|Elektryczny punkt pomiarowy
 Loop limit|Límite de bucle|Limite de boucle|Løkkegrænse|Lusgrens|Limite de ciclo|Limite del ciclo|Granica pętli
 Display|Pantalla|Affichage|Skærm|Weergave|Ecrã|Visualizzazione|Wyświetlacz
 Curly bracket|Llave|Accolade|Krøllet parentes|Accolade|Chaveta|Parentesi graffa|Nawias klamrowy

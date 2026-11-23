@@ -216,6 +216,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [x] Apply matching shape defaults to unknown edited choice values even when a Thinoda parameter override is embedded
 - [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
+- [x] Electrical transmission `testPoint`: stroke-coloured circular head, aspect-dependent lead and endpoint constraints in a data-defined stencil
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
@@ -789,6 +790,11 @@ electrical `buffer2` is implemented as an immutable data-defined stencil,
 including its optional negation bubble and endpoint constraints; it does not
 implement the variable-input gates. Its rectangular hit/perimeter outline is
 invisible, so its shadow behavior still needs visual comparison with draw.io.
+The separate transmission `testPoint` is data-defined too: the head follows
+the stroke colour rather than the fill colour, and a lead appears only when
+the height exceeds the width. Its rectangular hit/perimeter outline preserves
+both endpoint constraints; like the buffer, visual shadow parity is still
+unverified.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,

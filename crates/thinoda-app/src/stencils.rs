@@ -1145,6 +1145,7 @@ pub(crate) const BUILTIN_TITLES: &[&str] = &[
     "Or gate",
     "Xor gate",
     "Electrical buffer",
+    "Electrical test point",
     "Loop limit",
     "Display",
     "Curly bracket",

@@ -48,6 +48,7 @@
       "mxgraph.floorplan.doorDouble": "floorplan-door-double",
       "mxgraph.floorplan.stairs": "floorplan-stairs",
       "mxgraph.electrical.logic_gates.buffer2": {"definition": "electrical-buffer", "absent": {"negating": 0}},
+      "mxgraph.electrical.transmission.testPoint": "electrical-test-point",
       "mxgraph.mockup.containers.marginRect": "mockup-margin-rect",
       "mxgraph.mockup.containers.marginRect2": "mockup-margin-rect2",
       "mxgraph.mockup.containers.leftButton": "mockup-left-button",
@@ -79,6 +80,24 @@
     }
   },
   "definitions": [
+    {
+      "id": "electrical-test-point",
+      "title": "Electrical test point",
+      "tags": ["electrical", "test", "point", "transmission"],
+      "frame": {"w": 20, "h": 40, "units": "instance"},
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "save"}, {"op": "fillAlpha", "value": 0}, {"op": "fill"}, {"op": "restore"},
+        {"op": "save"}, {"op": "fillColor", "color": "stroke"},
+        {"op": "ellipse", "x": {"op": "mul", "args": [0.5, {"op": "sub", "args": ["w", {"op": "min", "args": ["w", "h"]}]}]}, "y": 0, "w": {"op": "min", "args": ["w", "h"]}, "h": {"op": "min", "args": ["w", "h"]}},
+        {"op": "fillStroke"}, {"op": "restore"},
+        {"op": "if", "cond": {"op": "gt", "args": ["h", "w"]}, "then": [
+          {"op": "path", "commands": [{"op": "move", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "min", "args": ["w", "h"]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.5]}, "y": "h"}]}, {"op": "stroke"}
+        ]}
+      ],
+      "connections": [{"x": 0.5, "y": 0, "perimeter": true}, {"x": 0.5, "y": 1, "perimeter": true}],
+      "interchange": {"drawio": {"style": "shape=mxgraph.electrical.transmission.testPoint;whiteSpace=wrap;html=1;"}}
+    },
     {
       "id": "electrical-buffer",
       "title": "Electrical buffer",
