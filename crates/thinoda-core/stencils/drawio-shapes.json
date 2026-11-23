@@ -47,9 +47,9 @@
       "mxgraph.floorplan.doorRight": "floorplan-door-right",
       "mxgraph.floorplan.doorDouble": "floorplan-door-double",
       "mxgraph.floorplan.stairs": "floorplan-stairs",
-      "mxgraph.electrical.logic_gates.buffer2": {"definition": "electrical-buffer", "absent": {"negating": 0}},
-      "mxgraph.electrical.transmission.testPoint": "electrical-test-point",
-      "mxgraph.electrical.signal_sources.dc_source_3_v2": "electrical-dc-source",
+      "mxgraph.electrical.logic_gates.buffer2": {"definition": "electrical-buffer-v2", "absent": {"negating": 0}},
+      "mxgraph.electrical.transmission.testPoint": "electrical-test-point-v2",
+      "mxgraph.electrical.signal_sources.dc_source_3_v2": "electrical-dc-source-v2",
       "mxgraph.mockup.containers.marginRect": "mockup-margin-rect",
       "mxgraph.mockup.containers.marginRect2": "mockup-margin-rect2",
       "mxgraph.mockup.containers.leftButton": "mockup-left-button",
@@ -81,6 +81,65 @@
     }
   },
   "definitions": [
+    {
+      "id": "electrical-dc-source-v2",
+      "title": "Electrical DC source",
+      "tags": ["electrical", "direct current", "dc", "source"],
+      "frame": {"w": 60, "h": 60, "units": "instance", "strokeWidth": "inherit"},
+      "background": {"op": "ellipse", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": {"op": "sub", "args": [{"op": "mul", "args": ["w", 0.5]}, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}, "y": {"op": "add", "args": [{"op": "mul", "args": ["h", 0.05]}, 3]}},
+          {"op": "line", "x": {"op": "add", "args": [{"op": "mul", "args": ["w", 0.5]}, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}, "y": {"op": "add", "args": [{"op": "mul", "args": ["h", 0.05]}, 3]}},
+          {"op": "move", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "sub", "args": [{"op": "add", "args": [{"op": "mul", "args": ["h", 0.05]}, 3]}, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}},
+          {"op": "line", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "add", "args": [{"op": "mul", "args": ["h", 0.05]}, 3, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}},
+          {"op": "move", "x": {"op": "sub", "args": [{"op": "mul", "args": ["w", 0.5]}, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}, "y": {"op": "sub", "args": [{"op": "mul", "args": ["h", 0.95]}, 3]}},
+          {"op": "line", "x": {"op": "add", "args": [{"op": "mul", "args": ["w", 0.5]}, {"op": "max", "args": [3, {"op": "mul", "args": [0.05, {"op": "min", "args": ["w", "h"]}]}]}]}, "y": {"op": "sub", "args": [{"op": "mul", "args": ["h", 0.95]}, 3]}}
+        ]}, {"op": "stroke"}
+      ],
+      "connections": [{"x": 0.5, "y": 0, "perimeter": true}, {"x": 0.5, "y": 1, "perimeter": true}],
+      "interchange": {"drawio": {"style": "shape=mxgraph.electrical.signal_sources.dc_source_3_v2;whiteSpace=wrap;html=1;"}}
+    },
+    {
+      "id": "electrical-test-point-v2",
+      "title": "Electrical test point",
+      "tags": ["electrical", "test", "point", "transmission"],
+      "frame": {"w": 20, "h": 40, "units": "instance", "strokeWidth": "inherit"},
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "save"}, {"op": "fillAlpha", "value": 0}, {"op": "fill"}, {"op": "restore"},
+        {"op": "save"}, {"op": "fillColor", "color": "stroke"},
+        {"op": "ellipse", "x": {"op": "mul", "args": [0.5, {"op": "sub", "args": ["w", {"op": "min", "args": ["w", "h"]}]}]}, "y": 0, "w": {"op": "min", "args": ["w", "h"]}, "h": {"op": "min", "args": ["w", "h"]}},
+        {"op": "fillStroke"}, {"op": "restore"},
+        {"op": "if", "cond": {"op": "gt", "args": ["h", "w"]}, "then": [
+          {"op": "path", "commands": [{"op": "move", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "min", "args": ["w", "h"]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.5]}, "y": "h"}]}, {"op": "stroke"}
+        ]}
+      ],
+      "connections": [{"x": 0.5, "y": 0, "perimeter": true}, {"x": 0.5, "y": 1, "perimeter": true}],
+      "interchange": {"drawio": {"style": "shape=mxgraph.electrical.transmission.testPoint;whiteSpace=wrap;html=1;"}}
+    },
+    {
+      "id": "electrical-buffer-v2",
+      "title": "Electrical buffer",
+      "tags": ["electrical", "logic", "buffer", "inverter"],
+      "frame": {"w": 100, "h": 80, "units": "instance", "strokeWidth": "inherit"},
+      "parameters": {"negating": {"label": "Negating", "kind": "toggle", "default": 0}},
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "save"}, {"op": "fillAlpha", "value": 0}, {"op": "fill"}, {"op": "restore"},
+        {"op": "path", "commands": [{"op": "move", "x": 0, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.2]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "move", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": "w", "y": {"op": "mul", "args": ["h", 0.5]}}]},
+        {"op": "stroke"},
+        {"op": "path", "commands": [{"op": "move", "x": {"op": "mul", "args": ["w", 0.2]}, "y": 0}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "mul", "args": ["h", 0.5]}}, {"op": "line", "x": {"op": "mul", "args": ["w", 0.2]}, "y": "h"}, {"op": "close"}]},
+        {"op": "fillStroke"},
+        {"op": "if", "cond": "negating", "then": [
+          {"op": "ellipse", "x": {"op": "mul", "args": ["w", 0.8]}, "y": {"op": "sub", "args": [{"op": "mul", "args": ["h", 0.5]}, {"op": "mul", "args": [0.5, {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}]}]}, "w": {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}, "h": {"op": "min", "args": [{"op": "mul", "args": ["w", 0.04]}, {"op": "mul", "args": ["h", 0.07]}]}},
+          {"op": "fillStroke"}
+        ]}
+      ],
+      "connections": [{"x": 0, "y": 0.5, "perimeter": true}, {"x": 1, "y": 0.5, "perimeter": true}],
+      "interchange": {"drawio": {"style": "shape=mxgraph.electrical.logic_gates.buffer2;whiteSpace=wrap;html=1;", "parameters": {"negating": {"style": "negating", "values": ["0", "1"]}}}}
+    },
     {
       "id": "electrical-dc-source",
       "title": "Electrical DC source",

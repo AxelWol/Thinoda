@@ -218,6 +218,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
 - [x] Electrical transmission `testPoint`: stroke-coloured circular head, aspect-dependent lead and endpoint constraints in a data-defined stencil
 - [x] Electrical `dc_source_3_v2`: elliptical source with size-dependent polarity marks and endpoint constraints in a data-defined stencil
+- [x] Inherit edited/imported stroke widths for these three electrical stencils using new definitions; retain the old definitions for existing documents
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
@@ -797,7 +798,20 @@ the height exceeds the width. Its rectangular hit/perimeter outline preserves
 both endpoint constraints; like the buffer, visual shadow parity is still
 unverified. The separate `dc_source_3_v2` uses an elliptical perimeter and
 draw.io's minimum-sized polarity marks, including for non-square bounds;
-reference-image comparison remains open.
+reference-image comparison remains open beyond the bounded check below.
+
+**Electrical stroke-width duck check.** The original three definitions used
+the interpreter's fixed one-unit default, so imported and edited stroke widths
+were ignored. New `-v2` definitions inherit the object width; all 69 previous
+definitions remain unchanged so their saved hashes and appearance still resolve.
+Explicit legacy references keep their old behavior, including on draw.io
+round-trip; changing those existing objects requires a separate migration.
+Using draw.io 32.6.10 and one unlabelled 100×80 instance of each symbol at
+stroke width 2, the raster probe showed a thinner Thinoda outline before this
+change. With image padding aligned, mean RGB difference fell from 6.826 to
+5.292 on a 0–255 scale; antialiasing and geometry still differ. This is not a
+visual acceptance threshold or evidence for other sizes, effects, or the other
+instance-unit definitions, whose stroke behavior remains to be audited.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,

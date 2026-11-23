@@ -137,7 +137,22 @@ fn drawio_shape_package_validates_and_every_definition_evaluates() {
         assert!(package.definition(id).is_some(), "missing {id}");
         imported.insert(id);
     }
-    assert_eq!(imported.len(), package.definitions.len());
+    let legacy: std::collections::BTreeSet<_> = package
+        .definitions
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .filter(|id| !imported.contains(id))
+        .collect();
+    assert_eq!(
+        legacy,
+        [
+            "electrical-buffer",
+            "electrical-dc-source",
+            "electrical-test-point"
+        ]
+        .into_iter()
+        .collect()
+    );
 }
 
 #[test]

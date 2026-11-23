@@ -4346,7 +4346,7 @@ fn drawio_electrical_buffer_round_trips_and_scales() {
     assert_eq!(objects.len(), 3);
     for (object, expected_negation) in objects.iter().zip([false, true, false]) {
         let reference = object.stencil.as_ref().unwrap();
-        assert_eq!(reference.definition, "electrical-buffer");
+        assert_eq!(reference.definition, "electrical-buffer-v2");
         let render = thinoda_core::stencil_object::render(object).unwrap();
         assert_eq!(render.ports.len(), 2);
         assert_eq!(render.ports[0].at, Vec2::new(0.0, object.rect.size.y / 2.0));
@@ -4446,7 +4446,7 @@ fn drawio_electrical_test_point_preserves_geometry_and_stroke_fill() {
     for (object, has_lead) in objects.iter().zip([true, false, false]) {
         assert_eq!(
             object.stencil.as_ref().unwrap().definition,
-            "electrical-test-point"
+            "electrical-test-point-v2"
         );
         let render = thinoda_core::stencil_object::render(object).unwrap();
         let slots =
@@ -4509,7 +4509,7 @@ fn drawio_electrical_dc_source_preserves_polarity_and_ports() {
     for object in &objects {
         assert_eq!(
             object.stencil.as_ref().unwrap().definition,
-            "electrical-dc-source"
+            "electrical-dc-source-v2"
         );
         let render = thinoda_core::stencil_object::render(object).unwrap();
         let width = object.rect.size.x;
@@ -4556,6 +4556,78 @@ fn drawio_electrical_dc_source_preserves_polarity_and_ports() {
             .map(|object| object.stencil.clone())
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn drawio_electrical_stroke_width_inherits_without_changing_legacy_definitions() {
+    let aliases = [
+        (
+            "mxgraph.electrical.logic_gates.buffer2",
+            "electrical-buffer",
+        ),
+        (
+            "mxgraph.electrical.transmission.testPoint",
+            "electrical-test-point",
+        ),
+        (
+            "mxgraph.electrical.signal_sources.dc_source_3_v2",
+            "electrical-dc-source",
+        ),
+    ];
+    for (alias, legacy) in aliases {
+        let cell = |extra: &str| {
+            format!(
+                r##"<mxCell id="shape" style="shape={alias};fillColor=#ffffff;strokeColor=#000000;strokeWidth=4;{extra}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="80" as="geometry"/></mxCell>"##
+            )
+        };
+        let sheet = clean(&page(&cell("")));
+        let object = shapes(&sheet)[0].clone();
+        assert_eq!(
+            object.stencil.as_ref().unwrap().definition,
+            format!("{legacy}-v2")
+        );
+        for width in [0.5, 2.0, 4.0] {
+            let mut edited = object.clone();
+            edited.style.stroke_width = width;
+            let render = thinoda_core::stencil_object::render(&edited).unwrap();
+            let strokes: Vec<_> = render
+                .paths
+                .iter()
+                .filter_map(|path| path.stroke.as_ref())
+                .collect();
+            assert!(!strokes.is_empty());
+            assert!(
+                strokes.iter().all(|stroke| stroke.width == width),
+                "{alias}: {width}"
+            );
+        }
+
+        let old_sheet = clean(&page(&cell(&format!(
+            "thinodaStencilPackage=thinoda.drawio;thinodaStencilDefinition={legacy};"
+        ))));
+        let old = shapes(&old_sheet)[0];
+        assert_eq!(old.stencil.as_ref().unwrap().definition, legacy);
+        assert!(
+            thinoda_core::stencil_object::render(old)
+                .unwrap()
+                .paths
+                .iter()
+                .filter_map(|path| path.stroke.as_ref())
+                .all(|stroke| stroke.width == 1.0)
+        );
+        let book = Workbook::new(old_sheet);
+        let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let drawio = String::from_utf8(export(&book).unwrap()).unwrap();
+        assert_eq!(
+            shapes(&clean(&drawio))[0]
+                .stencil
+                .as_ref()
+                .unwrap()
+                .definition,
+            legacy
+        );
+    }
 }
 
 #[test]
