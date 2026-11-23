@@ -329,6 +329,8 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Order eligible text, IME and toolbar-number input around F6, Enter or Space toolbar activation in the same frame, for shape, primary and extra connector labels
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
     - [ ] Preserve event order across multiple editor clicks and text events in one frame; the ignored `two_editor_clicks_keep_batched_text_at_each_clicked_caret` regression currently produces `ABxy` instead of `xABy`
+    - [ ] Design ordered input replay with per-event pointer state and text layout at each edit; the current single-press pass removes keyboard events while egui sees frame-aggregated pointer state, so splitting the event list alone cannot reproduce earlier clicks
+    - [ ] Preserve double/triple-click selection, Shift extension, drag and touch gestures, IME composition, accessibility actions and toolbar/outside-click ownership across replay; validate undo and mixed formatting on shape and connector labels before enabling the regression
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
