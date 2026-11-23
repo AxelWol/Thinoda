@@ -510,7 +510,8 @@ output. Other D13 gaps and draw.io visual parity remain open.
     - [x] Carry joins, caps and miter limits into the renderer-neutral stencil primitives
     - [x] Apply them to solid and dashed SVG paths and SVG-based raster and PDF exports, including miter-aware export bounds
     - [x] Apply them to solid and split-dash paths in editable PowerPoint slides
-    - [ ] Apply them to the canvas and stencil shadows; verify PowerPoint host rendering and frame-edge clipping
+    - [x] Retain stencil shadow joins, caps and miter limits in SVG-based and editable PowerPoint exports
+    - [ ] Apply them to the canvas, including stencil shadows; verify PowerPoint host rendering and frame-edge clipping
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -856,7 +857,14 @@ Editable PowerPoint branch and zone slides now emit the corresponding DrawingML
 caps, joins and miter limits, including on split dash segments. Out-of-range
 miter limits fail explicitly instead of producing invalid Office XML; ordinary
 paths retain their previous round geometry. Viewport slides remain rasterized.
-The canvas and stencil shadows still need the same geometry. The electrical
+Stencil shadows in visual exports now carry the same join, cap and miter limit
+as their source stroke; they remain solid, as before, and bounds measurement
+includes the shifted geometry. The change leaves built-in shadows and shadow
+opacity unchanged. SVG shadow-only raster comparisons cover different joins
+and caps; a thick miter with a shadow exercises export bounds, and the editable
+PowerPoint test checks the shadow line itself. Canvas strokes and shadows still
+need equivalent geometry and antialiasing. PowerPoint shadow paths are
+serialized but still need host visual verification. The electrical
 buffer fixture opened in Windows PowerPoint without a repair prompt and displayed
 its pointed joins. Editable freeform polygons and polylines now use tight path
 bounds and local coordinates instead of a slide-sized bounding box; selecting the
