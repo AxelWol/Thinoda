@@ -505,6 +505,7 @@ output. Other D13 gaps and draw.io visual parity remain open.
 - [x] Keep the new-file `+` visible beside responsive file tabs, including when tabs overflow
 - [x] Replace the main ribbon with the outliner ribbon in outliner mode and improve the selected-topic heading
 - [ ] Reference renders from draw.io for representative shapes of every bundled family, compared within tolerance
+  - [x] Compare three electrical symbols at tall and wide aspect ratios; retain remaining family and tolerance work
 - [x] Fuzz and size budgets for the bundle decoder and catalog
   - [x] Enforce the shipped one-megabyte catalog/blob budget and the per-package inflation limit
   - [x] Bound aggregate indexed alias bytes before allocating catalog keys
@@ -817,8 +818,16 @@ Using draw.io 32.6.10 and one unlabelled 100×80 instance of each symbol at
 stroke width 2, the raster probe showed a thinner Thinoda outline before this
 change. With image padding aligned, mean RGB difference fell from 6.826 to
 5.292 on a 0–255 scale; antialiasing and geometry still differ. This is not a
-visual acceptance threshold or evidence for other sizes, effects, or the other
-instance-unit definitions, whose stroke behavior remains to be audited.
+visual acceptance threshold or evidence for effects or other instance-unit
+definitions. A follow-up draw.io 32.6.10 comparison used the same three unlabelled symbols at
+60×120 and 120×60, black two-unit outlines, and a white background. After a
+13-pixel padding alignment, the whole-image mean RGB differences were 4.431
+and 4.348 respectively on a 0–255 scale. The three horizontal regions
+(test point, DC source, buffer) measured 0.924/4.453/9.410 for tall and
+1.283/5.561/6.407 for wide. These averages include whitespace and are not a
+tolerance or proof of per-symbol parity; the larger buffer differences merit
+geometry and antialiasing investigation. Effects, other sizes and other
+instance-unit definitions remain to be audited.
 For explicitly referenced stencils, a present but unknown choice uses the
 matching draw.io shape's declared absent value rather than reviving a stale
 Thinoda override; missing keys still preserve that override for older files,
