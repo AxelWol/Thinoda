@@ -1737,10 +1737,16 @@ fn bar_markers_render_in_visual_and_editable_exports() {
         assert!(path.contains("</a:custGeom><a:noFill/><a:ln"));
     }
     let point = |shape: &str, tag: &str| {
+        let (_, offset) = shape.split_once(r#"<a:off x=""#).unwrap();
+        let (offset_x, rest) = offset.split_once(r#"" y=""#).unwrap();
+        let (offset_y, _) = rest.split_once('"').unwrap();
         let (_, point) = shape.split_once(&format!(r#"<a:{tag}><a:pt x=""#)).unwrap();
         let (x, rest) = point.split_once(r#"" y=""#).unwrap();
         let (y, _) = rest.split_once('"').unwrap();
-        (x.parse::<f64>().unwrap(), y.parse::<f64>().unwrap())
+        (
+            offset_x.parse::<f64>().unwrap() + x.parse::<f64>().unwrap(),
+            offset_y.parse::<f64>().unwrap() + y.parse::<f64>().unwrap(),
+        )
     };
     let start = point(paths[0], "moveTo");
     let end = point(paths[0], "lnTo");
