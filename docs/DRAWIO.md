@@ -214,6 +214,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Corpus-ranked definitions (34 new, 35 draw.io names): floorplan wall, wall corner, window, doors (left, right, double) and stairs; mockup margin rects, buttons, scroll bar, checkbox, curly brace and browser window; bpmn event, shape, gateway2 and task/task2 (outlines, symbols, markers, loops); c4 person and person2; stylised arrow, shaded pyramid, circular callout, bar callout; lean_mapping inventory, push and pull arrows, data box, supermarket, outside sources, manufacturing process (plain and shared), FIFO lane
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
+- [x] Electrical `buffer2`: data-defined body and leads, optional negation bubble, endpoint constraints, and editable draw.io parameter round-trip
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
