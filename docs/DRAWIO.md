@@ -2,8 +2,9 @@ _Last updated: 2026-11-23 22:00:36 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
-Status: 🟡 in progress. D0–D3, D6–D8 and D11 are complete; D4 and D5 have
-deferred work, and D9 is partially complete. D10 and D12–D15 remain open. Binding
+Status: 🟡 in progress. The scoped D0–D3 and D8 tasks are complete. D4–D7
+and D9–D15 remain open or partially complete; their unchecked tasks below
+include deferred ownership, named ports and layout work. Binding
 contracts that shipped code already follows (user decisions,
 ownership/passthrough, JSON stencil DSL, model, UX, security, guardrails,
 licensing) are in
