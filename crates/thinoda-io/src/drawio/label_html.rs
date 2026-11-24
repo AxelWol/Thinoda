@@ -178,13 +178,23 @@ fn inline_css(
                     style.bold = Some(lower == "bolder");
                     loss = true;
                 }
-                _ => match lower.parse::<u16>() {
-                    Ok(weight) if (100..=900).contains(&weight) => {
-                        style.bold = Some(weight >= 600);
-                        loss |= weight != 400 && weight != 700;
+                _ => {
+                    let mut input = cssparser::ParserInput::new(&lower);
+                    let mut parser = cssparser::Parser::new(&mut input);
+                    let is_number = matches!(parser.next(), Ok(cssparser::Token::Number { .. }))
+                        && parser.is_exhausted();
+                    match lower.parse::<f64>() {
+                        Ok(weight)
+                            if is_number
+                                && weight.is_finite()
+                                && (1.0..=1000.0).contains(&weight) =>
+                        {
+                            style.bold = Some(weight >= 600.0);
+                            loss |= weight != 400.0 && weight != 700.0;
+                        }
+                        _ => loss = true,
                     }
-                    _ => loss = true,
-                },
+                }
             },
             "font-style" => match lower.as_str() {
                 "italic" => style.italic = Some(true),

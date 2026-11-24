@@ -101,20 +101,32 @@ fn drawio_relative_html_font_weights_warn_and_require_confirmation() {
 
 #[test]
 fn drawio_html_nonstandard_numeric_font_weights_warn() {
-    for (weight, approximate) in [
-        ("100", true),
-        ("401", true),
-        ("500", true),
-        ("600", true),
-        ("900", true),
-        ("400", false),
-        ("700", false),
+    for (weight, bold, approximate) in [
+        ("1", false, true),
+        ("100", false, true),
+        ("401", false, true),
+        ("500", false, true),
+        ("599.5", false, true),
+        ("600", true, true),
+        ("900", true, true),
+        ("1000", true, true),
+        ("400", false, false),
+        ("400.0", false, false),
+        ("4e2", false, false),
+        ("700", true, false),
+        ("700.0", true, false),
     ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="&lt;span style=&quot;font-weight:{weight}&quot;&gt;Text&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
-        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Text");
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(shape.label(), "Text");
+        assert_eq!(
+            shape.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+            Some(bold),
+            "{weight}"
+        );
         assert_eq!(
             report.warnings.contains(&ImportWarning::Formatting),
             approximate,
@@ -135,6 +147,47 @@ fn drawio_html_nonstandard_numeric_font_weights_warn() {
             );
         }
     }
+}
+
+#[test]
+fn drawio_html_invalid_numeric_font_weight_retains_parent() {
+    for weight in ["0", "1001", "NaN", "400."] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;b&gt;&lt;span style=&quot;font-weight:{weight}&quot;&gt;Text&lt;/span&gt;&lt;/b&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{weight}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .bold,
+            Some(true),
+            "{weight}"
+        );
+    }
+
+    let xml = page(
+        r#"<mxCell id="a" value="&lt;b style=&quot;font-weight:normal;font-weight:0&quot;&gt;Text&lt;/b&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0]
+            .label_rich_text
+            .as_ref()
+            .unwrap()
+            .runs[0]
+            .style
+            .bold,
+        Some(false)
+    );
 }
 
 #[test]

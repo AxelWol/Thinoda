@@ -303,6 +303,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
+  - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
   - [x] Preserve inherited draw.io HTML font and colour properties for CSS `inherit` and `unset`
@@ -374,8 +375,9 @@ remain open.
 **Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
 numeric weight, and numeric values other than 400 and 700 can differ visibly;
 the current bold/not-bold model cannot retain either distinction. The existing
-visual approximation is preserved, but import and clipboard conversion now
-report formatting loss instead of presenting it as exact.
+600 threshold approximates the full CSS numeric range, while invalid values
+leave earlier declarations or the inherited style intact. Import and clipboard
+conversion report formatting loss instead of presenting approximations as exact.
 
 **Ordered-input critique:** egui 0.37 exposes `InputState::begin_pass` but not
 `PointerState::begin_pass`. Rebuilding successive input states from a retained
