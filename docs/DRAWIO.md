@@ -306,6 +306,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Import legacy HTML `font face` values with CSS precedence, entity decoding and bounded font-family validation; retain the first valid fallback and disclose the rest
   - [x] Approximate legacy HTML `font size` values using Chromium's standard sizes while warning that browser defaults can differ
   - [x] Approximate CSS absolute font-size keywords and `rem` against a 16px root, reporting browser-dependent formatting loss
+  - [x] Parse CSS font-size lengths as tokens, supporting CSS absolute units and rejecting separated numbers and units
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
   - [x] Warn when draw.io HTML oblique text is approximated as italic
@@ -430,7 +431,10 @@ with another token or explicit shape remains unknown rather than being inferred.
 Absolute CSS size keywords and `rem` instead use a warned 16px browser-root
 approximation; user settings and the source page's root style can change the
 result. Invalid or out-of-range values preserve the previous declaration.
-Relative keywords, other CSS units and source-preserving HTML remain open.
+CSS absolute lengths use the standard fixed CSS pixel conversions; tokenization
+prevents whitespace-separated or trailing tokens from overriding valid values.
+Relative keywords, font-dependent CSS units and source-preserving HTML remain
+open.
 
 ### D10 — Save back to `.drawio`
 

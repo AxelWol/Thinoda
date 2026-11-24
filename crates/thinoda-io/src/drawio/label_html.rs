@@ -396,71 +396,69 @@ fn inline_css(
                 }
             }
             "font-size" => {
-                let keyword_size = match lower.as_str() {
-                    "xx-small" => Some(9.0),
-                    "x-small" => Some(10.0),
-                    "small" => Some(13.0),
-                    "medium" | "initial" => Some(16.0),
-                    "large" => Some(18.0),
-                    "x-large" => Some(24.0),
-                    "xx-large" => Some(32.0),
-                    "xxx-large" => Some(48.0),
-                    _ => None,
-                };
-                let root_relative = {
+                let (absolute, relative, approximate) = {
                     let mut input = cssparser::ParserInput::new(&lower);
                     let mut parser = cssparser::Parser::new(&mut input);
-                    let size = match parser.next() {
-                        Ok(cssparser::Token::Dimension { value, unit, .. })
-                            if unit.eq_ignore_ascii_case("rem") =>
-                        {
-                            Some(*value * 16.0)
+                    let parsed = match parser.next() {
+                        Ok(cssparser::Token::Ident(name)) => {
+                            let size = match name.to_ascii_lowercase().as_str() {
+                                "xx-small" => Some(9.0),
+                                "x-small" => Some(10.0),
+                                "small" => Some(13.0),
+                                "medium" | "initial" => Some(16.0),
+                                "large" => Some(18.0),
+                                "x-large" => Some(24.0),
+                                "xx-large" => Some(32.0),
+                                "xxx-large" => Some(48.0),
+                                _ => None,
+                            };
+                            (size, None, size.is_some())
                         }
-                        _ => None,
+                        Ok(cssparser::Token::Dimension { value, unit, .. }) => {
+                            let value = *value;
+                            match unit.to_ascii_lowercase().as_str() {
+                                "px" => (Some(value), None, false),
+                                "pt" => (Some(value * 4.0 / 3.0), None, false),
+                                "pc" => (Some(value * 16.0), None, false),
+                                "in" => (Some(value * 96.0), None, false),
+                                "cm" => (Some(value * 96.0 / 2.54), None, false),
+                                "mm" => (Some(value * 96.0 / 25.4), None, false),
+                                "q" => (Some(value * 96.0 / 101.6), None, false),
+                                "rem" => (Some(value * 16.0), None, true),
+                                "em" => (None, Some(value), false),
+                                _ => (None, None, false),
+                            }
+                        }
+                        Ok(cssparser::Token::Percentage { unit_value, .. }) => {
+                            (None, Some(*unit_value), false)
+                        }
+                        _ => (None, None, false),
                     };
-                    size.filter(|_| parser.is_exhausted())
+                    if parser.is_exhausted() {
+                        parsed
+                    } else {
+                        (None, None, false)
+                    }
                 };
-                let approximate = keyword_size.or(root_relative);
-                let relative = lower
-                    .strip_suffix("em")
-                    .and_then(|value| value.trim().parse::<f32>().ok())
-                    .or_else(|| {
-                        lower
-                            .strip_suffix('%')
-                            .and_then(|value| value.trim().parse::<f32>().ok())
-                            .map(|value| value / 100.0)
-                    });
                 if relative == Some(1.0) {
                     style.font_size = inherited.font_size;
                     continue;
                 }
-                let size = approximate
-                    .or_else(|| {
-                        lower
-                            .strip_suffix("px")
-                            .and_then(|value| value.trim().parse::<f32>().ok())
+                let size = absolute.or_else(|| {
+                    relative.and_then(|scale| {
+                        inherited
+                            .font_size
+                            .or(base_font_size)
+                            .map(|size| size * scale)
                     })
-                    .or_else(|| {
-                        lower
-                            .strip_suffix("pt")
-                            .and_then(|value| value.trim().parse::<f32>().ok())
-                            .map(|value| value * 4.0 / 3.0)
-                    })
-                    .or_else(|| {
-                        relative.and_then(|scale| {
-                            inherited
-                                .font_size
-                                .or(base_font_size)
-                                .map(|size| size * scale)
-                        })
-                    });
+                });
                 match size {
                     Some(size)
                         if size.is_finite()
                             && (MIN_INLINE_FONT_SIZE..=MAX_INLINE_FONT_SIZE).contains(&size) =>
                     {
                         style.font_size = Some(size);
-                        loss |= approximate.is_some();
+                        loss |= approximate;
                     }
                     _ => loss = true,
                 }

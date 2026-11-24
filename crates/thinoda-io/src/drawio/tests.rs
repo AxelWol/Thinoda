@@ -302,6 +302,75 @@ fn drawio_html_invalid_or_unrepresentable_rem_preserves_prior_size() {
 }
 
 #[test]
+fn drawio_html_absolute_css_font_lengths_use_css_pixels() {
+    for (value, expected) in [
+        ("96px", 96.0),
+        ("72pt", 96.0),
+        ("6pc", 96.0),
+        ("1in", 96.0),
+        ("2.54cm", 96.0),
+        ("25.4mm", 96.0),
+        ("101.6q", 96.0),
+        ("1e1px", 10.0),
+        (r"10\70 x", 10.0),
+    ] {
+        let markup = format!(r#"<span style="font-size:{value}">Text</span>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        let actual = shape.label_rich_text.as_ref().unwrap().runs[0]
+            .style
+            .font_size
+            .unwrap();
+        assert!((actual - expected).abs() < 0.0001, "{value}: {actual}");
+        let restored = import(&export(&report.workbook).unwrap()).unwrap().workbook;
+        assert_eq!(
+            shapes(&restored.sheets[0])[0].label_rich_text,
+            shape.label_rich_text,
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn drawio_html_invalid_css_font_lengths_do_not_override_earlier_values() {
+    for value in ["1 px", "1 em", "100 %", "1px 2px", "1pt 2pt"] {
+        let markup = format!(
+            r#"<span style="font-size:20px"><span style="font-size:30px;font-size:{value}">Text</span></span>"#
+        );
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{value}"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_size,
+            Some(30.0),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_relative_font_sizes_use_the_parent_size() {
     for (parent, child, expected, approximate) in [
         ("20px", "150%", Some(30.0), false),
