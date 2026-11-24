@@ -303,6 +303,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Import legacy HTML `font` colours, including bounded HTML fallback parsing, with CSS precedence and nested-style restoration
+  - [x] Import single legacy HTML `font face` values with CSS precedence, entity decoding and bounded font-family validation
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
   - [x] Warn when draw.io HTML oblique text is approximated as italic
@@ -405,9 +406,11 @@ remain explicit formatting losses; quoted family names remain literal.
 colour algorithm, not CSS parsing for unrecognised values, and apply as
 presentational hints before inline CSS regardless of attribute order. Sibling
 styles and inherited overrides are restored. Unterminated entity references
-still warn because their decoding is incomplete; `face` and `size` remain
-disclosed losses. Chromium comparisons cover invalid, transparent, Unicode,
-shorthand and long colours.
+still warn because their decoding is incomplete. Chromium comparisons cover
+invalid, transparent, Unicode, shorthand and long colours.
+Single `face` families share the CSS tokenizer while remaining a single value,
+so embedded declarations cannot alter other attributes. Fallback lists and
+invalid or unrepresentable families still warn; `size` remains unsupported.
 
 **Relative font-size critique:** Percentages and `em` resolve against the parent
 size, not a preceding declaration on the same element. Explicit whole-label

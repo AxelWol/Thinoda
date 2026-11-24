@@ -140,6 +140,49 @@ impl LabelText {
     }
 }
 
+struct CssFontFamily {
+    name: String,
+    quoted: bool,
+    valid: bool,
+    has_fallback: bool,
+}
+
+fn first_css_font_family(value: &str) -> CssFontFamily {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut family = CssFontFamily {
+        name: String::new(),
+        quoted: false,
+        valid: true,
+        has_fallback: false,
+    };
+    while !parser.is_exhausted() {
+        match parser.next() {
+            Ok(cssparser::Token::Ident(part)) if !family.quoted => {
+                if !family.name.is_empty() {
+                    family.name.push(' ');
+                }
+                family.name.push_str(part);
+            }
+            Ok(cssparser::Token::QuotedString(part))
+                if family.name.is_empty() && !family.quoted =>
+            {
+                family.name.push_str(part);
+                family.quoted = true;
+            }
+            Ok(cssparser::Token::Comma) if !family.name.is_empty() => {
+                family.has_fallback = true;
+                break;
+            }
+            _ => {
+                family.valid = false;
+                break;
+            }
+        }
+    }
+    family
+}
+
 fn inline_css(
     style: &mut InlineTextStyle,
     inherited: &InlineTextStyle,
@@ -238,46 +281,23 @@ fn inline_css(
                 }
             }
             "font-family" => {
-                let mut input = cssparser::ParserInput::new(value);
-                let mut parser = cssparser::Parser::new(&mut input);
-                let mut family = String::new();
-                let mut quoted = false;
-                let mut valid = true;
-                let mut has_fallback = false;
-                while !parser.is_exhausted() {
-                    match parser.next() {
-                        Ok(cssparser::Token::Ident(part)) if !quoted => {
-                            if !family.is_empty() {
-                                family.push(' ');
-                            }
-                            family.push_str(part);
-                        }
-                        Ok(cssparser::Token::QuotedString(part)) if family.is_empty() => {
-                            family.push_str(part);
-                            quoted = true;
-                        }
-                        Ok(cssparser::Token::Comma) if !family.is_empty() => {
-                            loss = true;
-                            has_fallback = true;
-                            break;
-                        }
-                        _ => {
-                            valid = false;
-                            break;
-                        }
-                    }
-                }
-                let family = family.trim();
-                if valid
-                    && !quoted
-                    && !has_fallback
+                let parsed = first_css_font_family(value);
+                loss |= parsed.has_fallback;
+                let family = if parsed.quoted {
+                    parsed.name.as_str()
+                } else {
+                    parsed.name.trim()
+                };
+                if parsed.valid
+                    && !parsed.quoted
+                    && !parsed.has_fallback
                     && matches!(family.to_ascii_lowercase().as_str(), "inherit" | "unset")
                 {
                     style.font_family.clone_from(&inherited.font_family);
                     continue;
                 }
-                if valid
-                    && !quoted
+                if parsed.valid
+                    && !parsed.quoted
                     && matches!(
                         family.to_ascii_lowercase().as_str(),
                         "inherit" | "unset" | "initial" | "revert" | "revert-layer"
@@ -286,10 +306,10 @@ fn inline_css(
                     loss = true;
                     continue;
                 }
-                if family.is_empty()
+                if family.trim().is_empty()
                     || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
                     || family.chars().any(char::is_control)
-                    || !valid
+                    || !parsed.valid
                 {
                     loss = true;
                 } else {
@@ -691,6 +711,37 @@ fn parse_html_with_limit(
                             rich.style.color = Some(color);
                         }
                     }
+                    if name == "font"
+                        && let Some(face) = el.get_attribute("face")
+                    {
+                        loss |= unresolved_entity(&face);
+                        let parsed = first_css_font_family(&decode_entities(&face));
+                        let family = if parsed.quoted {
+                            parsed.name.as_str()
+                        } else {
+                            parsed.name.trim()
+                        };
+                        if parsed.valid
+                            && !parsed.has_fallback
+                            && !family.trim().is_empty()
+                            && family.len() <= MAX_INLINE_FONT_FAMILY_BYTES
+                            && !family.chars().any(char::is_control)
+                            && (parsed.quoted
+                                || !matches!(
+                                    family.to_ascii_lowercase().as_str(),
+                                    "inherit"
+                                        | "unset"
+                                        | "initial"
+                                        | "revert"
+                                        | "revert-layer"
+                                        | "default"
+                                ))
+                        {
+                            rich.style.font_family = Some(family.to_owned());
+                        } else {
+                            loss = true;
+                        }
+                    }
                     let mut inherit_underline = false;
                     let mut inherit_strike = false;
                     for attribute in el.attributes() {
@@ -710,7 +761,7 @@ fn parse_html_with_limit(
                                 inherit_strike = true;
                             }
                             "data-thinoda-break" if marker => {}
-                            "color" if name == "font" => {}
+                            "color" | "face" if name == "font" => {}
                             _ => loss = true,
                         }
                     }

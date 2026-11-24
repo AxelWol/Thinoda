@@ -463,6 +463,7 @@ fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
         ("&apos;A,B&apos;", "A,B", false),
         ("&apos;A;B&apos;", "A;B", false),
         ("&apos;A;B&apos;, sans-serif", "A;B", true),
+        ("&apos;  Arial  &apos;", "  Arial  ", false),
         (r"A\;B", "A;B", false),
         ("Courier New", "Courier New", false),
         (r"Courier\20 New, serif", "Courier New", true),
@@ -685,9 +686,87 @@ fn drawio_html_legacy_font_colors_follow_html_fallback_rules() {
 }
 
 #[test]
+fn drawio_html_legacy_font_face_preserves_css_precedence() {
+    for (face, expected) in [
+        ("Arial", "Arial"),
+        ("Courier New", "Courier New"),
+        ("'A,B'", "A,B"),
+        ("'A;B'", "A;B"),
+        ("'  Arial  '", "  Arial  "),
+        (r"A\;B", "A;B"),
+        ("'A&amp;B'", "A&B"),
+    ] {
+        let markup = format!(r#"<font face="{face}">Text</font>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{face}: {:?}", report.warnings);
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some(expected),
+            "{face}"
+        );
+    }
+
+    for markup in [
+        r#"<font face="Arial" style="font-family:Courier New">Text</font>"#,
+        r#"<font style="font-family:Courier New" face="Arial">Text</font>"#,
+        r#"<span style="font-family:Courier New"><font face="Arial" style="font-family:inherit">Text</font></span>"#,
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some("Courier New")
+        );
+    }
+}
+
+#[test]
+fn drawio_html_legacy_font_face_cannot_inject_css_declarations() {
+    let markup = r##"<span style="font-family:Courier New;color:#0000ff"><font face="Arial; color:red">Text</font></span>"##;
+    let xml = page(&format!(
+        r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let style = &shapes(&report.workbook.sheets[0])[0]
+        .label_rich_text
+        .as_ref()
+        .unwrap()
+        .runs[0]
+        .style;
+    assert_eq!(style.font_family.as_deref(), Some("Courier New"));
+    assert_eq!(style.color, Some(Color::rgb(0, 0, 255)));
+}
+
+#[test]
 fn drawio_html_unsupported_legacy_font_attributes_warn() {
     for markup in [
-        r#"<font face="Arial">Text</font>"#,
+        r#"<font face="Arial, sans-serif">Text</font>"#,
+        r#"<font face="Arial; color:red">Text</font>"#,
+        r#"<font face="'   '">Text</font>"#,
         r#"<font size="4">Text</font>"#,
         r#"<font color="&#35ABC">Text</font>"#,
     ] {
