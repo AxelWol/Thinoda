@@ -216,54 +216,89 @@ fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
 }
 
 #[test]
-fn drawio_html_nested_decorations_warn_when_ancestor_decoration_is_lost() {
-    for (html, approximate) in [
+fn drawio_html_nested_decorations_propagate_from_ancestors() {
+    for (html, underline, strike) in [
         (
             "&lt;u&gt;&lt;span style=&quot;text-decoration:none&quot;&gt;Text&lt;/span&gt;&lt;/u&gt;",
-            true,
+            Some(true),
+            Some(false),
         ),
         (
             "&lt;s&gt;&lt;span style=&quot;text-decoration:underline&quot;&gt;Text&lt;/span&gt;&lt;/s&gt;",
-            true,
+            Some(true),
+            Some(true),
         ),
         (
             "&lt;u&gt;&lt;span style=&quot;text-decoration:underline line-through&quot;&gt;Text&lt;/span&gt;&lt;/u&gt;",
-            false,
+            Some(true),
+            Some(true),
+        ),
+        (
+            "&lt;u&gt;&lt;span style=&quot;text-decoration:none&quot;&gt;&lt;span style=&quot;text-decoration:line-through&quot;&gt;Text&lt;/span&gt;&lt;/span&gt;&lt;/u&gt;",
+            Some(true),
+            Some(true),
+        ),
+        (
+            "&lt;u&gt;&lt;span data-thinoda-underline=&quot;inherit&quot; style=&quot;text-decoration:none&quot;&gt;Text&lt;/span&gt;&lt;/u&gt;",
+            Some(true),
+            Some(false),
         ),
         (
             "&lt;span style=&quot;text-decoration:none&quot;&gt;Text&lt;/span&gt;",
-            false,
+            Some(false),
+            Some(false),
         ),
         (
             "&lt;u style=&quot;text-decoration:none&quot;&gt;Text&lt;/u&gt;",
-            false,
+            Some(false),
+            Some(false),
         ),
     ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="{html}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
-        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Text");
-        assert_eq!(
-            report.warnings.contains(&ImportWarning::Formatting),
-            approximate,
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(shape.label(), "Text");
+        let style = &shape.label_rich_text.as_ref().unwrap().runs[0].style;
+        assert_eq!(style.underline, underline, "{html}");
+        assert_eq!(style.strikethrough, strike, "{html}");
+        assert!(
+            !report.warnings.contains(&ImportWarning::Formatting),
             "{html}: {:?}",
             report.warnings
         );
-        if approximate {
-            assert!(matches!(
-                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
-                Err(IoError::ImportNeedsConfirmation(warnings))
-                    if warnings.contains(&ImportWarning::Formatting)
-            ));
-            assert!(
-                crate::drawio_clipboard::decode(&xml)
-                    .unwrap()
-                    .warnings
-                    .contains(&ImportWarning::Formatting)
-            );
-        }
+        assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
+        assert!(
+            !crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .contains(&ImportWarning::Formatting)
+        );
     }
+}
+
+#[test]
+fn drawio_html_nested_decoration_does_not_leak_into_siblings() {
+    let xml = page(
+        r#"<mxCell id="a" value="&lt;u&gt;A&lt;span style=&quot;text-decoration:none&quot;&gt;B&lt;/span&gt;C&lt;/u&gt;D" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(shape.label(), "ABCD");
+    let rich = shape.label_rich_text.as_ref().unwrap();
+    assert!(
+        rich.runs
+            .iter()
+            .any(|run| run.start <= 1 && run.end > 1 && run.style.underline == Some(true))
+    );
+    assert!(
+        !rich
+            .runs
+            .iter()
+            .any(|run| run.start <= 3 && run.end > 3 && run.style.underline == Some(true))
+    );
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
 }
 
 #[test]

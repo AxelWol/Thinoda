@@ -304,7 +304,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
-  - [x] Warn when nested draw.io HTML decorations suppress an ancestor's propagated underline or strikethrough
+  - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -358,6 +358,12 @@ The native inline model records only italic, so imports retain the existing
 approximation but report formatting loss for confirmation. Exact oblique
 rendering and source-preserving HTML remain open.
 
+**Decoration critique:** An HTML ancestor's underline or strike propagates
+through descendants even when they specify `text-decoration:none`. Preserve
+those active decorations while keeping same-element overrides, independent
+decoration kinds, sibling restoration and Thinoda's inheritance markers intact.
+This only models nested inline HTML; source-preserving HTML remains open.
+
 **Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
 numeric weight, and numeric values other than 400 and 700 can differ visibly;
 the current bold/not-bold model cannot retain either distinction. The existing
@@ -375,11 +381,6 @@ passes, invent event timing or change the host's final pointer and focus state.
 retaining the written list as one family may fall back to the default font.
 Conversion warns rather than claiming fidelity. A single quoted family may
 contain a comma and does not trigger this warning.
-
-**Nested-decoration critique:** CSS decorations propagate through descendants,
-but the inline model currently lets a child override an ancestor's decoration.
-The existing approximation remains editable and is explicitly disclosed;
-correct propagation still needs a representation that preserves source styling.
 
 ### D10 — Save back to `.drawio`
 
