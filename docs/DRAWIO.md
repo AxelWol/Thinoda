@@ -303,7 +303,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Warn when draw.io HTML oblique text is approximated as italic
-  - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
+  - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
   - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
   - [x] Warn when a nested colour change can alter the colour of an ancestor's decoration
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
@@ -381,10 +381,11 @@ the already aggregated current state as the starting point would reuse later
 click and drag history. Replay must not consume input twice on extra egui
 passes, invent event timing or change the host's final pointer and focus state.
 
-**Font-family critique:** CSS fallback lists are not native single-family names;
-retaining the written list as one family may fall back to the default font.
-Conversion warns rather than claiming fidelity. A single quoted family may
-contain a comma and does not trigger this warning.
+**Font-family critique:** A CSS fallback list cannot fit the native
+single-family model. Conversion selects the first family and warns that
+fallbacks were lost; if it is unavailable, the default may still differ from
+the browser's next available family. Quoted commas and CSS escapes are parsed
+as part of the family rather than as fallback separators.
 
 ### D10 — Save back to `.drawio`
 

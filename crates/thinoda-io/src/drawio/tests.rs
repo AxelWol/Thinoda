@@ -175,10 +175,11 @@ fn drawio_html_oblique_font_style_warns_about_italic_approximation() {
 #[test]
 fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
     for (family, expected, approximate) in [
-        ("Arial, sans-serif", "Arial, sans-serif", true),
-        ("&apos;A,B&apos;, sans-serif", "'A,B', sans-serif", true),
+        ("Arial, sans-serif", "Arial", true),
+        ("&apos;A,B&apos;, sans-serif", "A,B", true),
         ("&apos;A,B&apos;", "A,B", false),
         ("Courier New", "Courier New", false),
+        (r"Courier\20 New, serif", "Courier New", true),
     ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="&lt;span style=&quot;font-family:{family}&quot;&gt;Text&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#

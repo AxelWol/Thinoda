@@ -196,15 +196,36 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
             "font-family" => {
                 let mut input = cssparser::ParserInput::new(value);
                 let mut parser = cssparser::Parser::new(&mut input);
-                let quoted = parser
-                    .try_parse(|parser| parser.expect_string().map(|name| name.to_string()))
-                    .ok()
-                    .filter(|_| parser.is_exhausted());
-                loss |= quoted.is_none() && value.contains(',');
-                let family = quoted.as_deref().unwrap_or(value).trim();
+                let mut family = String::new();
+                let mut quoted = false;
+                let mut valid = true;
+                while !parser.is_exhausted() {
+                    match parser.next() {
+                        Ok(cssparser::Token::Ident(part)) if !quoted => {
+                            if !family.is_empty() {
+                                family.push(' ');
+                            }
+                            family.push_str(part);
+                        }
+                        Ok(cssparser::Token::QuotedString(part)) if family.is_empty() => {
+                            family.push_str(part);
+                            quoted = true;
+                        }
+                        Ok(cssparser::Token::Comma) if !family.is_empty() => {
+                            loss = true;
+                            break;
+                        }
+                        _ => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                let family = family.trim();
                 if family.is_empty()
                     || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
                     || family.chars().any(char::is_control)
+                    || !valid
                 {
                     loss = true;
                 } else {
