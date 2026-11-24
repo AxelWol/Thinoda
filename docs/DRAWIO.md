@@ -396,9 +396,9 @@ remain explicit formatting losses; quoted family names remain literal.
 
 **Relative font-size critique:** Percentages and `em` resolve against the parent
 size, not a preceding declaration on the same element. Explicit whole-label
-font sizes also provide a base without introducing redundant inline runs.
-If the whole-label size is not explicitly known, non-identity scales still
-require a formatting warning.
+font sizes and draw.io's 11px fallback when the stylesheet is suppressed
+provide a base without introducing redundant inline runs. Other unknown
+whole-label sizes still require a formatting warning for non-identity scales.
 
 ### D10 — Save back to `.drawio`
 

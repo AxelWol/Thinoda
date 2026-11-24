@@ -60,6 +60,7 @@ const MAX_PAGES: usize = 1_000;
 /// Nesting depth of cells (parent references), independent of XML depth.
 const MAX_CELL_DEPTH: usize = 256;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const DRAWIO_UNSTYLED_FONT_SIZE: f32 = 11.0;
 
 /// Ownership table, revision 1 (architecture §3.1.1): style keys that first-class
 /// fields represent or that import consumes. They are never kept as passthrough,
@@ -2577,7 +2578,7 @@ fn label_text_style(style: &Style) -> (Option<LabelStyle>, Vec<&'static str>, bo
         None => {
             // Without the default stylesheet draw.io falls back to mxGraph's 11px.
             if style.suppress_defaults && style.get("fontSize").is_none() {
-                label.font_size = Some(11.0);
+                label.font_size = Some(DRAWIO_UNSTYLED_FONT_SIZE);
             }
             accept("fontSize", true);
         }
@@ -2973,11 +2974,18 @@ impl<'a> PageImport<'a> {
         if !cell.style.flag("html") {
             return (self.label(cell), None);
         }
-        let base_font_size = cell.style.num("fontSize").filter(|size| {
-            (thinoda_core::label_style::MIN_LABEL_FONT_SIZE
-                ..=thinoda_core::label_style::MAX_LABEL_FONT_SIZE)
-                .contains(size)
-        });
+        let base_font_size = cell
+            .style
+            .num("fontSize")
+            .filter(|size| {
+                (thinoda_core::label_style::MIN_LABEL_FONT_SIZE
+                    ..=thinoda_core::label_style::MAX_LABEL_FONT_SIZE)
+                    .contains(size)
+            })
+            .or_else(|| {
+                (cell.style.suppress_defaults && cell.style.get("fontSize").is_none())
+                    .then_some(DRAWIO_UNSTYLED_FONT_SIZE)
+            });
         let (text, rich) = parse_rich_html(&cell.value, self.warnings, base_font_size);
         let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
         let rich = rich.filter(|value| {

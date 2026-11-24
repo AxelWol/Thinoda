@@ -247,6 +247,26 @@ fn drawio_html_relative_font_sizes_use_explicit_whole_label_size() {
 }
 
 #[test]
+fn drawio_html_relative_font_size_uses_suppressed_stylesheet_default() {
+    let xml = page(
+        r#"<mxCell id="a" value="&lt;span style=&quot;font-size:150%&quot;&gt;Text&lt;/span&gt;" style=";shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(
+        shape.label_rich_text.as_ref().unwrap().runs[0]
+            .style
+            .font_size,
+        Some(16.5)
+    );
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+}
+
+#[test]
 fn drawio_html_inherited_font_properties_keep_parent_values() {
     for keyword in ["inherit", "unset"] {
         let xml = page(&format!(
