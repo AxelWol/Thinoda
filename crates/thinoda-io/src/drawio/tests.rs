@@ -173,6 +173,55 @@ fn drawio_html_oblique_font_style_warns_about_italic_approximation() {
 }
 
 #[test]
+fn drawio_html_relative_font_sizes_use_the_parent_size() {
+    for (parent, child, expected, approximate) in [
+        ("20px", "150%", Some(30.0), false),
+        ("20px", "0.5em", Some(10.0), false),
+        ("20px", "100%", Some(20.0), false),
+        ("", "1em", None, false),
+        ("", "150%", Some(12.0), true),
+        ("20px", "2000%", Some(12.0), true),
+        ("20px", "-1em", Some(12.0), true),
+    ] {
+        let parent_style = if parent.is_empty() {
+            String::new()
+        } else {
+            format!("font-size:{parent}")
+        };
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;span style=&quot;{parent_style}&quot;&gt;&lt;span style=&quot;font-size:12px;font-size:{child}&quot;&gt;Text&lt;/span&gt;&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            approximate,
+            "{parent}, {child}: {:?}",
+            report.warnings
+        );
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        let size = shape
+            .label_rich_text
+            .as_ref()
+            .and_then(|rich| rich.runs.first())
+            .and_then(|run| run.style.font_size);
+        assert_eq!(size, expected, "{parent}, {child}");
+        if approximate {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&ImportWarning::Formatting)
+            ));
+            assert!(
+                crate::drawio_clipboard::decode(&xml)
+                    .unwrap()
+                    .warnings
+                    .contains(&ImportWarning::Formatting)
+            );
+        }
+    }
+}
+
+#[test]
 fn drawio_html_inherited_font_properties_keep_parent_values() {
     for keyword in ["inherit", "unset"] {
         let xml = page(&format!(

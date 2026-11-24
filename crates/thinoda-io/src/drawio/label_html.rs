@@ -268,6 +268,19 @@ fn inline_css(style: &mut InlineTextStyle, inherited: &InlineTextStyle, value: &
                 }
             }
             "font-size" => {
+                let relative = lower
+                    .strip_suffix("em")
+                    .and_then(|value| value.trim().parse::<f32>().ok())
+                    .or_else(|| {
+                        lower
+                            .strip_suffix('%')
+                            .and_then(|value| value.trim().parse::<f32>().ok())
+                            .map(|value| value / 100.0)
+                    });
+                if relative == Some(1.0) {
+                    style.font_size = inherited.font_size;
+                    continue;
+                }
                 let size = lower
                     .strip_suffix("px")
                     .and_then(|value| value.trim().parse::<f32>().ok())
@@ -276,6 +289,9 @@ fn inline_css(style: &mut InlineTextStyle, inherited: &InlineTextStyle, value: &
                             .strip_suffix("pt")
                             .and_then(|value| value.trim().parse::<f32>().ok())
                             .map(|value| value * 4.0 / 3.0)
+                    })
+                    .or_else(|| {
+                        relative.and_then(|scale| inherited.font_size.map(|size| size * scale))
                     });
                 match size {
                     Some(size)
