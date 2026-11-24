@@ -607,8 +607,26 @@ fn parse_html_with_limit(
                             rich.pending_item = rich.lists.last().copied();
                             loss |= rich.pending_item.is_none();
                         }
-                        "div" | "span" | "p" => {}
+                        "div" | "span" | "p" | "font" => {}
                         _ => loss = true,
+                    }
+                    if name == "font"
+                        && let Some(color) = el.get_attribute("color")
+                    {
+                        let bytes = color.as_bytes();
+                        if bytes.len() == 7
+                            && bytes[0] == b'#'
+                            && bytes[1..].iter().all(u8::is_ascii_hexdigit)
+                        {
+                            if let Some(parsed) = super::parse_style_color(&color) {
+                                rich.style.color = parsed.color;
+                                loss |= parsed.approximate;
+                            } else {
+                                loss = true;
+                            }
+                        } else {
+                            loss = true;
+                        }
                     }
                     let mut inherit_underline = false;
                     let mut inherit_strike = false;
@@ -629,6 +647,7 @@ fn parse_html_with_limit(
                                 inherit_strike = true;
                             }
                             "data-thinoda-break" if marker => {}
+                            "color" if name == "font" => {}
                             _ => loss = true,
                         }
                     }

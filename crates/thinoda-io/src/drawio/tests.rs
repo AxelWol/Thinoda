@@ -538,6 +538,97 @@ fn drawio_html_unsupported_nested_css_does_not_consume_later_declarations() {
 }
 
 #[test]
+fn drawio_html_legacy_font_colors_preserve_css_precedence_and_siblings() {
+    for markup in [
+        r##"<font color="#ff0000" style="color:#0000ff">A</font>B"##,
+        r##"<font style="color:#0000ff" color="#ff0000">A</font>B"##,
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(shape.label(), "AB");
+        let runs = &shape.label_rich_text.as_ref().unwrap().runs;
+        assert_eq!((runs[0].start, runs[0].end), (0, 1));
+        assert_eq!(runs[0].style.color, Some(Color::rgb(0, 0, 255)));
+        assert_eq!(runs.len(), 1);
+        assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
+    }
+
+    let markup = r##"<font color="#ff0000">A<span style="color:inherit">B</span></font>C"##;
+    let xml = page(&format!(
+        r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    let runs = &shape.label_rich_text.as_ref().unwrap().runs;
+    assert_eq!((runs[0].start, runs[0].end), (0, 2));
+    assert_eq!(runs[0].style.color, Some(Color::rgb(255, 0, 0)));
+    assert_eq!(runs.len(), 1);
+
+    let restored = import(&export(&report.workbook).unwrap()).unwrap().workbook;
+    assert_eq!(
+        shapes(&restored.sheets[0])[0].label_rich_text,
+        shape.label_rich_text
+    );
+
+    let markup = r##"<span style="color:#008000"><font color="#ff0000" style="color:inherit">Text</font></span>"##;
+    let xml = page(&format!(
+        r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0]
+            .label_rich_text
+            .as_ref()
+            .unwrap()
+            .runs[0]
+            .style
+            .color,
+        Some(Color::rgb(0, 128, 0))
+    );
+}
+
+#[test]
+fn drawio_html_unsupported_legacy_font_attributes_warn() {
+    for markup in [
+        r#"<font color="red">Text</font>"#,
+        r##"<font color="#abc">Text</font>"##,
+        r##"<font color="#xyzxyz">Text</font>"##,
+        r#"<font face="Arial">Text</font>"#,
+        r#"<font size="4">Text</font>"#,
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{markup}"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+        assert!(
+            crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .contains(&ImportWarning::Formatting)
+        );
+    }
+}
+
+#[test]
 fn drawio_html_nested_decorations_propagate_from_ancestors() {
     for (html, underline, strike) in [
         (
