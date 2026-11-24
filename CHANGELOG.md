@@ -39,6 +39,30 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.29.1](https://github.com/AxelWol/Thinoda/compare/v0.29.0...v0.29.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* accept safe SVG CSS boundary comments ([40d423f](https://github.com/AxelWol/Thinoda/commit/40d423f495679f286df3ed5de09d9b8bed68bff1))
+* accept SVG CSS comment boundary whitespace ([238f9ee](https://github.com/AxelWol/Thinoda/commit/238f9eef4e340bfbfc67cb142cd6e3712ede3689))
+* accept trailing SVG CSS comments ([a6f5446](https://github.com/AxelWol/Thinoda/commit/a6f5446a288635fc3c749bd583ea7cd70e9e26a4))
+* allow standalone SVG url identifiers ([b53ade0](https://github.com/AxelWol/Thinoda/commit/b53ade090583cc24f3c51bf42e8b978a9e770bec))
+* disclose approximated draw.io font weights ([c03b3d4](https://github.com/AxelWol/Thinoda/commit/c03b3d467cbb444c4f7d6c7b1d98db35b9a33a26))
+* disclose draw.io font fallback loss ([1267795](https://github.com/AxelWol/Thinoda/commit/12677951482339e1d354ca30f1c37e612446f009))
+* preserve stencil shadow stroke geometry in exports ([375fe9c](https://github.com/AxelWol/Thinoda/commit/375fe9c01db3581e533e82364e7bdd5feaa80d96))
+* preserve SVG colors containing url ([2eb5ae1](https://github.com/AxelWol/Thinoda/commit/2eb5ae1e30c2e60e8a8cade8cfa2dc12f0f6422f))
+* tighten editable PowerPoint path bounds ([a1cf2f6](https://github.com/AxelWol/Thinoda/commit/a1cf2f603461d9f7774679640e075b7ca134caa7))
+
+
+### Documentation
+
+* assess ordered pointer replay ([d3283e1](https://github.com/AxelWol/Thinoda/commit/d3283e1729890609f107b0efeb0219eeb575e607))
+* clarify named port identity constraints ([4adf4d5](https://github.com/AxelWol/Thinoda/commit/4adf4d584ee05d00b6ce411e670ee55e8280c8a1))
+* clarify variable-input logic gate constraints ([1d4ac05](https://github.com/AxelWol/Thinoda/commit/1d4ac0520bb8dc55f7873e68cb56d0d31ab7106c))
+* refine named port integration plan ([baae588](https://github.com/AxelWol/Thinoda/commit/baae588e9fb50f268cdb9aeeb105e90efd19b6f2))
+* refine ordered rich label input plan ([080b521](https://github.com/AxelWol/Thinoda/commit/080b52101a87e06f2d324e7b4a10544ee1949478))
+
 ## [0.29.0](https://github.com/AxelWol/Thinoda/compare/v0.28.1...v0.29.0) (2026-11-23)
 
 
