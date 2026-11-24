@@ -279,6 +279,53 @@ fn drawio_html_nested_decorations_propagate_from_ancestors() {
 }
 
 #[test]
+fn drawio_html_nested_decoration_color_loss_warns() {
+    for (html, approximate) in [
+        (
+            "&lt;u&gt;&lt;span style=&quot;color:#ff0000&quot;&gt;Text&lt;/span&gt;&lt;/u&gt;",
+            true,
+        ),
+        (
+            "&lt;span style=&quot;color:#0000ff;text-decoration:line-through&quot;&gt;&lt;span style=&quot;color:#ff0000&quot;&gt;Text&lt;/span&gt;&lt;/span&gt;",
+            true,
+        ),
+        (
+            "&lt;span style=&quot;color:#ff0000;text-decoration:underline&quot;&gt;&lt;span style=&quot;color:#ff0000&quot;&gt;Text&lt;/span&gt;&lt;/span&gt;",
+            false,
+        ),
+        (
+            "&lt;span style=&quot;color:#ff0000&quot;&gt;Text&lt;/span&gt;",
+            false,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{html}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Text");
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            approximate,
+            "{html}: {:?}",
+            report.warnings
+        );
+        if approximate {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings.contains(&ImportWarning::Formatting)
+            ));
+            assert!(
+                crate::drawio_clipboard::decode(&xml)
+                    .unwrap()
+                    .warnings
+                    .contains(&ImportWarning::Formatting)
+            );
+        }
+    }
+}
+
+#[test]
 fn drawio_html_nested_decoration_does_not_leak_into_siblings() {
     let xml = page(
         r#"<mxCell id="a" value="&lt;u&gt;A&lt;span style=&quot;text-decoration:none&quot;&gt;B&lt;/span&gt;C&lt;/u&gt;D" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,

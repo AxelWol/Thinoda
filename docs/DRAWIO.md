@@ -305,6 +305,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
   - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
+  - [x] Warn when a nested colour change can alter the colour of an ancestor's decoration
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -362,7 +363,10 @@ rendering and source-preserving HTML remain open.
 through descendants even when they specify `text-decoration:none`. Preserve
 those active decorations while keeping same-element overrides, independent
 decoration kinds, sibling restoration and Thinoda's inheritance markers intact.
-This only models nested inline HTML; source-preserving HTML remains open.
+An ancestor's decoration can have a different colour from descendant text;
+the model paints both in the descendant colour, so such changes are disclosed
+conservatively. Independent decoration colours and source-preserving HTML
+remain open.
 
 **Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
 numeric weight, and numeric values other than 400 and 700 can differ visibly;

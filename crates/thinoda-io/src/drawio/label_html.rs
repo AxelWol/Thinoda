@@ -477,6 +477,7 @@ fn parse_html_with_limit(
                     previous_lists = rich.lists.len();
                     let inherited_underline = rich.style.underline;
                     let inherited_strike = rich.style.strikethrough;
+                    let inherited_color = rich.style.color;
                     let mut loss = false;
                     match name.as_str() {
                         "b" | "strong" => rich.style.bold = Some(true),
@@ -521,6 +522,8 @@ fn parse_html_with_limit(
                     if inherit_strike {
                         rich.style.strikethrough = inherited_strike;
                     }
+                    loss |= (inherited_underline == Some(true) || inherited_strike == Some(true))
+                        && rich.style.color != inherited_color;
                     if inherited_underline == Some(true) {
                         rich.style.underline = Some(true);
                     }
