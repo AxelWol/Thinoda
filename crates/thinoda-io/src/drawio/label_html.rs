@@ -140,7 +140,12 @@ impl LabelText {
     }
 }
 
-fn inline_css(style: &mut InlineTextStyle, inherited: &InlineTextStyle, value: &str) -> bool {
+fn inline_css(
+    style: &mut InlineTextStyle,
+    inherited: &InlineTextStyle,
+    base_font_size: Option<f32>,
+    value: &str,
+) -> bool {
     let mut loss = false;
     for declaration in value.split(';').filter(|part| !part.trim().is_empty()) {
         let Some((name, value)) = declaration.split_once(':') else {
@@ -291,7 +296,12 @@ fn inline_css(style: &mut InlineTextStyle, inherited: &InlineTextStyle, value: &
                             .map(|value| value * 4.0 / 3.0)
                     })
                     .or_else(|| {
-                        relative.and_then(|scale| inherited.font_size.map(|size| size * scale))
+                        relative.and_then(|scale| {
+                            inherited
+                                .font_size
+                                .or(base_font_size)
+                                .map(|size| size * scale)
+                        })
                     });
                 match size {
                     Some(size)
@@ -464,8 +474,9 @@ pub(super) fn strip_html(text: &str, warnings: &mut BTreeSet<ImportWarning>) -> 
 pub(super) fn parse_rich_html(
     text: &str,
     warnings: &mut BTreeSet<ImportWarning>,
+    base_font_size: Option<f32>,
 ) -> (String, Option<InlineText>) {
-    parse_html_with_limit(text, warnings, MAX_BYTES, true)
+    parse_html_with_limit(text, warnings, MAX_BYTES, true, base_font_size)
 }
 
 fn strip_html_with_limit(
@@ -473,7 +484,7 @@ fn strip_html_with_limit(
     warnings: &mut BTreeSet<ImportWarning>,
     memory_limit: usize,
 ) -> String {
-    parse_html_with_limit(text, warnings, memory_limit, false).0
+    parse_html_with_limit(text, warnings, memory_limit, false, None).0
 }
 
 fn parse_html_with_limit(
@@ -481,6 +492,7 @@ fn parse_html_with_limit(
     warnings: &mut BTreeSet<ImportWarning>,
     memory_limit: usize,
     rich: bool,
+    base_font_size: Option<f32>,
 ) -> (String, Option<InlineText>) {
     if !text.contains('<') {
         let decoded = decode_entities(text);
@@ -582,6 +594,7 @@ fn parse_html_with_limit(
                                 loss |= inline_css(
                                     &mut rich.style,
                                     &inherited_style,
+                                    base_font_size,
                                     &attribute.value(),
                                 );
                             }
@@ -717,6 +730,7 @@ mod tests {
         let (text, rich) = parse_rich_html(
             r#"<b>A<span style="font-style:italic;color:#ff0000">🙂</span>B</b>"#,
             &mut warnings,
+            None,
         );
         assert_eq!(text, "A🙂B");
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -737,6 +751,7 @@ mod tests {
         let (text, rich) = parse_rich_html(
             "<ul><li>one</li><li><sup>two</sup></li></ul>",
             &mut warnings,
+            None,
         );
         assert_eq!(text, "one\ntwo");
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -763,6 +778,7 @@ mod tests {
         let (text, rich) = parse_rich_html(
             r#"<span style="font-weight:bold;background-image:url(https://example.invalid/x)">ok</span><script>hidden</script>"#,
             &mut warnings,
+            None,
         );
         assert_eq!(text, "ok");
         assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));

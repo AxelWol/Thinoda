@@ -2973,7 +2973,12 @@ impl<'a> PageImport<'a> {
         if !cell.style.flag("html") {
             return (self.label(cell), None);
         }
-        let (text, rich) = parse_rich_html(&cell.value, self.warnings);
+        let base_font_size = cell.style.num("fontSize").filter(|size| {
+            (thinoda_core::label_style::MIN_LABEL_FONT_SIZE
+                ..=thinoda_core::label_style::MAX_LABEL_FONT_SIZE)
+                .contains(size)
+        });
+        let (text, rich) = parse_rich_html(&cell.value, self.warnings, base_font_size);
         let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
         let rich = rich.filter(|value| {
             if value.validate(&text).is_err() {

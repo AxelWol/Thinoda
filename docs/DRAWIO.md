@@ -305,7 +305,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
   - [x] Preserve inherited draw.io HTML font and colour properties for CSS `inherit` and `unset`
-  - [x] Resolve draw.io HTML `em` and percentage font sizes when the parent size is known
+  - [x] Resolve draw.io HTML `em` and percentage font sizes when an inline or explicit whole-label parent size is known
   - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
   - [x] Warn when a nested colour change can alter the colour of an ancestor's decoration
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
@@ -395,9 +395,10 @@ Stylesheet-dependent `revert` and unrepresentable initial family selection
 remain explicit formatting losses; quoted family names remain literal.
 
 **Relative font-size critique:** Percentages and `em` resolve against the parent
-size, not a preceding declaration on the same element. A relative size whose
-parent is only known from the whole-label style still requires a formatting
-warning, except for identity scales that preserve inheritance exactly.
+size, not a preceding declaration on the same element. Explicit whole-label
+font sizes also provide a base without introducing redundant inline runs.
+If the whole-label size is not explicitly known, non-identity scales still
+require a formatting warning.
 
 ### D10 — Save back to `.drawio`
 

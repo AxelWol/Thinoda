@@ -222,6 +222,31 @@ fn drawio_html_relative_font_sizes_use_the_parent_size() {
 }
 
 #[test]
+fn drawio_html_relative_font_sizes_use_explicit_whole_label_size() {
+    let xml = page(
+        r#"<mxCell id="a" value="&lt;span style=&quot;font-size:150%&quot;&gt;A&lt;span style=&quot;font-size:0.5em&quot;&gt;B&lt;/span&gt;&lt;/span&gt;C" style="shape=rectangle;html=1;fontSize=20;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(shape.label(), "ABC");
+    let rich = shape.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.font_size, Some(30.0));
+    assert_eq!(rich.runs[1].style.font_size, Some(15.0));
+    assert!(
+        !rich
+            .runs
+            .iter()
+            .any(|run| run.start <= 2 && run.end > 2 && run.style.font_size.is_some())
+    );
+    assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
+}
+
+#[test]
 fn drawio_html_inherited_font_properties_keep_parent_values() {
     for keyword in ["inherit", "unset"] {
         let xml = page(&format!(
