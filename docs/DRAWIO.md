@@ -302,6 +302,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
+  - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
   - [x] Warn when nested draw.io HTML decorations suppress an ancestor's propagated underline or strikethrough
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
@@ -351,6 +352,11 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
+
+**Oblique critique:** Oblique and italic can use different font faces and angles.
+The native inline model records only italic, so imports retain the existing
+approximation but report formatting loss for confirmation. Exact oblique
+rendering and source-preserving HTML remain open.
 
 **Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
 numeric weight, and numeric values other than 400 and 700 can differ visibly;

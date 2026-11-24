@@ -167,7 +167,11 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                 },
             },
             "font-style" => match lower.as_str() {
-                "italic" | "oblique" => style.italic = Some(true),
+                "italic" => style.italic = Some(true),
+                "oblique" => {
+                    style.italic = Some(true);
+                    loss = true;
+                }
                 "normal" => style.italic = Some(false),
                 _ => loss = true,
             },
