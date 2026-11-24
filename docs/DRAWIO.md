@@ -306,6 +306,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
+  - [x] Preserve semicolons in quoted or escaped CSS font-family names without consuming later declarations
   - [x] Preserve inherited draw.io HTML font and colour properties for CSS `inherit` and `unset`
   - [x] Resolve draw.io HTML `em` and percentage font sizes when an inline or explicit whole-label parent size is known
   - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
@@ -389,8 +390,10 @@ passes, invent event timing or change the host's final pointer and focus state.
 **Font-family critique:** A CSS fallback list cannot fit the native
 single-family model. Conversion selects the first family and warns that
 fallbacks were lost; if it is unavailable, the default may still differ from
-the browser's next available family. Quoted commas and CSS escapes are parsed
-as part of the family rather than as fallback separators.
+the browser's next available family. Quoted commas, semicolons and CSS escapes
+are parsed as part of the family instead of declaration or fallback separators.
+Unsupported properties still report loss, including when their values contain
+nested semicolons; later declarations remain independently applicable.
 
 **CSS inheritance critique:** `inherit` and `unset` preserve the parent value
 for inherited font and colour properties, including the whole-label default.

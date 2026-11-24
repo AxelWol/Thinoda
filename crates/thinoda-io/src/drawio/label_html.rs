@@ -147,7 +147,21 @@ fn inline_css(
     value: &str,
 ) -> bool {
     let mut loss = false;
-    for declaration in value.split(';').filter(|part| !part.trim().is_empty()) {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut declarations = cssparser::Parser::new(&mut input);
+    while !declarations.is_exhausted() {
+        let declaration = declarations.parse_until_after(cssparser::Delimiter::Semicolon, |part| {
+            let start = part.position();
+            while part.next_including_whitespace_and_comments().is_ok() {}
+            Ok::<_, cssparser::ParseError<'_, ()>>(part.slice_from(start))
+        });
+        let Ok(declaration) = declaration else {
+            loss = true;
+            continue;
+        };
+        if declaration.trim().is_empty() {
+            continue;
+        }
         let Some((name, value)) = declaration.split_once(':') else {
             loss = true;
             continue;

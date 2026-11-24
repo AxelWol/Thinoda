@@ -461,6 +461,9 @@ fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
         ("Arial, sans-serif", "Arial", true),
         ("&apos;A,B&apos;, sans-serif", "A,B", true),
         ("&apos;A,B&apos;", "A,B", false),
+        ("&apos;A;B&apos;", "A;B", false),
+        ("&apos;A;B&apos;, sans-serif", "A;B", true),
+        (r"A\;B", "A;B", false),
         ("Courier New", "Courier New", false),
         (r"Courier\20 New, serif", "Courier New", true),
     ] {
@@ -497,6 +500,41 @@ fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
             );
         }
     }
+}
+
+#[test]
+fn drawio_html_declarations_after_quoted_semicolons_are_preserved() {
+    let xml = page(
+        r#"<mxCell id="a" value="&lt;span style=&quot;font-family:&apos;A;B&apos;;font-weight:bold&quot;&gt;Text&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    let style = &shape.label_rich_text.as_ref().unwrap().runs[0].style;
+    assert_eq!(style.font_family.as_deref(), Some("A;B"));
+    assert_eq!(style.bold, Some(true));
+}
+
+#[test]
+fn drawio_html_unsupported_nested_css_does_not_consume_later_declarations() {
+    let markup =
+        r#"<span style="background:url('data:text/plain;a');;font-weight:bold">Text</span>"#;
+    let xml = page(&format!(
+        r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0]
+            .label_rich_text
+            .as_ref()
+            .unwrap()
+            .runs[0]
+            .style
+            .bold,
+        Some(true)
+    );
 }
 
 #[test]
