@@ -845,6 +845,92 @@ fn drawio_html_invalid_legacy_font_face_lists_preserve_inherited_family() {
 }
 
 #[test]
+fn drawio_html_legacy_font_size_approximates_browser_sizes_and_warns() {
+    for (size, expected) in [
+        ("1", 10.0),
+        ("2", 13.0),
+        ("3", 16.0),
+        ("4", 18.0),
+        ("5", 24.0),
+        ("6", 32.0),
+        ("7", 48.0),
+        ("0", 10.0),
+        ("8", 48.0),
+        ("+1", 18.0),
+        ("-1", 13.0),
+        ("+0", 16.0),
+        ("-9", 10.0),
+        ("+001tail", 18.0),
+        ("4.5", 18.0),
+        ("&#52;", 18.0),
+    ] {
+        let markup = format!(r#"<font size="{size}">A</font>B"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{size}"
+        );
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        let runs = &shape.label_rich_text.as_ref().unwrap().runs;
+        assert_eq!(runs.len(), 1, "{size}");
+        assert_eq!((runs[0].start, runs[0].end), (0, 1), "{size}");
+        assert_eq!(runs[0].style.font_size, Some(expected), "{size}");
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+        assert!(
+            crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .contains(&ImportWarning::Formatting)
+        );
+        let restored = import(&export(&report.workbook).unwrap()).unwrap().workbook;
+        assert_eq!(
+            shapes(&restored.sheets[0])[0].label_rich_text,
+            shape.label_rich_text
+        );
+    }
+}
+
+#[test]
+fn drawio_html_legacy_font_size_respects_css_and_invalid_values() {
+    for markup in [
+        r#"<font size="4" style="font-size:20px">A</font>"#,
+        r#"<font style="font-size:20px" size="4">A</font>"#,
+        r#"<span style="font-size:20px"><font size="4" style="font-size:inherit">A</font></span>"#,
+        r#"<span style="font-size:20px"><font size="+ 1">A</font></span>"#,
+        r#"<span style="font-size:20px"><font size="999999999999999999999">A</font></span>"#,
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{markup}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_size,
+            Some(20.0),
+            "{markup}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_unsupported_legacy_font_attributes_warn() {
     for markup in [
         r#"<font face="Arial, sans-serif">Text</font>"#,

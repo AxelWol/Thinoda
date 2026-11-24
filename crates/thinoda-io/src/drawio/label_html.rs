@@ -456,6 +456,26 @@ fn inline_css(
     loss
 }
 
+fn legacy_font_size(value: &str) -> Option<f32> {
+    let value = value.trim_start_matches([' ', '\t', '\n', '\r', '\u{000c}']);
+    let (relative, digits) = match value.as_bytes().first() {
+        Some(b'+') => (1_i64, &value[1..]),
+        Some(b'-') => (-1_i64, &value[1..]),
+        _ => (0_i64, value),
+    };
+    let end = digits.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 {
+        return None;
+    }
+    let number = digits[..end].parse::<i32>().ok()? as i64;
+    let size = if relative == 0 {
+        number
+    } else {
+        3 + relative * number
+    };
+    Some([10.0, 13.0, 16.0, 18.0, 24.0, 32.0, 48.0][(size.clamp(1, 7) - 1) as usize])
+}
+
 fn legacy_font_color(value: &str) -> Option<thinoda_core::Color> {
     if value.is_empty() {
         return None;
@@ -803,6 +823,14 @@ fn parse_html_with_limit(
                             loss = true;
                         }
                     }
+                    if name == "font"
+                        && let Some(size) = el.get_attribute("size")
+                    {
+                        if let Some(size) = legacy_font_size(&decode_entities(&size)) {
+                            rich.style.font_size = Some(size);
+                        }
+                        loss = true;
+                    }
                     let mut inherit_underline = false;
                     let mut inherit_strike = false;
                     for attribute in el.attributes() {
@@ -822,7 +850,7 @@ fn parse_html_with_limit(
                                 inherit_strike = true;
                             }
                             "data-thinoda-break" if marker => {}
-                            "color" | "face" if name == "font" => {}
+                            "color" | "face" | "size" if name == "font" => {}
                             _ => loss = true,
                         }
                     }
