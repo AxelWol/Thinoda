@@ -179,7 +179,7 @@ fn drawio_html_relative_font_sizes_use_the_parent_size() {
         ("20px", "0.5em", Some(10.0), false),
         ("20px", "100%", Some(20.0), false),
         ("", "1em", None, false),
-        ("", "150%", Some(12.0), true),
+        ("", "150%", Some(18.0), false),
         ("20px", "2000%", Some(12.0), true),
         ("20px", "-1em", Some(12.0), true),
     ] {
@@ -219,6 +219,59 @@ fn drawio_html_relative_font_sizes_use_the_parent_size() {
             );
         }
     }
+}
+
+#[test]
+fn drawio_html_relative_font_size_uses_vertex_default_for_cards() {
+    for (style, kind) in [
+        ("shape=note;html=1;", CardKind::Sticky),
+        ("shape=rectangle;thinodaCard=text;html=1;", CardKind::Text),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;span style=&quot;font-size:150%&quot;&gt;Text&lt;/span&gt;" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        let topic = report.workbook.sheets[0]
+            .topics
+            .values()
+            .find(|topic| topic.title == "Text")
+            .unwrap();
+        assert_eq!(topic.card.unwrap().kind, kind);
+        assert_eq!(topic.inline_text.runs[0].style.font_size, Some(18.0));
+    }
+}
+
+#[test]
+fn drawio_html_relative_font_size_does_not_guess_named_or_edge_defaults() {
+    let markup = esc(r#"<span style="font-size:150%">Text</span>"#);
+    let vertex = page(&format!(
+        r#"<mxCell id="a" value="{markup}" style="customStyle;shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&vertex);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(
+        shapes(&report.workbook.sheets[0])[0]
+            .label_rich_text
+            .is_none()
+    );
+
+    let edge = page(&format!(
+        r#"<mxCell id="edge" value="{markup}" style="html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{markup}" style="edgeLabel;html=1;" vertex="1" parent="edge"><mxGeometry relative="1" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&edge);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert!(object.label_rich_text.is_none());
+    assert!(
+        connectors(&report.workbook.sheets[0])[0].extra_labels[0]
+            .rich_text
+            .is_none()
+    );
 }
 
 #[test]

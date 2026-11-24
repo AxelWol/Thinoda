@@ -2970,7 +2970,11 @@ impl<'a> PageImport<'a> {
         truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings)
     }
 
-    fn rich_label(&mut self, cell: &Cell) -> (String, Option<thinoda_core::InlineText>) {
+    fn rich_label(
+        &mut self,
+        cell: &Cell,
+        regular_vertex: bool,
+    ) -> (String, Option<thinoda_core::InlineText>) {
         if !cell.style.flag("html") {
             return (self.label(cell), None);
         }
@@ -2983,8 +2987,15 @@ impl<'a> PageImport<'a> {
                     .contains(size)
             })
             .or_else(|| {
-                (cell.style.suppress_defaults && cell.style.get("fontSize").is_none())
-                    .then_some(DRAWIO_UNSTYLED_FONT_SIZE)
+                if cell.style.get("fontSize").is_some() {
+                    None
+                } else if cell.style.suppress_defaults {
+                    Some(DRAWIO_UNSTYLED_FONT_SIZE)
+                } else if regular_vertex && cell.style.tokens.is_empty() {
+                    Some(CANVAS_LABEL_FONT_SIZE)
+                } else {
+                    None
+                }
             });
         let (text, rich) = parse_rich_html(&cell.value, self.warnings, base_font_size);
         let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
@@ -4301,7 +4312,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let (label, rich_label) =
             if !matches!(kind, Kind::Line | Kind::Card(CardKind::Image) | Kind::Image) {
-                self.rich_label(cell)
+                self.rich_label(cell, true)
             } else {
                 (self.label(cell), None)
             };
@@ -5054,7 +5065,7 @@ impl<'a> PageImport<'a> {
         {
             self.warn(ImportWarning::Formatting);
         }
-        let (mut label, mut rich_label) = self.rich_label(cell);
+        let (mut label, mut rich_label) = self.rich_label(cell, false);
         let label_style_loss = !label.is_empty() && style.label_style_loss(true, false);
         let label_placement = self.edge_label_placement(&cell.geometry);
         let mut extra_labels = Vec::new();
@@ -5071,7 +5082,7 @@ impl<'a> PageImport<'a> {
                 {
                     self.warn(ImportWarning::Other);
                 }
-                let (text, rich_text) = self.rich_label(child);
+                let (text, rich_text) = self.rich_label(child, false);
                 if text.is_empty()
                     && rich_text
                         .as_ref()

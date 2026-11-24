@@ -397,9 +397,10 @@ remain explicit formatting losses; quoted family names remain literal.
 
 **Relative font-size critique:** Percentages and `em` resolve against the parent
 size, not a preceding declaration on the same element. Explicit whole-label
-font sizes and draw.io's 11px fallback when the stylesheet is suppressed
-provide a base without introducing redundant inline runs. Other unknown
-whole-label sizes still require a formatting warning for non-identity scales.
+font sizes, the default 12px for ordinary unstyled vertices and draw.io's 11px
+fallback when the stylesheet is suppressed provide a base without introducing
+redundant inline runs. Named styles and connector-label defaults are not
+assumed; unknown bases still require a warning for non-identity scales.
 
 ### D10 — Save back to `.drawio`
 

@@ -746,6 +746,18 @@ mod tests {
     }
 
     #[test]
+    fn relative_size_with_unknown_parent_warns_without_guessing() {
+        let mut warnings = BTreeSet::new();
+        let (_, rich) = parse_rich_html(
+            r#"<span style="font-size:150%">Text</span>"#,
+            &mut warnings,
+            None,
+        );
+        assert!(rich.is_none());
+        assert!(warnings.contains(&ImportWarning::Formatting));
+    }
+
+    #[test]
     fn rich_html_keeps_lists_and_warns_for_inert_unsupported_content() {
         let mut warnings = BTreeSet::new();
         let (text, rich) = parse_rich_html(
