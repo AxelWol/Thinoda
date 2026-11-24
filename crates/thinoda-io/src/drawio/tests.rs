@@ -762,6 +762,89 @@ fn drawio_html_legacy_font_face_cannot_inject_css_declarations() {
 }
 
 #[test]
+fn drawio_html_legacy_font_face_lists_warn_and_select_first_family() {
+    for (face, expected) in [
+        ("Arial, sans-serif", "Arial"),
+        ("'A,B', 'Fallback; Font'", "A,B"),
+        ("Arial, '   '", "Arial"),
+        ("Arial, ''", "Arial"),
+        (r"A\;B, serif", "A;B"),
+    ] {
+        let markup = format!(r#"<font face="{face}">Text</font>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{face}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some(expected),
+            "{face}"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+        assert!(
+            crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .contains(&ImportWarning::Formatting)
+        );
+    }
+}
+
+#[test]
+fn drawio_html_invalid_legacy_font_face_lists_preserve_inherited_family() {
+    for face in [
+        "Arial,",
+        "Arial,,serif",
+        "Arial, inherit",
+        "Arial, serif Arial",
+        "inherit Arial",
+        "serif Arial",
+        "-webkit-body Arial",
+    ] {
+        let markup = format!(
+            r#"<span style="font-family:Courier New"><font face="{face}">Text</font></span>"#
+        );
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{face}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some("Courier New"),
+            "{face}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_unsupported_legacy_font_attributes_warn() {
     for markup in [
         r#"<font face="Arial, sans-serif">Text</font>"#,

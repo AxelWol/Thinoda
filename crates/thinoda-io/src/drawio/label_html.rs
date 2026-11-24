@@ -156,9 +156,37 @@ fn first_css_font_family(value: &str) -> CssFontFamily {
         valid: true,
         has_fallback: false,
     };
+    let mut first_ident_reserved = false;
+    let mut ident_count = 0usize;
     while !parser.is_exhausted() {
         match parser.next() {
             Ok(cssparser::Token::Ident(part)) if !family.quoted => {
+                if ident_count == 0 {
+                    first_ident_reserved = matches!(
+                        part.to_ascii_lowercase().as_str(),
+                        "inherit"
+                            | "unset"
+                            | "initial"
+                            | "revert"
+                            | "revert-layer"
+                            | "default"
+                            | "serif"
+                            | "sans-serif"
+                            | "monospace"
+                            | "cursive"
+                            | "fantasy"
+                            | "system-ui"
+                            | "-webkit-body"
+                            | "ui-serif"
+                            | "ui-sans-serif"
+                            | "ui-monospace"
+                            | "ui-rounded"
+                            | "math"
+                            | "emoji"
+                            | "fangsong"
+                    );
+                }
+                ident_count += 1;
                 if !family.name.is_empty() {
                     family.name.push(' ');
                 }
@@ -180,7 +208,58 @@ fn first_css_font_family(value: &str) -> CssFontFamily {
             }
         }
     }
+    family.valid &= !(first_ident_reserved && ident_count > 1);
     family
+}
+
+fn legacy_font_face(value: &str) -> Option<(String, bool)> {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut first = None;
+    let mut has_fallback = false;
+    loop {
+        let part = parser
+            .parse_until_before(cssparser::Delimiter::Comma, |part| {
+                let start = part.position();
+                while part.next_including_whitespace_and_comments().is_ok() {}
+                Ok::<_, cssparser::ParseError<'_, ()>>(part.slice_from(start))
+            })
+            .ok()?;
+        let parsed = first_css_font_family(part);
+        let family = if parsed.quoted {
+            parsed.name.as_str()
+        } else {
+            parsed.name.trim()
+        };
+        if !parsed.valid
+            || parsed.has_fallback
+            || (!parsed.quoted && family.is_empty())
+            || (!parsed.quoted
+                && matches!(
+                    family.to_ascii_lowercase().as_str(),
+                    "inherit" | "unset" | "initial" | "revert" | "revert-layer" | "default"
+                ))
+        {
+            return None;
+        }
+        if first.is_none() {
+            if family.trim().is_empty()
+                || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
+                || family.chars().any(char::is_control)
+            {
+                return None;
+            }
+            first = Some(family.to_owned());
+        }
+        if parser.is_exhausted() {
+            return first.map(|first| (first, has_fallback));
+        }
+        parser.expect_comma().ok()?;
+        if parser.is_exhausted() {
+            return None;
+        }
+        has_fallback = true;
+    }
 }
 
 fn inline_css(
@@ -715,29 +794,11 @@ fn parse_html_with_limit(
                         && let Some(face) = el.get_attribute("face")
                     {
                         loss |= unresolved_entity(&face);
-                        let parsed = first_css_font_family(&decode_entities(&face));
-                        let family = if parsed.quoted {
-                            parsed.name.as_str()
-                        } else {
-                            parsed.name.trim()
-                        };
-                        if parsed.valid
-                            && !parsed.has_fallback
-                            && !family.trim().is_empty()
-                            && family.len() <= MAX_INLINE_FONT_FAMILY_BYTES
-                            && !family.chars().any(char::is_control)
-                            && (parsed.quoted
-                                || !matches!(
-                                    family.to_ascii_lowercase().as_str(),
-                                    "inherit"
-                                        | "unset"
-                                        | "initial"
-                                        | "revert"
-                                        | "revert-layer"
-                                        | "default"
-                                ))
+                        if let Some((family, has_fallback)) =
+                            legacy_font_face(&decode_entities(&face))
                         {
-                            rich.style.font_family = Some(family.to_owned());
+                            rich.style.font_family = Some(family);
+                            loss |= has_fallback;
                         } else {
                             loss = true;
                         }
