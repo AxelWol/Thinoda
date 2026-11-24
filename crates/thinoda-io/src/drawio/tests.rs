@@ -603,6 +603,7 @@ fn drawio_html_legacy_font_named_and_short_hex_colors() {
         (" ReBeccAPurple ", Color::rgb(102, 51, 153)),
         ("#abc", Color::rgb(170, 187, 204)),
         (" #ABC ", Color::rgb(170, 187, 204)),
+        ("&#35;ABC", Color::rgb(170, 187, 204)),
     ] {
         let markup = format!(r#"<font color="{color}">Text</font>"#);
         let xml = page(&format!(
@@ -627,13 +628,68 @@ fn drawio_html_legacy_font_named_and_short_hex_colors() {
 }
 
 #[test]
+fn drawio_html_legacy_font_colors_follow_html_fallback_rules() {
+    for (color, expected) in [
+        (" ", Color::rgb(0, 0, 0)),
+        ("currentColor", Color::rgb(192, 224, 0)),
+        ("chucknorris", Color::rgb(192, 0, 0)),
+        ("none", Color::rgb(0, 14, 0)),
+        ("#xyzxyz", Color::rgb(0, 0, 0)),
+        ("#abcd", Color::rgb(171, 205, 0)),
+        ("#", Color::rgb(0, 0, 0)),
+        ("639", Color::rgb(6, 3, 9)),
+        ("#000001000002000003", Color::rgb(1, 2, 3)),
+        ("🌍a", Color::rgb(0, 0, 10)),
+    ] {
+        let markup = format!(r#"<font color="{color}">Text</font>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{color}: {:?}", report.warnings);
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .color,
+            Some(expected),
+            "{color}"
+        );
+    }
+
+    for color in ["", "transparent", " TRANSPARENT "] {
+        let markup =
+            format!(r##"<span style="color:#010203"><font color="{color}">Text</font></span>"##);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{color}: {:?}", report.warnings);
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .color,
+            Some(Color::rgb(1, 2, 3)),
+            "{color}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_unsupported_legacy_font_attributes_warn() {
     for markup in [
-        r##"<font color="#xyzxyz">Text</font>"##,
-        r#"<font color="transparent">Text</font>"#,
-        r#"<font color="currentColor">Text</font>"#,
         r#"<font face="Arial">Text</font>"#,
         r#"<font size="4">Text</font>"#,
+        r#"<font color="&#35ABC">Text</font>"#,
     ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,

@@ -357,6 +357,79 @@ fn inline_css(
     loss
 }
 
+fn legacy_font_color(value: &str) -> Option<thinoda_core::Color> {
+    if value.is_empty() {
+        return None;
+    }
+    let value = value.trim_matches(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '));
+    if value.eq_ignore_ascii_case("transparent") {
+        return None;
+    }
+
+    let bytes = value.as_bytes();
+    let is_hex = matches!(bytes.len(), 4 | 7)
+        && bytes[0] == b'#'
+        && bytes[1..].iter().all(u8::is_ascii_hexdigit);
+    let is_name = !bytes.is_empty() && bytes.iter().all(u8::is_ascii_alphabetic);
+    if let Some(color) = (is_hex || is_name)
+        .then(|| super::parse_style_color(value))
+        .flatten()
+        .filter(|parsed| !parsed.approximate)
+        .and_then(|parsed| parsed.color)
+        .filter(|color| color.a == 255)
+    {
+        return Some(color);
+    }
+
+    // HTML legacy colours use a bounded, non-CSS hexadecimal fallback.
+    let mut digits = Vec::with_capacity(129);
+    for ch in value.chars() {
+        if digits.len() == 128 {
+            break;
+        }
+        if ch > '\u{ffff}' {
+            digits.push(b'0');
+            if digits.len() < 128 {
+                digits.push(b'0');
+            }
+        } else {
+            digits.push(if ch.is_ascii_hexdigit() {
+                ch as u8
+            } else {
+                b'0'
+            });
+        }
+    }
+    if value.starts_with('#') {
+        digits.remove(0);
+    }
+    if digits.is_empty() {
+        digits.resize(3, b'0');
+    }
+    while digits.len() % 3 != 0 {
+        digits.push(b'0');
+    }
+    let length = digits.len() / 3;
+    let skip = length.saturating_sub(8);
+    let mut red = &digits[skip..length];
+    let mut green = &digits[length + skip..2 * length];
+    let mut blue = &digits[2 * length + skip..];
+    while red.len() > 2 && red[0] == b'0' && green[0] == b'0' && blue[0] == b'0' {
+        red = &red[1..];
+        green = &green[1..];
+        blue = &blue[1..];
+    }
+    let component = |value: &[u8]| {
+        let value = &value[..value.len().min(2)];
+        u8::from_str_radix(std::str::from_utf8(value).ok()?, 16).ok()
+    };
+    Some(thinoda_core::Color::rgb(
+        component(red)?,
+        component(green)?,
+        component(blue)?,
+    ))
+}
+
 fn collapsible_whitespace(text: &str, mut at_line_start: bool, mut follows_space: bool) -> bool {
     for byte in text.bytes() {
         match byte {
@@ -613,25 +686,9 @@ fn parse_html_with_limit(
                     if name == "font"
                         && let Some(color) = el.get_attribute("color")
                     {
-                        let color =
-                            color.trim_matches(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '));
-                        let bytes = color.as_bytes();
-                        let is_hex = matches!(bytes.len(), 4 | 7)
-                            && bytes[0] == b'#'
-                            && bytes[1..].iter().all(u8::is_ascii_hexdigit);
-                        let is_name =
-                            !bytes.is_empty() && bytes.iter().all(u8::is_ascii_alphabetic);
-                        if let Some(parsed) = (is_hex || is_name)
-                            .then(|| super::parse_style_color(color))
-                            .flatten()
-                            .filter(|parsed| {
-                                !parsed.approximate
-                                    && parsed.color.is_some_and(|color| color.a == 255)
-                            })
-                        {
-                            rich.style.color = parsed.color;
-                        } else {
-                            loss = true;
+                        loss |= unresolved_entity(&color);
+                        if let Some(color) = legacy_font_color(&decode_entities(&color)) {
+                            rich.style.color = Some(color);
                         }
                     }
                     let mut inherit_underline = false;
@@ -772,6 +829,18 @@ fn parse_html_with_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_font_color_truncates_after_supplementary_character_replacement() {
+        assert_eq!(
+            legacy_font_color(&"f".repeat(129)),
+            Some(thinoda_core::Color::rgb(255, 255, 255))
+        );
+        assert_eq!(
+            legacy_font_color(&format!("{}🌍a", "0".repeat(127))),
+            Some(thinoda_core::Color::rgb(0, 0, 0))
+        );
+    }
 
     #[test]
     fn rich_html_preserves_nested_styles_and_unicode_scalar_ranges() {
