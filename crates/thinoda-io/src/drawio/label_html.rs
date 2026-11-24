@@ -140,9 +140,150 @@ impl LabelText {
     }
 }
 
-fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
+struct CssFontFamily {
+    name: String,
+    quoted: bool,
+    valid: bool,
+    has_fallback: bool,
+}
+
+fn first_css_font_family(value: &str) -> CssFontFamily {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut family = CssFontFamily {
+        name: String::new(),
+        quoted: false,
+        valid: true,
+        has_fallback: false,
+    };
+    let mut first_ident_reserved = false;
+    let mut ident_count = 0usize;
+    while !parser.is_exhausted() {
+        match parser.next() {
+            Ok(cssparser::Token::Ident(part)) if !family.quoted => {
+                if ident_count == 0 {
+                    first_ident_reserved = matches!(
+                        part.to_ascii_lowercase().as_str(),
+                        "inherit"
+                            | "unset"
+                            | "initial"
+                            | "revert"
+                            | "revert-layer"
+                            | "default"
+                            | "serif"
+                            | "sans-serif"
+                            | "monospace"
+                            | "cursive"
+                            | "fantasy"
+                            | "system-ui"
+                            | "-webkit-body"
+                            | "ui-serif"
+                            | "ui-sans-serif"
+                            | "ui-monospace"
+                            | "ui-rounded"
+                            | "math"
+                            | "emoji"
+                            | "fangsong"
+                    );
+                }
+                ident_count += 1;
+                if !family.name.is_empty() {
+                    family.name.push(' ');
+                }
+                family.name.push_str(part);
+            }
+            Ok(cssparser::Token::QuotedString(part))
+                if family.name.is_empty() && !family.quoted =>
+            {
+                family.name.push_str(part);
+                family.quoted = true;
+            }
+            Ok(cssparser::Token::Comma) if !family.name.is_empty() => {
+                family.has_fallback = true;
+                break;
+            }
+            _ => {
+                family.valid = false;
+                break;
+            }
+        }
+    }
+    family.valid &= !(first_ident_reserved && ident_count > 1);
+    family
+}
+
+fn legacy_font_face(value: &str) -> Option<(String, bool)> {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut first = None;
+    let mut has_fallback = false;
+    loop {
+        let part = parser
+            .parse_until_before(cssparser::Delimiter::Comma, |part| {
+                let start = part.position();
+                while part.next_including_whitespace_and_comments().is_ok() {}
+                Ok::<_, cssparser::ParseError<'_, ()>>(part.slice_from(start))
+            })
+            .ok()?;
+        let parsed = first_css_font_family(part);
+        let family = if parsed.quoted {
+            parsed.name.as_str()
+        } else {
+            parsed.name.trim()
+        };
+        if !parsed.valid
+            || parsed.has_fallback
+            || (!parsed.quoted && family.is_empty())
+            || (!parsed.quoted
+                && matches!(
+                    family.to_ascii_lowercase().as_str(),
+                    "inherit" | "unset" | "initial" | "revert" | "revert-layer" | "default"
+                ))
+        {
+            return None;
+        }
+        if first.is_none() {
+            if family.trim().is_empty()
+                || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
+                || family.chars().any(char::is_control)
+            {
+                return None;
+            }
+            first = Some(family.to_owned());
+        }
+        if parser.is_exhausted() {
+            return first.map(|first| (first, has_fallback));
+        }
+        parser.expect_comma().ok()?;
+        if parser.is_exhausted() {
+            return None;
+        }
+        has_fallback = true;
+    }
+}
+
+fn inline_css(
+    style: &mut InlineTextStyle,
+    inherited: &InlineTextStyle,
+    base_font_size: Option<f32>,
+    value: &str,
+) -> bool {
     let mut loss = false;
-    for declaration in value.split(';').filter(|part| !part.trim().is_empty()) {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut declarations = cssparser::Parser::new(&mut input);
+    while !declarations.is_exhausted() {
+        let declaration = declarations.parse_until_after(cssparser::Delimiter::Semicolon, |part| {
+            let start = part.position();
+            while part.next_including_whitespace_and_comments().is_ok() {}
+            Ok::<_, cssparser::ParseError<'_, ()>>(part.slice_from(start))
+        });
+        let Ok(declaration) = declaration else {
+            loss = true;
+            continue;
+        };
+        if declaration.trim().is_empty() {
+            continue;
+        }
         let Some((name, value)) = declaration.split_once(':') else {
             loss = true;
             continue;
@@ -150,6 +291,21 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
         let lower = value.to_ascii_lowercase();
+        if matches!(
+            name.as_str(),
+            "font-weight" | "font-style" | "font-family" | "font-size" | "color"
+        ) && matches!(lower.as_str(), "inherit" | "unset")
+        {
+            match name.as_str() {
+                "font-weight" => style.bold = inherited.bold,
+                "font-style" => style.italic = inherited.italic,
+                "font-family" => style.font_family.clone_from(&inherited.font_family),
+                "font-size" => style.font_size = inherited.font_size,
+                "color" => style.color = inherited.color,
+                _ => unreachable!(),
+            }
+            continue;
+        }
         match name.as_str() {
             "font-weight" => match lower.as_str() {
                 "bold" => style.bold = Some(true),
@@ -158,16 +314,30 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                     style.bold = Some(lower == "bolder");
                     loss = true;
                 }
-                _ => match lower.parse::<u16>() {
-                    Ok(weight) if (100..=900).contains(&weight) => {
-                        style.bold = Some(weight >= 600);
-                        loss |= weight != 400 && weight != 700;
+                _ => {
+                    let mut input = cssparser::ParserInput::new(&lower);
+                    let mut parser = cssparser::Parser::new(&mut input);
+                    let is_number = matches!(parser.next(), Ok(cssparser::Token::Number { .. }))
+                        && parser.is_exhausted();
+                    match lower.parse::<f64>() {
+                        Ok(weight)
+                            if is_number
+                                && weight.is_finite()
+                                && (1.0..=1000.0).contains(&weight) =>
+                        {
+                            style.bold = Some(weight >= 600.0);
+                            loss |= weight != 400.0 && weight != 700.0;
+                        }
+                        _ => loss = true,
                     }
-                    _ => loss = true,
-                },
+                }
             },
             "font-style" => match lower.as_str() {
-                "italic" | "oblique" => style.italic = Some(true),
+                "italic" => style.italic = Some(true),
+                "oblique" => {
+                    style.italic = Some(true);
+                    loss = true;
+                }
                 "normal" => style.italic = Some(false),
                 _ => loss = true,
             },
@@ -190,17 +360,35 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                 }
             }
             "font-family" => {
-                let mut input = cssparser::ParserInput::new(value);
-                let mut parser = cssparser::Parser::new(&mut input);
-                let quoted = parser
-                    .try_parse(|parser| parser.expect_string().map(|name| name.to_string()))
-                    .ok()
-                    .filter(|_| parser.is_exhausted());
-                loss |= quoted.is_none() && value.contains(',');
-                let family = quoted.as_deref().unwrap_or(value).trim();
-                if family.is_empty()
+                let parsed = first_css_font_family(value);
+                loss |= parsed.has_fallback;
+                let family = if parsed.quoted {
+                    parsed.name.as_str()
+                } else {
+                    parsed.name.trim()
+                };
+                if parsed.valid
+                    && !parsed.quoted
+                    && !parsed.has_fallback
+                    && matches!(family.to_ascii_lowercase().as_str(), "inherit" | "unset")
+                {
+                    style.font_family.clone_from(&inherited.font_family);
+                    continue;
+                }
+                if parsed.valid
+                    && !parsed.quoted
+                    && matches!(
+                        family.to_ascii_lowercase().as_str(),
+                        "inherit" | "unset" | "initial" | "revert" | "revert-layer"
+                    )
+                {
+                    loss = true;
+                    continue;
+                }
+                if family.trim().is_empty()
                     || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
                     || family.chars().any(char::is_control)
+                    || !parsed.valid
                 {
                     loss = true;
                 } else {
@@ -208,6 +396,19 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                 }
             }
             "font-size" => {
+                let relative = lower
+                    .strip_suffix("em")
+                    .and_then(|value| value.trim().parse::<f32>().ok())
+                    .or_else(|| {
+                        lower
+                            .strip_suffix('%')
+                            .and_then(|value| value.trim().parse::<f32>().ok())
+                            .map(|value| value / 100.0)
+                    });
+                if relative == Some(1.0) {
+                    style.font_size = inherited.font_size;
+                    continue;
+                }
                 let size = lower
                     .strip_suffix("px")
                     .and_then(|value| value.trim().parse::<f32>().ok())
@@ -216,6 +417,14 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                             .strip_suffix("pt")
                             .and_then(|value| value.trim().parse::<f32>().ok())
                             .map(|value| value * 4.0 / 3.0)
+                    })
+                    .or_else(|| {
+                        relative.and_then(|scale| {
+                            inherited
+                                .font_size
+                                .or(base_font_size)
+                                .map(|size| size * scale)
+                        })
                     });
                 match size {
                     Some(size)
@@ -245,6 +454,79 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
         }
     }
     loss
+}
+
+fn legacy_font_color(value: &str) -> Option<thinoda_core::Color> {
+    if value.is_empty() {
+        return None;
+    }
+    let value = value.trim_matches(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '));
+    if value.eq_ignore_ascii_case("transparent") {
+        return None;
+    }
+
+    let bytes = value.as_bytes();
+    let is_hex = matches!(bytes.len(), 4 | 7)
+        && bytes[0] == b'#'
+        && bytes[1..].iter().all(u8::is_ascii_hexdigit);
+    let is_name = !bytes.is_empty() && bytes.iter().all(u8::is_ascii_alphabetic);
+    if let Some(color) = (is_hex || is_name)
+        .then(|| super::parse_style_color(value))
+        .flatten()
+        .filter(|parsed| !parsed.approximate)
+        .and_then(|parsed| parsed.color)
+        .filter(|color| color.a == 255)
+    {
+        return Some(color);
+    }
+
+    // HTML legacy colours use a bounded, non-CSS hexadecimal fallback.
+    let mut digits = Vec::with_capacity(129);
+    for ch in value.chars() {
+        if digits.len() == 128 {
+            break;
+        }
+        if ch > '\u{ffff}' {
+            digits.push(b'0');
+            if digits.len() < 128 {
+                digits.push(b'0');
+            }
+        } else {
+            digits.push(if ch.is_ascii_hexdigit() {
+                ch as u8
+            } else {
+                b'0'
+            });
+        }
+    }
+    if value.starts_with('#') {
+        digits.remove(0);
+    }
+    if digits.is_empty() {
+        digits.resize(3, b'0');
+    }
+    while digits.len() % 3 != 0 {
+        digits.push(b'0');
+    }
+    let length = digits.len() / 3;
+    let skip = length.saturating_sub(8);
+    let mut red = &digits[skip..length];
+    let mut green = &digits[length + skip..2 * length];
+    let mut blue = &digits[2 * length + skip..];
+    while red.len() > 2 && red[0] == b'0' && green[0] == b'0' && blue[0] == b'0' {
+        red = &red[1..];
+        green = &green[1..];
+        blue = &blue[1..];
+    }
+    let component = |value: &[u8]| {
+        let value = &value[..value.len().min(2)];
+        u8::from_str_radix(std::str::from_utf8(value).ok()?, 16).ok()
+    };
+    Some(thinoda_core::Color::rgb(
+        component(red)?,
+        component(green)?,
+        component(blue)?,
+    ))
 }
 
 fn collapsible_whitespace(text: &str, mut at_line_start: bool, mut follows_space: bool) -> bool {
@@ -388,8 +670,9 @@ pub(super) fn strip_html(text: &str, warnings: &mut BTreeSet<ImportWarning>) -> 
 pub(super) fn parse_rich_html(
     text: &str,
     warnings: &mut BTreeSet<ImportWarning>,
+    base_font_size: Option<f32>,
 ) -> (String, Option<InlineText>) {
-    parse_html_with_limit(text, warnings, MAX_BYTES, true)
+    parse_html_with_limit(text, warnings, MAX_BYTES, true, base_font_size)
 }
 
 fn strip_html_with_limit(
@@ -397,7 +680,7 @@ fn strip_html_with_limit(
     warnings: &mut BTreeSet<ImportWarning>,
     memory_limit: usize,
 ) -> String {
-    parse_html_with_limit(text, warnings, memory_limit, false).0
+    parse_html_with_limit(text, warnings, memory_limit, false, None).0
 }
 
 fn parse_html_with_limit(
@@ -405,6 +688,7 @@ fn parse_html_with_limit(
     warnings: &mut BTreeSet<ImportWarning>,
     memory_limit: usize,
     rich: bool,
+    base_font_size: Option<f32>,
 ) -> (String, Option<InlineText>) {
     if !text.contains('<') {
         let decoded = decode_entities(text);
@@ -469,10 +753,12 @@ fn parse_html_with_limit(
                     && el.get_attribute("data-thinoda-break").as_deref() == Some("1")
                     && state.rich.is_some();
                 if let Some(rich) = &mut state.rich {
-                    previous_style = Some(rich.style.clone());
+                    let inherited_style = rich.style.clone();
+                    previous_style = Some(inherited_style.clone());
                     previous_lists = rich.lists.len();
                     let inherited_underline = rich.style.underline;
                     let inherited_strike = rich.style.strikethrough;
+                    let inherited_color = rich.style.color;
                     let mut loss = false;
                     match name.as_str() {
                         "b" | "strong" => rich.style.bold = Some(true),
@@ -493,14 +779,42 @@ fn parse_html_with_limit(
                             rich.pending_item = rich.lists.last().copied();
                             loss |= rich.pending_item.is_none();
                         }
-                        "div" | "span" | "p" => {}
+                        "div" | "span" | "p" | "font" => {}
                         _ => loss = true,
+                    }
+                    if name == "font"
+                        && let Some(color) = el.get_attribute("color")
+                    {
+                        loss |= unresolved_entity(&color);
+                        if let Some(color) = legacy_font_color(&decode_entities(&color)) {
+                            rich.style.color = Some(color);
+                        }
+                    }
+                    if name == "font"
+                        && let Some(face) = el.get_attribute("face")
+                    {
+                        loss |= unresolved_entity(&face);
+                        if let Some((family, has_fallback)) =
+                            legacy_font_face(&decode_entities(&face))
+                        {
+                            rich.style.font_family = Some(family);
+                            loss |= has_fallback;
+                        } else {
+                            loss = true;
+                        }
                     }
                     let mut inherit_underline = false;
                     let mut inherit_strike = false;
                     for attribute in el.attributes() {
                         match attribute.name().to_ascii_lowercase().as_str() {
-                            "style" => loss |= inline_css(&mut rich.style, &attribute.value()),
+                            "style" => {
+                                loss |= inline_css(
+                                    &mut rich.style,
+                                    &inherited_style,
+                                    base_font_size,
+                                    &attribute.value(),
+                                );
+                            }
                             "data-thinoda-underline" if attribute.value() == "inherit" => {
                                 inherit_underline = true;
                             }
@@ -508,6 +822,7 @@ fn parse_html_with_limit(
                                 inherit_strike = true;
                             }
                             "data-thinoda-break" if marker => {}
+                            "color" | "face" if name == "font" => {}
                             _ => loss = true,
                         }
                     }
@@ -516,6 +831,14 @@ fn parse_html_with_limit(
                     }
                     if inherit_strike {
                         rich.style.strikethrough = inherited_strike;
+                    }
+                    loss |= (inherited_underline == Some(true) || inherited_strike == Some(true))
+                        && rich.style.color != inherited_color;
+                    if inherited_underline == Some(true) {
+                        rich.style.underline = Some(true);
+                    }
+                    if inherited_strike == Some(true) {
+                        rich.style.strikethrough = Some(true);
                     }
                     state.formatting_loss |= loss;
                 } else if !el.attributes().is_empty() || !matches!(name.as_str(), "div" | "span") {
@@ -620,11 +943,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_font_color_truncates_after_supplementary_character_replacement() {
+        assert_eq!(
+            legacy_font_color(&"f".repeat(129)),
+            Some(thinoda_core::Color::rgb(255, 255, 255))
+        );
+        assert_eq!(
+            legacy_font_color(&format!("{}🌍a", "0".repeat(127))),
+            Some(thinoda_core::Color::rgb(0, 0, 0))
+        );
+    }
+
+    #[test]
     fn rich_html_preserves_nested_styles_and_unicode_scalar_ranges() {
         let mut warnings = BTreeSet::new();
         let (text, rich) = parse_rich_html(
             r#"<b>A<span style="font-style:italic;color:#ff0000">🙂</span>B</b>"#,
             &mut warnings,
+            None,
         );
         assert_eq!(text, "A🙂B");
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -640,11 +976,24 @@ mod tests {
     }
 
     #[test]
+    fn relative_size_with_unknown_parent_warns_without_guessing() {
+        let mut warnings = BTreeSet::new();
+        let (_, rich) = parse_rich_html(
+            r#"<span style="font-size:150%">Text</span>"#,
+            &mut warnings,
+            None,
+        );
+        assert!(rich.is_none());
+        assert!(warnings.contains(&ImportWarning::Formatting));
+    }
+
+    #[test]
     fn rich_html_keeps_lists_and_warns_for_inert_unsupported_content() {
         let mut warnings = BTreeSet::new();
         let (text, rich) = parse_rich_html(
             "<ul><li>one</li><li><sup>two</sup></li></ul>",
             &mut warnings,
+            None,
         );
         assert_eq!(text, "one\ntwo");
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -671,6 +1020,7 @@ mod tests {
         let (text, rich) = parse_rich_html(
             r#"<span style="font-weight:bold;background-image:url(https://example.invalid/x)">ok</span><script>hidden</script>"#,
             &mut warnings,
+            None,
         );
         assert_eq!(text, "ok");
         assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));

@@ -60,6 +60,7 @@ const MAX_PAGES: usize = 1_000;
 /// Nesting depth of cells (parent references), independent of XML depth.
 const MAX_CELL_DEPTH: usize = 256;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const DRAWIO_UNSTYLED_FONT_SIZE: f32 = 11.0;
 
 /// Ownership table, revision 1 (architecture §3.1.1): style keys that first-class
 /// fields represent or that import consumes. They are never kept as passthrough,
@@ -1265,18 +1266,20 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
-    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
-        // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
-        // These built-in vertex styles leave the default label settings unchanged.
-        if !self.tokens.is_empty()
-            && (source_is_edge
-                || self.tokens.len() > 1
-                || self.get("shape").is_some()
-                || !matches!(
+    fn known_vertex_label_defaults(&self) -> bool {
+        self.tokens.is_empty()
+            || (self.tokens.len() == 1
+                && self.get("shape").is_none()
+                && matches!(
                     self.tokens.first().map(String::as_str),
                     Some("ellipse" | "rhombus" | "triangle")
                 ))
-        {
+    }
+
+    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
+        // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
+        // These built-in vertex styles leave the default label settings unchanged.
+        if !self.tokens.is_empty() && (source_is_edge || !self.known_vertex_label_defaults()) {
             return true;
         }
         match self.get("fontSize") {
@@ -2577,7 +2580,7 @@ fn label_text_style(style: &Style) -> (Option<LabelStyle>, Vec<&'static str>, bo
         None => {
             // Without the default stylesheet draw.io falls back to mxGraph's 11px.
             if style.suppress_defaults && style.get("fontSize").is_none() {
-                label.font_size = Some(11.0);
+                label.font_size = Some(DRAWIO_UNSTYLED_FONT_SIZE);
             }
             accept("fontSize", true);
         }
@@ -2969,11 +2972,34 @@ impl<'a> PageImport<'a> {
         truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings)
     }
 
-    fn rich_label(&mut self, cell: &Cell) -> (String, Option<thinoda_core::InlineText>) {
+    fn rich_label(
+        &mut self,
+        cell: &Cell,
+        regular_vertex: bool,
+    ) -> (String, Option<thinoda_core::InlineText>) {
         if !cell.style.flag("html") {
             return (self.label(cell), None);
         }
-        let (text, rich) = parse_rich_html(&cell.value, self.warnings);
+        let base_font_size = cell
+            .style
+            .num("fontSize")
+            .filter(|size| {
+                (thinoda_core::label_style::MIN_LABEL_FONT_SIZE
+                    ..=thinoda_core::label_style::MAX_LABEL_FONT_SIZE)
+                    .contains(size)
+            })
+            .or_else(|| {
+                if cell.style.get("fontSize").is_some() {
+                    None
+                } else if cell.style.suppress_defaults {
+                    Some(DRAWIO_UNSTYLED_FONT_SIZE)
+                } else if regular_vertex && cell.style.known_vertex_label_defaults() {
+                    Some(CANVAS_LABEL_FONT_SIZE)
+                } else {
+                    None
+                }
+            });
+        let (text, rich) = parse_rich_html(&cell.value, self.warnings, base_font_size);
         let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
         let rich = rich.filter(|value| {
             if value.validate(&text).is_err() {
@@ -4288,7 +4314,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let (label, rich_label) =
             if !matches!(kind, Kind::Line | Kind::Card(CardKind::Image) | Kind::Image) {
-                self.rich_label(cell)
+                self.rich_label(cell, true)
             } else {
                 (self.label(cell), None)
             };
@@ -5041,7 +5067,7 @@ impl<'a> PageImport<'a> {
         {
             self.warn(ImportWarning::Formatting);
         }
-        let (mut label, mut rich_label) = self.rich_label(cell);
+        let (mut label, mut rich_label) = self.rich_label(cell, false);
         let label_style_loss = !label.is_empty() && style.label_style_loss(true, false);
         let label_placement = self.edge_label_placement(&cell.geometry);
         let mut extra_labels = Vec::new();
@@ -5058,7 +5084,7 @@ impl<'a> PageImport<'a> {
                 {
                     self.warn(ImportWarning::Other);
                 }
-                let (text, rich_text) = self.rich_label(child);
+                let (text, rich_text) = self.rich_label(child, false);
                 if text.is_empty()
                     && rich_text
                         .as_ref()

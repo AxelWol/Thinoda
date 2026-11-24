@@ -2,8 +2,9 @@ _Last updated: 2026-11-24 00:08:56 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) native integration: research, gap analysis, concept and plan
 
-Status: 🟡 in progress. D0–D3, D6–D8 and D11 are complete; D4 and D5 have
-deferred work, and D9 is partially complete. D10 and D12–D15 remain open. Binding
+Status: 🟡 in progress. The scoped D0–D3 and D8 tasks are complete. D4–D7
+and D9–D15 remain open or partially complete; their unchecked tasks below
+include deferred ownership, named ports and layout work. Binding
 contracts that shipped code already follows (user decisions,
 ownership/passthrough, JSON stencil DSL, model, UX, security, guardrails,
 licensing) are in
@@ -301,8 +302,17 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Preserve existing formatted-card runs and lists during search/replace
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
+  - [x] Import legacy HTML `font` colours, including bounded HTML fallback parsing, with CSS precedence and nested-style restoration
+  - [x] Import legacy HTML `font face` values with CSS precedence, entity decoding and bounded font-family validation; retain the first valid fallback and disclose the rest
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
-  - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
+  - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
+  - [x] Warn when draw.io HTML oblique text is approximated as italic
+  - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
+  - [x] Preserve semicolons in quoted or escaped CSS font-family names without consuming later declarations
+  - [x] Preserve inherited draw.io HTML font and colour properties for CSS `inherit` and `unset`
+  - [x] Resolve draw.io HTML `em` and percentage font sizes when an inline or explicit whole-label parent size is known
+  - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
+  - [x] Warn when a nested colour change can alter the colour of an ancestor's decoration
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -351,11 +361,26 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
 
+**Oblique critique:** Oblique and italic can use different font faces and angles.
+The native inline model records only italic, so imports retain the existing
+approximation but report formatting loss for confirmation. Exact oblique
+rendering and source-preserving HTML remain open.
+
+**Decoration critique:** An HTML ancestor's underline or strike propagates
+through descendants even when they specify `text-decoration:none`. Preserve
+those active decorations while keeping same-element overrides, independent
+decoration kinds, sibling restoration and Thinoda's inheritance markers intact.
+An ancestor's decoration can have a different colour from descendant text;
+the model paints both in the descendant colour, so such changes are disclosed
+conservatively. Independent decoration colours and source-preserving HTML
+remain open.
+
 **Font-weight critique:** CSS `bolder` and `lighter` depend on the inherited
 numeric weight, and numeric values other than 400 and 700 can differ visibly;
 the current bold/not-bold model cannot retain either distinction. The existing
-visual approximation is preserved, but import and clipboard conversion now
-report formatting loss instead of presenting it as exact.
+600 threshold approximates the full CSS numeric range, while invalid values
+leave earlier declarations or the inherited style intact. Import and clipboard
+conversion report formatting loss instead of presenting approximations as exact.
 
 **Ordered-input critique:** egui 0.37 exposes `InputState::begin_pass` but not
 `PointerState::begin_pass`. Rebuilding successive input states from a retained
@@ -364,10 +389,38 @@ the already aggregated current state as the starting point would reuse later
 click and drag history. Replay must not consume input twice on extra egui
 passes, invent event timing or change the host's final pointer and focus state.
 
-**Font-family critique:** CSS fallback lists are not native single-family names;
-retaining the written list as one family may fall back to the default font.
-Conversion warns rather than claiming fidelity. A single quoted family may
-contain a comma and does not trigger this warning.
+**Font-family critique:** A CSS fallback list cannot fit the native
+single-family model. Conversion selects the first family and warns that
+fallbacks were lost; if it is unavailable, the default may still differ from
+the browser's next available family. Quoted commas, semicolons and CSS escapes
+are parsed as part of the family instead of declaration or fallback separators.
+Unsupported properties still report loss, including when their values contain
+nested semicolons; later declarations remain independently applicable.
+
+**CSS inheritance critique:** `inherit` and `unset` preserve the parent value
+for inherited font and colour properties, including the whole-label default.
+Stylesheet-dependent `revert` and unrepresentable initial family selection
+remain explicit formatting losses; quoted family names remain literal.
+
+**Legacy font critique:** `font color` attributes use HTML's bounded legacy
+colour algorithm, not CSS parsing for unrecognised values, and apply as
+presentational hints before inline CSS regardless of attribute order. Sibling
+styles and inherited overrides are restored. Unterminated entity references
+still warn because their decoding is incomplete. Chromium comparisons cover
+invalid, transparent, Unicode, shorthand and long colours.
+`face` families share the CSS tokenizer, so embedded declarations cannot
+alter other attributes. Valid fallback lists use the first family and warn;
+invalid lists preserve the inherited family. Unrepresentable families still
+warn, and `size` remains unsupported.
+
+**Relative font-size critique:** Percentages and `em` resolve against the parent
+size, not a preceding declaration on the same element. Explicit whole-label
+font sizes, the default 12px for ordinary vertices and the known `ellipse`,
+`rhombus` and `triangle` vertex styles, and draw.io's 11px fallback when the
+stylesheet is suppressed provide a base without introducing redundant inline
+runs. Other named styles and connector-label defaults are not assumed; unknown
+bases still require a warning for non-identity scales. A named style combined
+with another token or explicit shape remains unknown rather than being inferred.
 
 ### D10 — Save back to `.drawio`
 
