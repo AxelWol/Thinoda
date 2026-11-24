@@ -173,6 +173,55 @@ fn drawio_html_oblique_font_style_warns_about_italic_approximation() {
 }
 
 #[test]
+fn drawio_html_inherited_font_properties_keep_parent_values() {
+    for keyword in ["inherit", "unset"] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;span style=&quot;font-family:Courier New;font-size:16px;font-weight:normal;font-style:italic;color:#ff0000&quot;&gt;&lt;b style=&quot;font-family:Arial;font-family:{keyword};font-size:20px;font-size:{keyword};font-weight:{keyword};font-style:normal;font-style:{keyword};color:#0000ff;color:{keyword}&quot;&gt;Text&lt;/b&gt;&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            !report.warnings.contains(&ImportWarning::Formatting),
+            "{keyword}: {:?}",
+            report.warnings
+        );
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        let style = &shape.label_rich_text.as_ref().unwrap().runs[0].style;
+        assert_eq!(style.font_family.as_deref(), Some("Courier New"));
+        assert_eq!(style.font_size, Some(16.0));
+        assert_eq!(style.bold, Some(false));
+        assert_eq!(style.italic, Some(true));
+        assert_eq!(style.color, Some(Color::rgb(255, 0, 0)));
+        assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
+    }
+
+    for (family, warned) in [
+        ("initial", true),
+        ("revert", true),
+        ("&apos;inherit&apos;", false),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="&lt;span style=&quot;font-family:{family}&quot;&gt;Text&lt;/span&gt;" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{family}"
+        );
+        if !warned {
+            let shape = shapes(&report.workbook.sheets[0])[0];
+            assert_eq!(
+                shape.label_rich_text.as_ref().unwrap().runs[0]
+                    .style
+                    .font_family
+                    .as_deref(),
+                Some("inherit")
+            );
+        }
+    }
+}
+
+#[test]
 fn drawio_html_font_family_lists_warn_without_misclassifying_quoted_names() {
     for (family, expected, approximate) in [
         ("Arial, sans-serif", "Arial", true),

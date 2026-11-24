@@ -304,6 +304,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Warn when draw.io HTML oblique text is approximated as italic
   - [x] Use the first draw.io HTML font-family fallback and warn that the remaining list cannot be retained
+  - [x] Preserve inherited draw.io HTML font and colour properties for CSS `inherit` and `unset`
   - [x] Preserve ancestor underline and strikethrough across nested draw.io HTML decorations
   - [x] Warn when a nested colour change can alter the colour of an ancestor's decoration
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
@@ -386,6 +387,11 @@ single-family model. Conversion selects the first family and warns that
 fallbacks were lost; if it is unavailable, the default may still differ from
 the browser's next available family. Quoted commas and CSS escapes are parsed
 as part of the family rather than as fallback separators.
+
+**CSS inheritance critique:** `inherit` and `unset` preserve the parent value
+for inherited font and colour properties, including the whole-label default.
+Stylesheet-dependent `revert` and unrepresentable initial family selection
+remain explicit formatting losses; quoted family names remain literal.
 
 ### D10 — Save back to `.drawio`
 

@@ -140,7 +140,7 @@ impl LabelText {
     }
 }
 
-fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
+fn inline_css(style: &mut InlineTextStyle, inherited: &InlineTextStyle, value: &str) -> bool {
     let mut loss = false;
     for declaration in value.split(';').filter(|part| !part.trim().is_empty()) {
         let Some((name, value)) = declaration.split_once(':') else {
@@ -150,6 +150,21 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
         let lower = value.to_ascii_lowercase();
+        if matches!(
+            name.as_str(),
+            "font-weight" | "font-style" | "font-family" | "font-size" | "color"
+        ) && matches!(lower.as_str(), "inherit" | "unset")
+        {
+            match name.as_str() {
+                "font-weight" => style.bold = inherited.bold,
+                "font-style" => style.italic = inherited.italic,
+                "font-family" => style.font_family.clone_from(&inherited.font_family),
+                "font-size" => style.font_size = inherited.font_size,
+                "color" => style.color = inherited.color,
+                _ => unreachable!(),
+            }
+            continue;
+        }
         match name.as_str() {
             "font-weight" => match lower.as_str() {
                 "bold" => style.bold = Some(true),
@@ -199,6 +214,7 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                 let mut family = String::new();
                 let mut quoted = false;
                 let mut valid = true;
+                let mut has_fallback = false;
                 while !parser.is_exhausted() {
                     match parser.next() {
                         Ok(cssparser::Token::Ident(part)) if !quoted => {
@@ -213,6 +229,7 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                         }
                         Ok(cssparser::Token::Comma) if !family.is_empty() => {
                             loss = true;
+                            has_fallback = true;
                             break;
                         }
                         _ => {
@@ -222,6 +239,24 @@ fn inline_css(style: &mut InlineTextStyle, value: &str) -> bool {
                     }
                 }
                 let family = family.trim();
+                if valid
+                    && !quoted
+                    && !has_fallback
+                    && matches!(family.to_ascii_lowercase().as_str(), "inherit" | "unset")
+                {
+                    style.font_family.clone_from(&inherited.font_family);
+                    continue;
+                }
+                if valid
+                    && !quoted
+                    && matches!(
+                        family.to_ascii_lowercase().as_str(),
+                        "inherit" | "unset" | "initial" | "revert" | "revert-layer"
+                    )
+                {
+                    loss = true;
+                    continue;
+                }
                 if family.is_empty()
                     || family.len() > MAX_INLINE_FONT_FAMILY_BYTES
                     || family.chars().any(char::is_control)
@@ -494,7 +529,8 @@ fn parse_html_with_limit(
                     && el.get_attribute("data-thinoda-break").as_deref() == Some("1")
                     && state.rich.is_some();
                 if let Some(rich) = &mut state.rich {
-                    previous_style = Some(rich.style.clone());
+                    let inherited_style = rich.style.clone();
+                    previous_style = Some(inherited_style.clone());
                     previous_lists = rich.lists.len();
                     let inherited_underline = rich.style.underline;
                     let inherited_strike = rich.style.strikethrough;
@@ -526,7 +562,13 @@ fn parse_html_with_limit(
                     let mut inherit_strike = false;
                     for attribute in el.attributes() {
                         match attribute.name().to_ascii_lowercase().as_str() {
-                            "style" => loss |= inline_css(&mut rich.style, &attribute.value()),
+                            "style" => {
+                                loss |= inline_css(
+                                    &mut rich.style,
+                                    &inherited_style,
+                                    &attribute.value(),
+                                );
+                            }
                             "data-thinoda-underline" if attribute.value() == "inherit" => {
                                 inherit_underline = true;
                             }
