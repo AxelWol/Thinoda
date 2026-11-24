@@ -517,6 +517,10 @@ fn parse_html_with_limit(
                     if inherit_strike {
                         rich.style.strikethrough = inherited_strike;
                     }
+                    loss |= (inherited_underline == Some(true)
+                        && rich.style.underline == Some(false))
+                        || (inherited_strike == Some(true)
+                            && rich.style.strikethrough == Some(false));
                     state.formatting_loss |= loss;
                 } else if !el.attributes().is_empty() || !matches!(name.as_str(), "div" | "span") {
                     state.formatting_loss = true;

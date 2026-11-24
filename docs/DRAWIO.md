@@ -303,6 +303,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Warn when draw.io HTML font-family fallback lists cannot be represented as a single native font family
+  - [x] Warn when nested draw.io HTML decorations suppress an ancestor's propagated underline or strikethrough
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
@@ -368,6 +369,11 @@ passes, invent event timing or change the host's final pointer and focus state.
 retaining the written list as one family may fall back to the default font.
 Conversion warns rather than claiming fidelity. A single quoted family may
 contain a comma and does not trigger this warning.
+
+**Nested-decoration critique:** CSS decorations propagate through descendants,
+but the inline model currently lets a child override an ancestor's decoration.
+The existing approximation remains editable and is explicitly disclosed;
+correct propagation still needs a representation that preserves source styling.
 
 ### D10 — Save back to `.drawio`
 
