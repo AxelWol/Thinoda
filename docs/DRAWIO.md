@@ -302,7 +302,7 @@ Text/Style/Arrange/Actions sections instead of competing upper strips.
   - [x] Preserve existing formatted-card runs and lists during search/replace
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export supported draw.io card HTML, including baseline overrides
-  - [x] Import six-digit legacy HTML `font` colours with CSS precedence and nested-style restoration
+  - [x] Import named and three-/six-digit legacy HTML `font` colours with CSS precedence and nested-style restoration
   - [x] Warn when draw.io HTML relative or non-400/700 numeric font weights are approximated, protecting the original from silent formatting loss
   - [x] Approximate valid CSS numeric weights from 1 to 1000, including decimal and exponent forms, and ignore invalid values
   - [x] Warn when draw.io HTML oblique text is approximated as italic
@@ -401,11 +401,11 @@ for inherited font and colour properties, including the whole-label default.
 Stylesheet-dependent `revert` and unrepresentable initial family selection
 remain explicit formatting losses; quoted family names remain literal.
 
-**Legacy font critique:** Six-digit `font color` attributes are applied as
-presentational hints before inline CSS, independently of attribute order.
-Sibling styles and inherited overrides are restored. Other legacy colours,
-`face` and `size` remain disclosed losses rather than being interpreted using
-CSS rules that differ from HTML's legacy parsing.
+**Legacy font critique:** Named and three-/six-digit hex `font color`
+attributes are applied as presentational hints before inline CSS, independently
+of attribute order. Sibling styles and inherited overrides are restored.
+HTML's unusual fallback for other colour strings, `face` and `size` remain
+disclosed losses rather than being interpreted with differing CSS rules.
 
 **Relative font-size critique:** Percentages and `em` resolve against the parent
 size, not a preceding declaration on the same element. Explicit whole-label

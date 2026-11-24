@@ -613,17 +613,23 @@ fn parse_html_with_limit(
                     if name == "font"
                         && let Some(color) = el.get_attribute("color")
                     {
+                        let color =
+                            color.trim_matches(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '));
                         let bytes = color.as_bytes();
-                        if bytes.len() == 7
+                        let is_hex = matches!(bytes.len(), 4 | 7)
                             && bytes[0] == b'#'
-                            && bytes[1..].iter().all(u8::is_ascii_hexdigit)
+                            && bytes[1..].iter().all(u8::is_ascii_hexdigit);
+                        let is_name =
+                            !bytes.is_empty() && bytes.iter().all(u8::is_ascii_alphabetic);
+                        if let Some(parsed) = (is_hex || is_name)
+                            .then(|| super::parse_style_color(color))
+                            .flatten()
+                            .filter(|parsed| {
+                                !parsed.approximate
+                                    && parsed.color.is_some_and(|color| color.a == 255)
+                            })
                         {
-                            if let Some(parsed) = super::parse_style_color(&color) {
-                                rich.style.color = parsed.color;
-                                loss |= parsed.approximate;
-                            } else {
-                                loss = true;
-                            }
+                            rich.style.color = parsed.color;
                         } else {
                             loss = true;
                         }

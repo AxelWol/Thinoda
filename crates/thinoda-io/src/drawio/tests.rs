@@ -597,11 +597,41 @@ fn drawio_html_legacy_font_colors_preserve_css_precedence_and_siblings() {
 }
 
 #[test]
+fn drawio_html_legacy_font_named_and_short_hex_colors() {
+    for (color, expected) in [
+        ("red", Color::rgb(255, 0, 0)),
+        (" ReBeccAPurple ", Color::rgb(102, 51, 153)),
+        ("#abc", Color::rgb(170, 187, 204)),
+        (" #ABC ", Color::rgb(170, 187, 204)),
+    ] {
+        let markup = format!(r#"<font color="{color}">Text</font>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{color}: {:?}", report.warnings);
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .color,
+            Some(expected),
+            "{color}"
+        );
+        assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
+    }
+}
+
+#[test]
 fn drawio_html_unsupported_legacy_font_attributes_warn() {
     for markup in [
-        r#"<font color="red">Text</font>"#,
-        r##"<font color="#abc">Text</font>"##,
         r##"<font color="#xyzxyz">Text</font>"##,
+        r#"<font color="transparent">Text</font>"#,
+        r#"<font color="currentColor">Text</font>"#,
         r#"<font face="Arial">Text</font>"#,
         r#"<font size="4">Text</font>"#,
     ] {
