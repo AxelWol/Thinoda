@@ -242,18 +242,52 @@ fn drawio_html_relative_font_size_uses_vertex_default_for_cards() {
 }
 
 #[test]
+fn drawio_html_relative_font_size_uses_known_named_vertex_defaults() {
+    let markup = esc(r#"<span style="font-size:150%">Text</span>"#);
+    for style in ["ellipse;html=1;", "rhombus;html=1;", "triangle;html=1;"] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{markup}" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            !report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(
+            shape.label_rich_text.as_ref().unwrap().runs[0]
+                .style
+                .font_size,
+            Some(18.0),
+            "{style}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_relative_font_size_does_not_guess_named_or_edge_defaults() {
     let markup = esc(r#"<span style="font-size:150%">Text</span>"#);
-    let vertex = page(&format!(
-        r#"<mxCell id="a" value="{markup}" style="customStyle;shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
-    ));
-    let report = load(&vertex);
-    assert!(report.warnings.contains(&ImportWarning::Formatting));
-    assert!(
-        shapes(&report.workbook.sheets[0])[0]
-            .label_rich_text
-            .is_none()
-    );
+    for style in [
+        "customStyle;shape=rectangle;html=1;",
+        "ellipse;shape=rectangle;html=1;",
+        "ellipse;customStyle;html=1;",
+    ] {
+        let vertex = page(&format!(
+            r#"<mxCell id="a" value="{markup}" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&vertex);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}"
+        );
+        assert!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .is_none(),
+            "{style}"
+        );
+    }
 
     let edge = page(&format!(
         r#"<mxCell id="edge" value="{markup}" style="html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{markup}" style="edgeLabel;html=1;" vertex="1" parent="edge"><mxGeometry relative="1" as="geometry"/></mxCell>"#

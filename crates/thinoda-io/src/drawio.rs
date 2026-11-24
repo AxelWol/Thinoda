@@ -1266,18 +1266,20 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
-    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
-        // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
-        // These built-in vertex styles leave the default label settings unchanged.
-        if !self.tokens.is_empty()
-            && (source_is_edge
-                || self.tokens.len() > 1
-                || self.get("shape").is_some()
-                || !matches!(
+    fn known_vertex_label_defaults(&self) -> bool {
+        self.tokens.is_empty()
+            || (self.tokens.len() == 1
+                && self.get("shape").is_none()
+                && matches!(
                     self.tokens.first().map(String::as_str),
                     Some("ellipse" | "rhombus" | "triangle")
                 ))
-        {
+    }
+
+    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
+        // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
+        // These built-in vertex styles leave the default label settings unchanged.
+        if !self.tokens.is_empty() && (source_is_edge || !self.known_vertex_label_defaults()) {
             return true;
         }
         match self.get("fontSize") {
@@ -2991,7 +2993,7 @@ impl<'a> PageImport<'a> {
                     None
                 } else if cell.style.suppress_defaults {
                     Some(DRAWIO_UNSTYLED_FONT_SIZE)
-                } else if regular_vertex && cell.style.tokens.is_empty() {
+                } else if regular_vertex && cell.style.known_vertex_label_defaults() {
                     Some(CANVAS_LABEL_FONT_SIZE)
                 } else {
                     None
