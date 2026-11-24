@@ -243,6 +243,19 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [ ] Named ports, remaining draw.io connection point sets and keyboard traversal between individual ports
   - [x] Cycle supported connection points for a focused connector endpoint with Home/End, including stencil shapes
   - [ ] Expose named ports and Tab traversal between individual ports
+    - [ ] Carry stencil `RenderPort.name` through visible connection candidates and expose it to keyboard and assistive-technology users without losing names when clipping or occlusion filters points
+    - [ ] Define and version stable named-port attachment semantics, including duplicate or missing names, legacy coordinate-only connectors, parameter changes, transformations and round trips; retain a visible fallback when a port cannot be resolved
+
+**Named-port critique:** The interpreter retains optional names, but
+`stencil_object::ports` currently returns positions only and connector attachments
+store coordinates. Definition validation already rejects duplicate names within
+one definition, but names are optional and that check does not establish a
+nonempty, bounded, durable identity. Multiple ports can also resolve to the
+same coordinates. Home/End currently finds the first matching coordinate, so
+recovering a name from position alone can report the wrong port. Displaying a
+name alone would not preserve its identity if parameterized geometry moves the
+port; ambiguous positions, definition changes and incompatible readers need
+explicit handling before named attachments can be considered complete.
 
 ### D8 — Layers and tables
 
