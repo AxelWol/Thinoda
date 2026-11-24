@@ -396,6 +396,31 @@ fn inline_css(
                 }
             }
             "font-size" => {
+                let keyword_size = match lower.as_str() {
+                    "xx-small" => Some(9.0),
+                    "x-small" => Some(10.0),
+                    "small" => Some(13.0),
+                    "medium" | "initial" => Some(16.0),
+                    "large" => Some(18.0),
+                    "x-large" => Some(24.0),
+                    "xx-large" => Some(32.0),
+                    "xxx-large" => Some(48.0),
+                    _ => None,
+                };
+                let root_relative = {
+                    let mut input = cssparser::ParserInput::new(&lower);
+                    let mut parser = cssparser::Parser::new(&mut input);
+                    let size = match parser.next() {
+                        Ok(cssparser::Token::Dimension { value, unit, .. })
+                            if unit.eq_ignore_ascii_case("rem") =>
+                        {
+                            Some(*value * 16.0)
+                        }
+                        _ => None,
+                    };
+                    size.filter(|_| parser.is_exhausted())
+                };
+                let approximate = keyword_size.or(root_relative);
                 let relative = lower
                     .strip_suffix("em")
                     .and_then(|value| value.trim().parse::<f32>().ok())
@@ -409,9 +434,12 @@ fn inline_css(
                     style.font_size = inherited.font_size;
                     continue;
                 }
-                let size = lower
-                    .strip_suffix("px")
-                    .and_then(|value| value.trim().parse::<f32>().ok())
+                let size = approximate
+                    .or_else(|| {
+                        lower
+                            .strip_suffix("px")
+                            .and_then(|value| value.trim().parse::<f32>().ok())
+                    })
                     .or_else(|| {
                         lower
                             .strip_suffix("pt")
@@ -431,7 +459,8 @@ fn inline_css(
                         if size.is_finite()
                             && (MIN_INLINE_FONT_SIZE..=MAX_INLINE_FONT_SIZE).contains(&size) =>
                     {
-                        style.font_size = Some(size)
+                        style.font_size = Some(size);
+                        loss |= approximate.is_some();
                     }
                     _ => loss = true,
                 }

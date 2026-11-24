@@ -226,6 +226,82 @@ fn drawio_html_oblique_font_style_warns_about_italic_approximation() {
 }
 
 #[test]
+fn drawio_html_absolute_font_keywords_and_rem_warn_about_browser_defaults() {
+    for (value, expected) in [
+        ("xx-small", 9.0),
+        ("x-small", 10.0),
+        ("small", 13.0),
+        ("medium", 16.0),
+        ("large", 18.0),
+        ("x-large", 24.0),
+        ("xx-large", 32.0),
+        ("xxx-large", 48.0),
+        ("initial", 16.0),
+        ("1rem", 16.0),
+        ("1.25rem", 20.0),
+        ("2e0REM", 32.0),
+    ] {
+        let markup = format!(
+            r#"<span style="font-size:30px"><span style="font-size:24px;font-size:{value}">A</span>B</span>C"#
+        );
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{value}"
+        );
+        let shape = shapes(&report.workbook.sheets[0])[0];
+        let runs = &shape.label_rich_text.as_ref().unwrap().runs;
+        assert_eq!(runs.len(), 2, "{value}");
+        assert_eq!((runs[0].start, runs[0].end), (0, 1));
+        assert_eq!(runs[0].style.font_size, Some(expected), "{value}");
+        assert_eq!((runs[1].start, runs[1].end), (1, 2));
+        assert_eq!(runs[1].style.font_size, Some(30.0));
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&ImportWarning::Formatting)
+        ));
+        assert!(
+            crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .contains(&ImportWarning::Formatting)
+        );
+    }
+}
+
+#[test]
+fn drawio_html_invalid_or_unrepresentable_rem_preserves_prior_size() {
+    for value in ["1 rem", "-1rem", "0rem", "1rem 2rem", "1e100rem"] {
+        let markup = format!(r#"<span style="font-size:20px;font-size:{value}">A</span>"#);
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{}" style="shape=rectangle;html=1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            esc(&markup)
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{value}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .label_rich_text
+                .as_ref()
+                .unwrap()
+                .runs[0]
+                .style
+                .font_size,
+            Some(20.0),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn drawio_html_relative_font_sizes_use_the_parent_size() {
     for (parent, child, expected, approximate) in [
         ("20px", "150%", Some(30.0), false),
