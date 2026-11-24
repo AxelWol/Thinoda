@@ -39,6 +39,33 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.30.0](https://github.com/AxelWol/Thinoda/compare/v0.29.1...v0.30.0) (2026-11-24)
+
+
+### Features
+
+* import legacy HTML font colours ([5e14999](https://github.com/AxelWol/Thinoda/commit/5e149992e5c0398e602e09c71983fe94f56f0e0c))
+* import legacy HTML font families ([ed329e1](https://github.com/AxelWol/Thinoda/commit/ed329e1d7297326cc83abfb850b85087152410b2))
+* import named legacy font colours ([a61cca1](https://github.com/AxelWol/Thinoda/commit/a61cca14b01a3cfcfd0514c0e587fe6e167c068c))
+* parse HTML legacy font colours ([2eecd62](https://github.com/AxelWol/Thinoda/commit/2eecd628ebaeb404f370f9cdc99b6be4ff77ee84))
+* preserve legacy font fallback lists ([b3601d1](https://github.com/AxelWol/Thinoda/commit/b3601d1c5f72b384fcc8421a8dfb1ebcc2cb06fd))
+* resolve relative HTML font sizes ([8a8eb44](https://github.com/AxelWol/Thinoda/commit/8a8eb4470f82d824773e7f807f4f435ea799adbc))
+
+
+### Bug Fixes
+
+* approximate CSS numeric font weights ([c32fe73](https://github.com/AxelWol/Thinoda/commit/c32fe732579522ddc89d5049a2d122c916cd3bdf))
+* preserve semicolons in draw.io HTML styles ([7fabf87](https://github.com/AxelWol/Thinoda/commit/7fabf87455c4ccfb5686a54e7f0b52f984040881))
+* resolve relative fonts from label size ([45904e4](https://github.com/AxelWol/Thinoda/commit/45904e408c6035d7391b76bb49fa30a740684253))
+* resolve relative fonts in known vertex styles ([90c910c](https://github.com/AxelWol/Thinoda/commit/90c910ce34a168be0a010fb9f27e30f9bb6fb4f8))
+* resolve relative fonts on draw.io vertices ([93cd539](https://github.com/AxelWol/Thinoda/commit/93cd5394b9c0a1f931ec266bf1afebf5f60027e9))
+* use draw.io default for relative fonts ([e059a71](https://github.com/AxelWol/Thinoda/commit/e059a7159247491ee51e650ebc9304bbd2b3a46f))
+
+
+### Documentation
+
+* correct draw.io phase status ([ab489e8](https://github.com/AxelWol/Thinoda/commit/ab489e84fc57b9f62f59e72fb00cb40e0632ba52))
+
 ## [0.29.1](https://github.com/AxelWol/Thinoda/compare/v0.29.0...v0.29.1) (2026-11-24)
 
 
