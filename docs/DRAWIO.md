@@ -262,8 +262,25 @@ explicit handling before named attachments can be considered complete.
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [x] Tables: rows, columns, merge, stripes on the container-table engine
+- [x] Expose single-cell row/column insertion and deletion and unmerge in the canvas context menu; expose append actions for a selected table
+- [x] Replace the table toolbox icon with Google's Material Symbols Outlined `table_chart` glyph, using the existing theme-aware icon font
+- [x] Grow table rows to fit cell content at the available column widths, retaining existing row heights as minimums; handle rich text, merged cells, nested content, resizing, undo and interchange
+- [x] Add direct on-canvas table track and append affordances and verify actual canvas context-menu interactions
 - [x] Show at least six layers in a movable Layers dialog and remember its last position
 - [x] Make Layers dialog repositioning keyboard-accessible
+
+**Table interaction critique:** Context actions and canvas controls reuse the
+existing undoable table operations. Growth is committed with the edit and never
+shrinks a track automatically; a spanning cell adds any excess to its last row.
+Untouched imported tables retain their geometry. In an affected table, a plain
+unstyled, unlocked cell is given an explicit current font size so the shared
+wrapping renderer can lay it out consistently; explicit imported no-wrap styles
+remain unchanged.
+Text measurement uses the shared estimated glyph metrics, so installed-font
+differences can still affect visual fit. Track handles edit the selected cell's
+last covered row or column; full-grid divider dragging is not implemented.
+If growth would move or resize locked scene content, the edit is rejected rather
+than bypassing the lock.
 
 **Rubber-duck critique:** Constraining the panel to the drawing canvas left too
 little room for six rows beneath the ribbon at the minimum native window size,
@@ -1221,8 +1238,8 @@ approximations:
   and tables inside Zones keep the previous generic container import. Content
   of draw.io cells hidden under a merge is dropped with a Formatting warning.
 - Resizing the table frame scales its tracks proportionally; there is no
-  on-canvas track divider dragging yet, only the inspector's Row height and
-  Column width fields.
+  general full-grid divider dragging. Selected-cell track handles support drag
+  and arrow keys, alongside the inspector's Row height and Column width fields.
 - Export does not write `adaptiveColors`, so re-importing an exported page
   can warn about Formatting for fixed colours.
 

@@ -141,7 +141,188 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
     if let CanvasObjectKind::Shape { label: text, .. } = &mut object.kind {
         *text = label.into();
     }
+
     sheet.add_canvas_object(object).unwrap()
+}
+
+#[test]
+fn selected_table_cell_offers_canvas_append_buttons() {
+    let mut sheet = board();
+    let table = sheet
+        .insert_canvas_table(Vec2::new(0.0, 0.0), 2, 2, None)
+        .unwrap();
+    let cell = sheet.canvas.scene.tables[&table].cells[0].id;
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(cell);
+    h.run_steps(3);
+    h.get_by_label("Insert row below").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows.len(),
+        3
+    );
+    let button = h.get_by_label("Insert column right").rect().center();
+    click(&mut h, button, Modifiers::NONE);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table]
+            .columns
+            .len(),
+        3
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table]
+            .columns
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn table_append_controls_support_pointer_and_keyboard() {
+    let mut sheet = board();
+    let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(table);
+    h.run_steps(3);
+    let button = h.get_by_label("Insert row below").rect().center();
+    click(&mut h, button, Modifiers::NONE);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows.len(),
+        3
+    );
+    h.get_by_label("Insert column right").focus();
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table]
+            .columns
+            .len(),
+        3
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn table_append_controls_do_not_cover_selected_cell_handles() {
+    let mut sheet = board();
+    let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let cell = sheet.canvas.scene.tables[&table].cell_at(1, 1).unwrap().id;
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(cell);
+    h.run_steps(3);
+    let row = h.get_by_label("Insert row below").rect();
+    let column = h.get_by_label("Insert column right").rect();
+    for label in [
+        "Add connected shape below",
+        "Add connected shape to the right",
+        "Resize board item",
+    ] {
+        if let Some(handle) = h.query_by_label(label) {
+            assert!(!row.intersects(handle.rect()), "{label}");
+            assert!(!column.intersects(handle.rect()), "{label}");
+        }
+    }
+    click(&mut h, row.center(), Modifiers::NONE);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows.len(),
+        3
+    );
+}
+
+#[test]
+fn table_track_handles_resize_with_pointer_and_keyboard() {
+    let mut sheet = board();
+    let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let cell = sheet.canvas.scene.tables[&table].cell_at(0, 0).unwrap().id;
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(cell);
+    h.run_steps(3);
+    let start = h.get_by_label("Row height").rect().center();
+    let end = start + vec2(0.0, 25.0);
+    drag(&mut h, start, end);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows[0],
+        40.0
+    );
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows[0],
+        65.0
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows[0],
+        40.0
+    );
+    h.run_steps(3);
+    h.get_by_label("Column width").focus();
+    h.run_steps(2);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].columns[0],
+        121.0
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn table_track_drag_cancel_preserves_original_geometry() {
+    let mut sheet = board();
+    let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let cell = sheet.canvas.scene.tables[&table].cell_at(0, 0).unwrap().id;
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(cell);
+    h.run_steps(3);
+    let start = h.get_by_label("Row height").rect().center();
+    let end = start + vec2(0.0, 25.0);
+    drag(&mut h, start, end);
+    h.key_press(Key::Escape);
+    h.run_steps(1);
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows[0],
+        40.0
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn editing_table_cell_grows_row_and_undoes_in_one_step() {
+    let mut sheet = board();
+    let table = sheet.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let cell = sheet.canvas.scene.tables[&table].cells[0].id;
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.select_board_object(cell);
+        assert!(state.view.begin_board_label(&state.doc, cell));
+    }
+    h.run_steps(3);
+    h.get_by_label("Board object label")
+        .type_text("one two three four five six seven eight nine ten eleven twelve");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert!(h.state().doc.sheet().canvas.scene.tables[&table].rows[0] > 40.0);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.scene.tables[&table].rows[0],
+        40.0
+    );
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(cell)
+            .unwrap()
+            .label()
+            .is_empty()
+    );
 }
 
 #[test]

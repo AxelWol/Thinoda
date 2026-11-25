@@ -5,8 +5,8 @@ use thinoda_canvas::BoardTool;
 use thinoda_core::{
     CanvasObjectId, ShapeKind,
     scene_table::{
-        DEFAULT_TABLE_STRIPE, MAX_TABLE_TRACKS, MIN_TABLE_TRACK, SceneTableCell, TableAxis,
-        TableStripes, selected_table,
+        DEFAULT_TABLE_STRIPE, MAX_TABLE_SLOTS, MAX_TABLE_TRACKS, MIN_TABLE_TRACK, SceneTableCell,
+        TableAxis, TableStripes, selected_table,
     },
 };
 use thinoda_ui::widgets;
@@ -69,6 +69,109 @@ pub(crate) fn insert_table_controls(ui: &mut Ui) -> Option<(usize, usize)> {
 }
 
 impl ThinodaApp {
+    /// Table-specific actions for a single selected table or cell.
+    pub(crate) fn board_table_context_menu(&mut self, ui: &mut Ui) -> bool {
+        let Some(doc) = self.doc() else { return false };
+        let [selected] = doc.view.board_selection.as_slice() else {
+            return false;
+        };
+        if !doc.view.selection.is_empty() {
+            return false;
+        }
+        let canvas = &doc.doc.sheet().canvas;
+        let Some((table_id, table)) = selected_table(canvas, *selected) else {
+            return false;
+        };
+        let rows = table.rows.len();
+        let columns = table.columns.len();
+        let cell = table.cell(*selected).copied();
+        let enabled = !canvas.is_locked(table_id) && !doc.view.has_active_canvas_gesture();
+        let mut action = None;
+        ui.strong(t("Table"));
+        if let Some(cell) = cell {
+            for (label, next, available) in [
+                (
+                    "Insert row above",
+                    TableAction::Insert(TableAxis::Row, cell.start(TableAxis::Row)),
+                    rows < MAX_TABLE_TRACKS && (rows + 1) * columns <= MAX_TABLE_SLOTS,
+                ),
+                (
+                    "Insert row below",
+                    TableAction::Insert(
+                        TableAxis::Row,
+                        cell.start(TableAxis::Row) + cell.span(TableAxis::Row),
+                    ),
+                    rows < MAX_TABLE_TRACKS && (rows + 1) * columns <= MAX_TABLE_SLOTS,
+                ),
+                (
+                    "Insert column left",
+                    TableAction::Insert(TableAxis::Column, cell.start(TableAxis::Column)),
+                    columns < MAX_TABLE_TRACKS && rows * (columns + 1) <= MAX_TABLE_SLOTS,
+                ),
+                (
+                    "Insert column right",
+                    TableAction::Insert(
+                        TableAxis::Column,
+                        cell.start(TableAxis::Column) + cell.span(TableAxis::Column),
+                    ),
+                    columns < MAX_TABLE_TRACKS && rows * (columns + 1) <= MAX_TABLE_SLOTS,
+                ),
+                (
+                    "Delete row",
+                    TableAction::Delete(TableAxis::Row, cell.start(TableAxis::Row)),
+                    rows > 1,
+                ),
+                (
+                    "Delete column",
+                    TableAction::Delete(TableAxis::Column, cell.start(TableAxis::Column)),
+                    columns > 1,
+                ),
+            ] {
+                if ui
+                    .add_enabled(enabled && available, egui::Button::new(t(label)))
+                    .clicked()
+                {
+                    action = Some(next);
+                }
+            }
+            if (cell.row_span > 1 || cell.column_span > 1)
+                && ui
+                    .add_enabled(enabled, egui::Button::new(t("Unmerge cells")))
+                    .clicked()
+            {
+                action = Some(TableAction::Unmerge(cell.id));
+            }
+        } else {
+            for (label, axis, index, available) in [
+                (
+                    "Insert row below",
+                    TableAxis::Row,
+                    rows,
+                    rows < MAX_TABLE_TRACKS && (rows + 1) * columns <= MAX_TABLE_SLOTS,
+                ),
+                (
+                    "Insert column right",
+                    TableAxis::Column,
+                    columns,
+                    columns < MAX_TABLE_TRACKS && rows * (columns + 1) <= MAX_TABLE_SLOTS,
+                ),
+            ] {
+                if ui
+                    .add_enabled(enabled && available, egui::Button::new(t(label)))
+                    .clicked()
+                {
+                    action = Some(TableAction::Insert(axis, index));
+                }
+            }
+        }
+        if let Some(action) = action {
+            self.apply_table_action(table_id, action);
+            ui.close();
+        }
+        ui.separator();
+        true
+    }
+
     pub(crate) fn insert_board_table(&mut self, ctx: &Context, rows: usize, columns: usize) {
         if !self.command_available(&Cmd::BoardTool(BoardTool::Shape(ShapeKind::Rectangle))) {
             self.toasts.warning(t("Not possible here"));

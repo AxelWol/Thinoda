@@ -888,6 +888,12 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();
+    labels.append_table_row = t("Insert row below").into();
+    labels.append_table_column = t("Insert column right").into();
+    labels.resize_table_row = t("Row height").into();
+    labels.resize_table_column = t("Column width").into();
+    labels.resize_table_hint =
+        t("Drag or use arrow keys to resize; hold Shift for larger steps.").into();
     labels.waypoint = t("Connector waypoint").into();
     labels.insert_waypoint = t("Add connector waypoint").into();
     labels.waypoint_hint =
@@ -1314,7 +1320,7 @@ impl ThinodaApp {
                         );
                         board_tool_popup(
                             ui,
-                            CommandIcon::from(icons::ZONES).with_tone(ribbon::IconTone::Create),
+                            CommandIcon::from(icons::TABLE).with_tone(ribbon::IconTone::Create),
                             "Insert table",
                             collapsed,
                             false,

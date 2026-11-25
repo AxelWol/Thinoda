@@ -170,7 +170,7 @@ policy operators. Format-specific names map at the adapter boundary.
 | Layout | `Free`, `Stack(axis)` and later `Table(grid)`; nested layout runs in a bounded deterministic schedule, never until an unconstrained fixed point |
 | Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them. `FillLast` grows only the final child along the stack axis; cross-axis fill is independently selectable |
 | Resize | The shared policy supports preserve, fill-last, grow-only-parent, fit-parent and distributed gaps. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; no recursive proportional scaling by default |
-| Auto-grow/drop | Plain swimlane defaults may grow; container-table cells default not to. Preserve supported imported flags; preview bound semantic reparent rather than making it a side effect of geometric overlap |
+| Auto-grow/drop | Plain swimlane defaults may grow; edited table cells grow rows for content without automatically shrinking stored tracks. Preserve supported imported flags; preview bound semantic reparent rather than making it a side effect of geometric overlap |
 | Collapse | Store expanded bounds separately; render header/compact frame and fold external connectors to the nearest visible ancestor boundary. Restore full contents/geometry on expand |
 | Clipping | Explicit body/content clipping, not implied by being a container. Headers and crossing external connectors must not disappear behind the body clip |
 | Group conversion | Explicit, undoable command. Ordinary grouping does not assign performer or process meaning |
@@ -181,7 +181,20 @@ mixed header/stack axes. Container-table structure and absolute geometry can
 be preserved before full table authoring. SC4 delivers the table layout slice
 (implemented in draw.io D8: `scene.tables` stores row/column tracks, cell slots,
 spans and stripes for a container whose cells are free scene containers; the
-shared layout pass derives cell frames and never grows a cell from its content).
+shared layout pass derives cell frames; content edits can grow stored row tracks).
+
+Content growth runs in the document edit transaction for affected existing
+tables, processing nested tables inside-out. Row tracks retain their stored
+minimums, and a spanning cell's excess goes to its last row. Descendant bounds
+and wrapped label layout contribute to the required height. Opening a file or
+editing unrelated sheet metadata does not reflow it. The shared text layout
+uses estimated glyph widths; an edited table's previously unstyled plain labels
+are given the current explicit default font size to enable wrapping when
+unlocked, while explicit no-wrap styles remain unchanged. Actual font metrics
+can differ.
+Growth that would change locked scene geometry is rejected.
+Selected-track canvas handles and append buttons complement the inspector and
+context menus; dragging a full-grid divider is not yet available.
 General custom `childLayout` algorithms are not implemented or executed simply
 because a JSON library or draw.io file requests them.
 
@@ -328,7 +341,7 @@ must close before common container work starts.
 | SC1 - Safe generic hierarchy | SC0; relevant Phase 3 model slice delivered here | Persist/reopen parent/order/container/collapse data; bounded transforms, copy/delete/reparent, history and version gates. All generic mutation paths invoke the binding hook: test with no-op unbound behavior and a stub bound validator. Test depth/cycle/old-envelope rejection, no double moves including collapsed hidden descendants, locked descendants and keyboard containment navigation |
 | SC2 - Nested swimlane behavior | SC1; relevant Phase 4/5 rendering/interpreter capabilities | Shared JSON header/body definitions, free/stack layout and resize/drop/collapse routing; connector dashes and definition resolution. One resize including induced sibling changes is one undo step. Canvas/hit-test/SVG/PDF parity and native/web authoring; nested depth-by-child-count workload meets SC0's measured latency and bounded-operation budgets without semantic code |
 | SC3 - draw.io structural fidelity | SC2; bounded Phase 2/6/7 adapter capabilities | Import/edit/export/reimport original nested fixtures and classified corpus cases. Preserve parents, relative geometry within SC0 tolerances, IDs/order, header axes, policies, collapsed bounds and terminals. Require normalized scene idempotence over repeated round trips; verify in draw.io and report unsupported policies exactly. This is the scene-only milestone gate |
-| SC4 - Container tables | SC3 | Shared table/row/cell layout and insertion/deletion/resize without flattening. Exercise `cross.xml`, nested container cells, row/column categories and no-auto-grow behavior in the same engine. **Status:** delivered with draw.io D8 (tables): 2-D grid with merges and stripes, undoable row/column insert/delete/resize, merge/unmerge, draw.io `tableLayout` import/export (`cross.xml` and four other corpus files import native tables). On-canvas track dividers remain open |
+| SC4 - Container tables | SC3 | Shared table/row/cell layout and insertion/deletion/resize without flattening. Exercise `cross.xml`, nested container cells and row/column categories in the same engine. **Status:** 2-D grid with merges and stripes, undoable track edits and content-driven row growth, selected-track canvas handles, and draw.io `tableLayout` import/export. Full-grid divider dragging remains open |
 
 **Integration order:** SC0 and STC0 establish one contract. SC1-SC3 deliver the
 reusable foundation. STC2 then adds semantics on top; STC3 adds semantic editing,

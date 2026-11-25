@@ -133,6 +133,7 @@ subdirectory_arrow_left
 subdirectory_arrow_right
 summarize
 tab
+table_chart
 text_fields
 today
 translate

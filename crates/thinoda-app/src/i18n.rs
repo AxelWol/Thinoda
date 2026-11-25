@@ -1104,6 +1104,10 @@ const DE: &[(&str, &str)] = &[
     ("Unmerge cells", "Zellverbund aufheben"),
     ("Row height", "Zeilenhöhe"),
     ("Column width", "Spaltenbreite"),
+    (
+        "Drag or use arrow keys to resize; hold Shift for larger steps.",
+        "Zum Ändern der Größe ziehen oder die Pfeiltasten verwenden; für größere Schritte die Umschalttaste halten.",
+    ),
     ("Row stripes", "Zeilenstreifen"),
     ("Column stripes", "Spaltenstreifen"),
     (
@@ -5858,6 +5862,7 @@ mod tests {
             "Unmerge cells",
             "Row height",
             "Column width",
+            "Drag or use arrow keys to resize; hold Shift for larger steps.",
             "Row stripes",
             "Column stripes",
             "Select cells to delete, merge or resize rows and columns.",

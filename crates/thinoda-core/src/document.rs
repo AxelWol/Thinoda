@@ -528,6 +528,12 @@ impl Document {
         match f(&mut self.workbook.sheets[index]) {
             Ok(v) => {
                 if let Err(error) =
+                    crate::scene_table::reconcile_content(&before, &mut self.workbook.sheets[index])
+                {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
+                if let Err(error) =
                     crate::sankey::reconcile(&before, &mut self.workbook.sheets[index])
                 {
                     self.workbook.sheets[index] = before;

@@ -301,6 +301,13 @@ enum GestureKind {
         point: Vec2,
         preview: Option<Box<CanvasObject>>,
     },
+    TableTrack {
+        id: CanvasObjectId,
+        axis: thinoda_core::scene_table::TableAxis,
+        index: usize,
+        original: f32,
+        preview: f32,
+    },
     Arrow {
         source: CanvasObjectId,
         dir: ArrowDir,
@@ -2228,7 +2235,400 @@ pub(super) fn selected_control_rects(
         .filter(|control| !control.hover)
         .map(|control| arrow_rect(view, control.point))
         .filter(|rect| view.canvas_rect.intersects(*rect))
+        .chain(
+            table_append_controls(view, sheet, layout, scene)
+                .into_iter()
+                .map(|(_, _, rect)| rect),
+        )
+        .chain(
+            table_track_controls(view, sheet, layout, scene)
+                .into_iter()
+                .map(|(_, _, _, _, rect)| rect),
+        )
         .collect()
+}
+
+fn table_track_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) -> Vec<(
+    CanvasObjectId,
+    thinoda_core::scene_table::TableAxis,
+    usize,
+    f32,
+    Rect,
+)> {
+    use thinoda_core::scene_table::{TableAxis, selected_table};
+    if view.board_tool != BoardTool::Select
+        || view.editing.is_some()
+        || view.editing_board_object().is_some()
+        || view.board_input.is_active()
+        || !view.selection.is_empty()
+        || view.selected_object.is_some()
+    {
+        return Vec::new();
+    }
+    let [selected] = view.board_selection.as_slice() else {
+        return Vec::new();
+    };
+    let Some((id, table)) = selected_table(&sheet.canvas, *selected) else {
+        return Vec::new();
+    };
+    if !board_actions::member_is_movable(sheet, BoardMember::Object(id)) {
+        return Vec::new();
+    }
+    let (Some(item), Some(object)) = (scene.item(SceneId::Object(id)), sheet.canvas.object(id))
+    else {
+        return Vec::new();
+    };
+    let cell = table.cell(*selected);
+    let row = cell.map_or(table.rows.len() - 1, |cell| {
+        cell.start(TableAxis::Row) + cell.span(TableAxis::Row) - 1
+    });
+    let column = cell.map_or(table.columns.len() - 1, |cell| {
+        cell.start(TableAxis::Column) + cell.span(TableAxis::Column) - 1
+    });
+    let Ok(body) = thinoda_core::scene_table::table_body(
+        object.rect,
+        thinoda_core::scene_table::table_header(&sheet.canvas, id),
+    ) else {
+        return Vec::new();
+    };
+    let x = body.min.x + table.columns[..=column].iter().sum::<f32>();
+    let y = body.min.y + table.rows[..=row].iter().sum::<f32>();
+    let frame = view.xf().rect(object.rect);
+    let existing: Vec<_> = controls(view, sheet, layout, scene)
+        .into_iter()
+        .filter(|control| !control.hover)
+        .map(|control| arrow_rect(view, control.point).expand(2.0))
+        .chain(
+            table_append_controls(view, sheet, layout, scene)
+                .into_iter()
+                .map(|(_, _, rect)| rect.expand(2.0)),
+        )
+        .collect();
+    let controls = [
+        (TableAxis::Row, row, table.rows[row]),
+        (TableAxis::Column, column, table.columns[column]),
+    ];
+    controls
+        .into_iter()
+        .filter_map(|(axis, index, size)| {
+            [12.0, 36.0, 60.0, 84.0].into_iter().find_map(|distance| {
+                let center = match axis {
+                    TableAxis::Row => pos2(
+                        frame.left() - distance,
+                        view.xf().pos(Vec2::new(body.min.x, y)).y,
+                    ),
+                    TableAxis::Column => pos2(
+                        view.xf().pos(Vec2::new(x, body.min.y)).x,
+                        frame.top() - distance,
+                    ),
+                };
+                let rect = Rect::from_center_size(center, vec2(20.0, 20.0));
+                (view.canvas_rect.contains(rect.min)
+                    && view.canvas_rect.contains(rect.max)
+                    && !existing.iter().any(|other| other.intersects(rect))
+                    && item.clip.is_none_or(|clip| {
+                        let clip = view.xf().rect(clip);
+                        clip.contains(rect.min) && clip.contains(rect.max)
+                    }))
+                .then_some((id, axis, index, size, rect))
+            })
+        })
+        .collect()
+}
+
+fn table_track_id(
+    id: CanvasObjectId,
+    axis: thinoda_core::scene_table::TableAxis,
+    index: usize,
+) -> Id {
+    MapCanvas::id().with(("table-track", id, axis, index))
+}
+
+fn interact_table_track_controls(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    scene: &Scene,
+    enabled: bool,
+    out: &mut CanvasOutput,
+) -> bool {
+    use thinoda_core::scene_table::{MIN_TABLE_TRACK, TableAxis};
+    if !enabled {
+        return false;
+    }
+    let mut blocked = false;
+    for (id, axis, index, size, rect) in table_track_controls(view, doc.sheet(), layout, scene) {
+        let response = ui.interact(
+            rect,
+            table_track_id(id, axis, index),
+            Sense::click_and_drag() | Sense::FOCUSABLE,
+        );
+        let label = match axis {
+            TableAxis::Row => &view.board_labels.resize_table_row,
+            TableAxis::Column => &view.board_labels.resize_table_column,
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+        response
+            .clone()
+            .on_hover_text(&view.board_labels.resize_table_hint);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_description(view.board_labels.resize_table_hint.as_str());
+        });
+        blocked |= response.hovered()
+            || response.is_pointer_button_down_on()
+            || ui
+                .input(|input| input.pointer.press_origin())
+                .is_some_and(|point| rect.contains(point));
+        if response.is_pointer_button_down_on()
+            && ui.input(|input| input.pointer.primary_pressed())
+            && view.board_input.gesture.is_none()
+            && prepare_edit(doc, view, out)
+        {
+            response.request_focus();
+            let origin = view.xf().sheet(
+                ui.input(|input| input.pointer.press_origin())
+                    .unwrap_or(rect.center()),
+            );
+            view.board_input.gesture = Some(gesture(
+                doc,
+                view,
+                GestureKind::TableTrack {
+                    id,
+                    axis,
+                    index,
+                    original: size,
+                    preview: size,
+                },
+                origin,
+            ));
+            blocked = true;
+        }
+        if response.has_focus() {
+            view.board_input.control_focused = true;
+            let delta = ui.input_mut(|input| {
+                let (decrease, increase) = match axis {
+                    TableAxis::Row => (Key::ArrowUp, Key::ArrowDown),
+                    TableAxis::Column => (Key::ArrowLeft, Key::ArrowRight),
+                };
+                let shift = input.modifiers.shift;
+                let modifiers = if shift {
+                    Modifiers::SHIFT
+                } else {
+                    Modifiers::NONE
+                };
+                let amount = if shift { 10.0 } else { 1.0 };
+                if input.consume_key(modifiers, decrease) {
+                    -amount
+                } else if input.consume_key(modifiers, increase) {
+                    amount
+                } else {
+                    0.0
+                }
+            });
+            if delta != 0.0
+                && prepare_edit(doc, view, out)
+                && let Err(error) = doc.resize_canvas_table_track(
+                    id,
+                    axis,
+                    index,
+                    (size + delta).max(MIN_TABLE_TRACK),
+                )
+            {
+                out.error = Some(error);
+            }
+        }
+    }
+    blocked
+}
+
+fn paint_table_track_controls(
+    painter: &egui::Painter,
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) {
+    use thinoda_core::scene_table::TableAxis;
+    for (id, axis, index, _, rect) in table_track_controls(view, sheet, layout, scene) {
+        let focused = painter
+            .ctx()
+            .memory(|memory| memory.has_focus(table_track_id(id, axis, index)));
+        let center = rect.center();
+        painter.circle_filled(center, 7.0, view.accent);
+        let stroke = Stroke::new(1.5, Color32::WHITE);
+        match axis {
+            TableAxis::Row => {
+                painter.line_segment([center - vec2(4.0, 0.0), center + vec2(4.0, 0.0)], stroke)
+            }
+            TableAxis::Column => {
+                painter.line_segment([center - vec2(0.0, 4.0), center + vec2(0.0, 4.0)], stroke)
+            }
+        };
+        if focused {
+            painter.circle_stroke(center, 10.0, Stroke::new(1.5, view.accent));
+        }
+    }
+}
+
+fn table_append_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) -> Vec<(CanvasObjectId, thinoda_core::scene_table::TableAxis, Rect)> {
+    use thinoda_core::scene_table::{MAX_TABLE_SLOTS, MAX_TABLE_TRACKS, TableAxis, selected_table};
+    if view.board_tool != BoardTool::Select
+        || view.editing.is_some()
+        || view.editing_board_object().is_some()
+        || view.board_input.is_active()
+        || !view.selection.is_empty()
+        || view.selected_object.is_some()
+    {
+        return Vec::new();
+    }
+    let [selected] = view.board_selection.as_slice() else {
+        return Vec::new();
+    };
+    let Some((id, table)) = selected_table(&sheet.canvas, *selected) else {
+        return Vec::new();
+    };
+    if !board_actions::member_is_movable(sheet, BoardMember::Object(id)) {
+        return Vec::new();
+    }
+    let Some(item) = scene.item(SceneId::Object(id)) else {
+        return Vec::new();
+    };
+    let Some(object) = sheet.canvas.object(id) else {
+        return Vec::new();
+    };
+    let frame = view.xf().rect(object.rect);
+    let existing: Vec<_> = controls(view, sheet, layout, scene)
+        .into_iter()
+        .filter(|control| !control.hover)
+        .map(|control| arrow_rect(view, control.point).expand(2.0))
+        .collect();
+    let candidates = [
+        (
+            TableAxis::Row,
+            table.rows.len() < MAX_TABLE_TRACKS
+                && (table.rows.len() + 1) * table.columns.len() <= MAX_TABLE_SLOTS,
+        ),
+        (
+            TableAxis::Column,
+            table.columns.len() < MAX_TABLE_TRACKS
+                && table.rows.len() * (table.columns.len() + 1) <= MAX_TABLE_SLOTS,
+        ),
+    ];
+    candidates
+        .into_iter()
+        .filter(|(_, available)| *available)
+        .filter_map(|(axis, _)| {
+            [24.0, 48.0, 72.0, 96.0].into_iter().find_map(|distance| {
+                let center = match axis {
+                    TableAxis::Row => pos2(
+                        frame.right() - (frame.width() * 0.2).min(48.0),
+                        frame.bottom() + distance,
+                    ),
+                    TableAxis::Column => pos2(
+                        frame.right() + distance,
+                        frame.bottom() - (frame.height() * 0.2).min(40.0),
+                    ),
+                };
+                let rect = Rect::from_center_size(center, vec2(22.0, 22.0));
+                (view.canvas_rect.contains(rect.min)
+                    && view.canvas_rect.contains(rect.max)
+                    && !existing.iter().any(|other| other.intersects(rect))
+                    && item.clip.is_none_or(|clip| {
+                        let clip = view.xf().rect(clip);
+                        clip.contains(rect.min) && clip.contains(rect.max)
+                    }))
+                .then_some((id, axis, rect))
+            })
+        })
+        .collect()
+}
+
+fn table_append_id(id: CanvasObjectId, axis: thinoda_core::scene_table::TableAxis) -> Id {
+    MapCanvas::id().with(("table-append", id, axis))
+}
+
+fn interact_table_append_controls(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    scene: &Scene,
+    enabled: bool,
+    out: &mut CanvasOutput,
+) -> bool {
+    use thinoda_core::scene_table::TableAxis;
+    if !enabled {
+        return false;
+    }
+    let mut blocked = false;
+    for (id, axis, rect) in table_append_controls(view, doc.sheet(), layout, scene) {
+        let response = ui.interact(
+            rect,
+            table_append_id(id, axis),
+            Sense::click() | Sense::FOCUSABLE,
+        );
+        let label = match axis {
+            TableAxis::Row => &view.board_labels.append_table_row,
+            TableAxis::Column => &view.board_labels.append_table_column,
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+        response.clone().on_hover_text(label);
+        blocked |= response.hovered()
+            || response.is_pointer_button_down_on()
+            || ui
+                .input(|input| input.pointer.press_origin())
+                .is_some_and(|point| rect.contains(point));
+        let keyboard = response.has_focus()
+            && ui.input_mut(|input| {
+                input.consume_key(Modifiers::NONE, Key::Enter)
+                    || input.consume_key(Modifiers::NONE, Key::Space)
+            });
+        if response.clicked() || keyboard {
+            if prepare_edit(doc, view, out) {
+                let table = &doc.sheet().canvas.scene.tables[&id];
+                let index = table.tracks(axis).len();
+                if let Err(error) = doc.insert_canvas_table_track(id, axis, index) {
+                    out.error = Some(error);
+                }
+            }
+            blocked = true;
+        }
+        view.board_input.control_focused |= response.has_focus();
+    }
+    blocked
+}
+
+fn paint_table_append_controls(
+    painter: &egui::Painter,
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) {
+    for (id, axis, rect) in table_append_controls(view, sheet, layout, scene) {
+        let focused = painter
+            .ctx()
+            .memory(|memory| memory.has_focus(table_append_id(id, axis)));
+        let center = rect.center();
+        painter.circle_filled(center, 10.0, view.accent);
+        let stroke = Stroke::new(if focused { 2.5 } else { 1.8 }, Color32::WHITE);
+        painter.line_segment([center - vec2(4.0, 0.0), center + vec2(4.0, 0.0)], stroke);
+        painter.line_segment([center - vec2(0.0, 4.0), center + vec2(0.0, 4.0)], stroke);
+        if focused {
+            painter.circle_stroke(center, 12.0, Stroke::new(1.5, view.accent));
+        }
+    }
 }
 
 fn selection_controls(
@@ -3614,9 +4014,20 @@ fn interact_controls(
     let mut blocked = view.board_input.is_active();
     let mut arrow_hovered = false;
     let now = ui.input(|input| input.time);
+    let table_rects: Vec<_> = table_append_controls(view, doc.sheet(), layout, scene)
+        .into_iter()
+        .map(|(_, _, rect)| rect)
+        .chain(
+            table_track_controls(view, doc.sheet(), layout, scene)
+                .into_iter()
+                .map(|(_, _, _, _, rect)| rect),
+        )
+        .collect();
     for control in controls(view, doc.sheet(), layout, scene) {
         let rect = arrow_rect(view, control.point);
-        if !view.canvas_rect.intersects(rect) {
+        if !view.canvas_rect.intersects(rect)
+            || (control.hover && table_rects.iter().any(|table| table.intersects(rect)))
+        {
             continue;
         }
         let sense = if control.hover {
@@ -3999,6 +4410,19 @@ fn update_gesture(
                     }
                 }
             }
+            GestureKind::TableTrack {
+                axis,
+                original,
+                preview,
+                ..
+            } => {
+                let delta = current - drag.origin;
+                let delta = match axis {
+                    thinoda_core::scene_table::TableAxis::Row => delta.y,
+                    thinoda_core::scene_table::TableAxis::Column => delta.x,
+                };
+                *preview = (*original + delta).max(thinoda_core::scene_table::MIN_TABLE_TRACK);
+            }
         }
     }
     if release.is_none()
@@ -4165,6 +4589,20 @@ fn update_gesture(
                 GestureKind::StencilHandle {
                     id, index, point, ..
                 } => update_stencil_handle(doc, id, index, point),
+                GestureKind::TableTrack {
+                    id,
+                    axis,
+                    index,
+                    original,
+                    preview,
+                } => {
+                    if original == preview {
+                        Ok(false)
+                    } else {
+                        doc.resize_canvas_table_track(id, axis, index, preview)
+                            .map(|()| true)
+                    }
+                }
                 GestureKind::Arrow {
                     source,
                     dir,
@@ -4327,7 +4765,10 @@ pub(super) fn interact(
         view.board_input.cancel_gesture();
         return true;
     }
-    let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
+    let standard_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
+    let table_controls = interact_table_append_controls(ui, doc, view, layout, scene, enabled, out);
+    let track_controls = interact_table_track_controls(ui, doc, view, layout, scene, enabled, out);
+    let over_controls = standard_controls || table_controls || track_controls;
     update_hover_shape(view, doc.sheet(), scene, response, over_controls);
     if !over_controls
         && view.board_input.gesture.is_none()
@@ -5598,6 +6039,8 @@ pub(super) fn paint(
     pointer: Option<Pos2>,
 ) {
     let xf = view.xf();
+    paint_table_append_controls(painter, view, sheet, layout, scene);
+    paint_table_track_controls(painter, view, sheet, layout, scene);
     for id in &view.board_selection {
         let Some(item) = scene.item(SceneId::Object(*id)) else {
             continue;
@@ -5652,9 +6095,23 @@ pub(super) fn paint(
         }
     }
 
+    let table_rects: Vec<_> = table_append_controls(view, sheet, layout, scene)
+        .into_iter()
+        .map(|(_, _, rect)| rect)
+        .chain(
+            table_track_controls(view, sheet, layout, scene)
+                .into_iter()
+                .map(|(_, _, _, _, rect)| rect),
+        )
+        .collect();
     for control in controls(view, sheet, layout, scene) {
         let center = xf.pos(control.point);
-        if !view.canvas_rect.contains(center) {
+        if !view.canvas_rect.contains(center)
+            || (control.hover
+                && table_rects
+                    .iter()
+                    .any(|table| table.intersects(arrow_rect(view, control.point))))
+        {
             continue;
         }
         let focused = painter
@@ -5987,6 +6444,35 @@ pub(super) fn paint(
             }
         }
         GestureKind::StencilHandle { .. } => {}
+        GestureKind::TableTrack {
+            id,
+            axis,
+            index,
+            original,
+            preview,
+        } => {
+            if let (Some(object), Some(table)) =
+                (sheet.canvas.object(*id), sheet.canvas.scene.tables.get(id))
+                && let Ok(body) = thinoda_core::scene_table::table_body(
+                    object.rect,
+                    thinoda_core::scene_table::table_header(&sheet.canvas, *id),
+                )
+                && let Some(tracks) = table.tracks(*axis).get(..=*index)
+            {
+                let coordinate = tracks.iter().sum::<f32>() + preview - original;
+                let points = match axis {
+                    thinoda_core::scene_table::TableAxis::Row => [
+                        Vec2::new(body.min.x, body.min.y + coordinate),
+                        Vec2::new(body.max().x, body.min.y + coordinate),
+                    ],
+                    thinoda_core::scene_table::TableAxis::Column => [
+                        Vec2::new(body.min.x + coordinate, body.min.y),
+                        Vec2::new(body.min.x + coordinate, body.max().y),
+                    ],
+                };
+                painter.line_segment(points.map(|point| xf.pos(point)), stroke);
+            }
+        }
         GestureKind::Arrow {
             source,
             anchor,
