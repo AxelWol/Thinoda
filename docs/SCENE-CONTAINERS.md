@@ -1,4 +1,4 @@
-_Last updated: 2026-11-17 21:58:24 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-25 11:13:17 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Common nested containers and swimlanes
 
