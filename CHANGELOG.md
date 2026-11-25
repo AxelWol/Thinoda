@@ -39,6 +39,13 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.31.0](https://github.com/AxelWol/Thinoda/compare/v0.30.0...v0.31.0) (2026-11-25)
+
+
+### Features
+
+* add interactive table controls and content-aware row growth ([bdec75f](https://github.com/AxelWol/Thinoda/commit/bdec75fdf2419cf3269c32106b818e24d4b9a6fb))
+
 ## [0.30.0](https://github.com/AxelWol/Thinoda/compare/v0.29.1...v0.30.0) (2026-11-24)
 
 
