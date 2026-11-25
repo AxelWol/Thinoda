@@ -6307,6 +6307,7 @@ impl ThinodaApp {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        self.board_table_context_menu(ui);
         let (context, entries) = self.canvas_context_menu();
         let mut card_text = false;
         self.context_entries(ui, &entries, cmd, &mut card_text);

@@ -23,6 +23,304 @@ fn rect(sheet: &Sheet, id: CanvasObjectId) -> Rect {
     sheet.canvas.object(id).unwrap().rect
 }
 
+#[test]
+fn content_growth_is_width_sensitive_and_undoes_with_the_edit() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 2, 1, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    let second = cell(doc.sheet(), table, 1, 0);
+    let text = "one two three four five six seven eight nine ten eleven twelve";
+    doc.set_canvas_object_label("Edit cell", first, text)
+        .unwrap();
+    let grown = doc.sheet().canvas.scene.tables[&table].rows[0];
+    assert!(grown > DEFAULT_TABLE_ROW);
+    assert_eq!(rect(doc.sheet(), second).min.y, grown);
+    let object = doc.sheet().canvas.object(first).unwrap();
+    let layout = crate::label_style::layout(
+        object,
+        crate::board::object_label_rect(object).unwrap(),
+        text,
+    )
+    .unwrap();
+    assert!(layout.block.size.y <= layout.frame.size.y + 0.01);
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+    assert!(doc.sheet().canvas.object(first).unwrap().label().is_empty());
+    assert!(doc.redo());
+    doc.resize_canvas_table_track(table, TableAxis::Column, 0, 60.0)
+        .unwrap();
+    let narrower = doc.sheet().canvas.scene.tables[&table].rows[0];
+    assert!(narrower > grown);
+    doc.set_canvas_object_label("Edit cell", first, "short")
+        .unwrap();
+    assert_eq!(doc.sheet().canvas.scene.tables[&table].rows[0], narrower);
+}
+
+#[test]
+fn merged_cell_growth_uses_the_whole_span_and_last_row() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 2, 1, None).unwrap();
+    let cells = [
+        cell(doc.sheet(), table, 0, 0),
+        cell(doc.sheet(), table, 1, 0),
+    ];
+    let merged = doc.merge_canvas_table_cells(table, &cells).unwrap();
+    doc.set_canvas_object_label(
+        "Edit cell",
+        merged,
+        "a long line of words ".repeat(20).as_str(),
+    )
+    .unwrap();
+    let rows = &doc.sheet().canvas.scene.tables[&table].rows;
+    assert_eq!(rows[0], DEFAULT_TABLE_ROW);
+    assert!(rows[1] > DEFAULT_TABLE_ROW);
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows,
+        vec![DEFAULT_TABLE_ROW; 2]
+    );
+}
+
+#[test]
+fn rich_cell_content_grows_for_large_runs() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    let text = "large text wraps over multiple lines";
+    let mut rich = crate::rich_text::InlineText::default();
+    rich.update_range(text, 0..text.chars().count(), |style| {
+        style.font_size = Some(30.0);
+    })
+    .unwrap();
+    doc.set_canvas_object_label_with_rich_text("Edit cell", first, text, Some(rich))
+        .unwrap();
+    let object = doc.sheet().canvas.object(first).unwrap();
+    let layout = crate::label_style::layout(
+        object,
+        crate::board::object_label_rect(object).unwrap(),
+        text,
+    )
+    .unwrap();
+    assert!(layout.block.size.y > DEFAULT_TABLE_ROW);
+    assert!(layout.frame.size.y + 0.01 >= layout.block.size.y);
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+}
+
+#[test]
+fn vertical_cell_label_fits_its_grown_cell() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    doc.update_canvas_object("Vertical text", first, |object| {
+        object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+            vertical: true,
+            ..Default::default()
+        }));
+    })
+    .unwrap();
+    let text = "one two three four five six seven eight nine ten";
+    doc.set_canvas_object_label("Edit cell", first, text)
+        .unwrap();
+    let object = doc.sheet().canvas.object(first).unwrap();
+    let base = crate::board::object_label_rect(object).unwrap();
+    let layout = crate::label_style::layout(object, base, text).unwrap();
+    let block = layout.block;
+    for corner in [
+        block.min,
+        Vec2::new(block.max().x, block.min.y),
+        block.max(),
+        Vec2::new(block.min.x, block.max().y),
+    ] {
+        let point = layout.to_sheet(corner);
+        assert!(point.y >= base.min.y - 0.01 && point.y <= base.max().y + 0.01);
+    }
+}
+
+#[test]
+fn growth_beyond_geometry_limits_rolls_back_the_text_edit() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    doc.resize_canvas_table_track(table, TableAxis::Column, 0, MIN_TABLE_TRACK)
+        .unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    let text = "a".repeat(4000);
+    let mut rich = crate::rich_text::InlineText::default();
+    rich.update_range(&text, 0..text.len(), |style| style.font_size = Some(256.0))
+        .unwrap();
+    assert!(
+        doc.set_canvas_object_label_with_rich_text("Edit cell", first, &text, Some(rich))
+            .is_err()
+    );
+    assert!(doc.sheet().canvas.object(first).unwrap().label().is_empty());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+    assert_eq!(doc.undo_label(), Some("Resize table column"));
+}
+
+#[test]
+fn nested_content_growth_stays_in_the_parent_cell() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    doc.edit_sheet("Add content", |sheet| {
+        let content = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(5.0, 5.0), Vec2::new(20.0, 80.0)),
+            ))
+            .map_err(EditError::Invalid)?;
+        sheet
+            .reparent_canvas_objects(&[content], Some(first))
+            .map_err(EditError::Invalid)?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(doc.sheet().canvas.scene.tables[&table].rows[0] >= 85.0);
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+}
+
+#[test]
+fn nested_table_growth_reflows_its_parent_in_the_same_undo() {
+    let (mut sheet, outer) = sheet_with_table(1, 1);
+    let outer_cell = cell(&sheet, outer, 0, 0);
+    let inner = sheet
+        .insert_canvas_table(Vec2::new(105.0, 55.0), 1, 1, None)
+        .unwrap();
+    sheet
+        .reparent_canvas_objects(&[inner], Some(outer_cell))
+        .unwrap();
+    let inner_cell = cell(&sheet, inner, 0, 0);
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.set_canvas_object_label("Edit cell", inner_cell, &"wrapped content ".repeat(20))
+        .unwrap();
+    let inner_height = doc.sheet().canvas.scene.tables[&inner].rows[0];
+    let outer_height = doc.sheet().canvas.scene.tables[&outer].rows[0];
+    assert!(inner_height > DEFAULT_TABLE_ROW);
+    assert!(outer_height >= inner_height + 5.0);
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&inner].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&outer].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+}
+
+#[test]
+fn locked_cell_cannot_be_edited_or_grow_its_table() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    doc.set_canvas_objects_locked(&[first], true).unwrap();
+    assert!(
+        doc.set_canvas_object_label("Edit cell", first, &"long ".repeat(100))
+            .is_err()
+    );
+    assert!(doc.sheet().canvas.object(first).unwrap().label().is_empty());
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+}
+
+#[test]
+fn growth_does_not_change_locked_sibling_label_style() {
+    let (mut sheet, table) = sheet_with_table(1, 2);
+    let first = cell(&sheet, table, 0, 0);
+    let sibling = cell(&sheet, table, 0, 1);
+    sheet
+        .canvas
+        .object_mut(sibling)
+        .unwrap()
+        .set_label("existing")
+        .unwrap();
+    sheet.set_canvas_objects_locked(&[sibling], true).unwrap();
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.set_canvas_object_label("Edit cell", first, "short")
+        .unwrap();
+    assert!(
+        doc.sheet()
+            .canvas
+            .object(sibling)
+            .unwrap()
+            .label_style
+            .is_none()
+    );
+    assert!(
+        doc.set_canvas_object_label("Edit cell", first, &"long ".repeat(100))
+            .is_err()
+    );
+    assert_eq!(doc.sheet().canvas.object(first).unwrap().label(), "short");
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+}
+
+#[test]
+fn cells_in_the_same_row_share_the_largest_required_height() {
+    let mut doc = Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let table = doc.insert_canvas_table(Vec2::ZERO, 1, 2, None).unwrap();
+    let first = cell(doc.sheet(), table, 0, 0);
+    let second = cell(doc.sheet(), table, 0, 1);
+    doc.set_canvas_object_label("Edit cell", first, &"one ".repeat(35))
+        .unwrap();
+    let height = doc.sheet().canvas.scene.tables[&table].rows[0];
+    doc.set_canvas_object_label("Edit cell", second, &"two ".repeat(70))
+        .unwrap();
+    let grown = doc.sheet().canvas.scene.tables[&table].rows[0];
+    assert!(grown > height);
+    assert_eq!(rect(doc.sheet(), first).size.y, grown);
+    assert_eq!(rect(doc.sheet(), second).size.y, grown);
+    assert!(doc.undo());
+    assert_eq!(doc.sheet().canvas.scene.tables[&table].rows[0], height);
+}
+
+#[test]
+fn unrelated_edits_do_not_reflow_existing_imported_geometry() {
+    let (mut sheet, table) = sheet_with_table(1, 1);
+    let first = cell(&sheet, table, 0, 0);
+    sheet
+        .canvas
+        .object_mut(first)
+        .unwrap()
+        .set_label("existing long text ".repeat(20).as_str())
+        .unwrap();
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.edit_sheet("Rename sheet", |sheet| {
+        sheet.title = "Renamed".to_owned();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        doc.sheet().canvas.scene.tables[&table].rows[0],
+        DEFAULT_TABLE_ROW
+    );
+    assert!(
+        doc.sheet()
+            .canvas
+            .object(first)
+            .unwrap()
+            .label_style
+            .is_none()
+    );
+}
+
 fn content_in(sheet: &mut Sheet, cell: CanvasObjectId) -> CanvasObjectId {
     let at = rect(sheet, cell).min + Vec2::new(5.0, 5.0);
     let id = sheet

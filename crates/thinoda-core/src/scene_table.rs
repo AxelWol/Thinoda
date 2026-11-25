@@ -4,7 +4,8 @@
 //! Each cell is a free container that owns its content. The table stores row
 //! heights, column widths, the slot and span of every cell, and stripe colours.
 //! Cell frames are derived from this grid by the shared layout pass, which also
-//! moves cell content with its cell; content never grows a cell.
+//! moves cell content with its cell. Content edits can grow rows without
+//! automatically shrinking their stored heights.
 
 use crate::board::{
     CanvasLayer, CanvasObject, CanvasObjectId, MAX_BOARD_COORDINATE, MAX_CANVAS_OBJECTS, ShapeKind,
@@ -521,6 +522,89 @@ pub(crate) fn same_rect(a: Rect, b: Rect) -> bool {
     approx_rect(a, b)
 }
 
+/// Reflows only tables affected by this edit. Opening an existing sheet does
+/// not change its geometry. A spanning cell's excess is added to its last row.
+pub(crate) fn reconcile_content(before: &Sheet, after: &mut Sheet) -> Result<(), String> {
+    if after.canvas.scene.tables.is_empty() {
+        return Ok(());
+    }
+    let old: HashMap<_, _> = before.canvas.objects.iter().map(|o| (o.id, o)).collect();
+    let new: HashMap<_, _> = after.canvas.objects.iter().map(|o| (o.id, o)).collect();
+    let cell_owner: HashMap<_, _> = after
+        .canvas
+        .scene
+        .tables
+        .iter()
+        .flat_map(|(id, table)| table.cells.iter().map(|cell| (cell.id, *id)))
+        .collect();
+    let mut affected = HashSet::new();
+    let collect_tables = |sheet: &Sheet, mut id: CanvasObjectId, out: &mut HashSet<_>| {
+        for _ in 0..=crate::scene_hierarchy::MAX_SCENE_DEPTH {
+            if let Some(table) = cell_owner.get(&id) {
+                out.insert(*table);
+            }
+            let Some(parent) = sheet.canvas.scene.parents.get(&id) else {
+                break;
+            };
+            id = *parent;
+        }
+    };
+    for (id, table) in &after.canvas.scene.tables {
+        if let Some(previous) = before.canvas.scene.tables.get(id)
+            && (previous.rows != table.rows || previous.columns != table.columns)
+        {
+            affected.insert(*id);
+            collect_tables(after, *id, &mut affected);
+        }
+    }
+    for (&id, object) in &new {
+        let parent = after.canvas.scene.parents.get(&id);
+        let changed = match old.get(&id) {
+            None => true,
+            Some(previous) => {
+                let old_parent = before.canvas.scene.parents.get(&id);
+                let relative =
+                    |object: &CanvasObject,
+                     parent: Option<&CanvasObjectId>,
+                     objects: &HashMap<CanvasObjectId, &CanvasObject>| {
+                        let origin = parent
+                            .and_then(|id| objects.get(id))
+                            .map_or(Vec2::ZERO, |parent| parent.rect.min);
+                        (object.rect.min - origin, object.rect.size)
+                    };
+                parent != old_parent
+                    || relative(object, parent, &new) != relative(previous, old_parent, &old)
+                    || object.kind != previous.kind
+                    || object.rotation != previous.rotation
+                    || object.label_style != previous.label_style
+                    || object.label_rich_text != previous.label_rich_text
+            }
+        };
+        if changed {
+            collect_tables(after, id, &mut affected);
+        }
+    }
+    // New tables retain their authored geometry until an existing cell changes.
+    affected.retain(|id| before.canvas.scene.tables.contains_key(id));
+    let depth = |mut id: CanvasObjectId| {
+        let mut depth = 0;
+        while let Some(parent) = after.canvas.scene.parents.get(&id) {
+            depth += 1;
+            id = *parent;
+            if depth > crate::scene_hierarchy::MAX_SCENE_DEPTH {
+                break;
+            }
+        }
+        depth
+    };
+    let mut tables: Vec<_> = affected.into_iter().collect();
+    tables.sort_by_key(|id| (std::cmp::Reverse(depth(*id)), *id));
+    for id in tables {
+        after.grow_table_content(id)?;
+    }
+    Ok(())
+}
+
 fn require_track_count(count: usize) -> Result<(), String> {
     if count == 0 || count > MAX_TABLE_TRACKS {
         return Err(format!(
@@ -550,6 +634,132 @@ fn new_cell_object(template: Option<&CanvasObject>, layer: Option<BoardLayerId>)
 }
 
 impl Sheet {
+    fn grow_table_content(&mut self, id: CanvasObjectId) -> Result<(), String> {
+        let mut candidate = self.clone();
+        let mut table = candidate.table(id)?.clone();
+        let cells: HashSet<_> = table.cells.iter().map(|cell| cell.id).collect();
+        let hierarchy = SceneHierarchy::from_canvas(&candidate.canvas)?;
+        let locked: HashSet<_> = candidate
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| {
+                cells.contains(&object.id)
+                    && object.label_style.is_none()
+                    && (!object.label().is_empty() || object.has_label_list())
+                    && hierarchy.require_unlocked_path(object.id).is_err()
+            })
+            .map(|object| object.id)
+            .collect();
+        for object in &mut candidate.canvas.objects {
+            if !cells.contains(&object.id) || locked.contains(&object.id) {
+                continue;
+            }
+            if (!object.label().is_empty() || object.has_label_list())
+                && object.label_style.is_none()
+            {
+                // Plain labels otherwise use the legacy unwrapped renderer.
+                // Pin the currently effective font size to retain a non-default
+                // style that explicitly opts the cell into shared wrapping.
+                object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+                    font_size: Some(crate::board::CANVAS_LABEL_FONT_SIZE),
+                    ..Default::default()
+                }));
+            }
+        }
+        let mut content_bottom: HashMap<CanvasObjectId, f32> = HashMap::new();
+        for child in &candidate.canvas.objects {
+            if child.is_connector() || cells.contains(&child.id) {
+                continue;
+            }
+            let mut ancestor = child.id;
+            for _ in 0..crate::scene_hierarchy::MAX_SCENE_DEPTH {
+                let Some(parent) = candidate.canvas.scene.parents.get(&ancestor) else {
+                    break;
+                };
+                if cells.contains(parent) {
+                    let mut bottom = crate::board::rotated_bounds(child.rect, child.rotation)
+                        .max()
+                        .y;
+                    if let Some(layout) = crate::board::object_label_rect(child)
+                        .and_then(|base| crate::label_style::layout(child, base, child.label()))
+                    {
+                        let rect = layout.box_rect();
+                        for point in [
+                            rect.min,
+                            Vec2::new(rect.max().x, rect.min.y),
+                            rect.max(),
+                            Vec2::new(rect.min.x, rect.max().y),
+                        ] {
+                            bottom = bottom.max(layout.to_sheet(point).y);
+                        }
+                    } else if !child.label().is_empty() {
+                        let lines = child.label().split('\n').count() as f32;
+                        let height = lines
+                            * crate::board::CANVAS_LABEL_FONT_SIZE
+                            * crate::label_style::LINE_HEIGHT;
+                        bottom = bottom.max(child.rect.center().y + height / 2.0);
+                    }
+                    content_bottom
+                        .entry(*parent)
+                        .and_modify(|previous| *previous = previous.max(bottom))
+                        .or_insert(bottom);
+                    break;
+                }
+                ancestor = *parent;
+            }
+        }
+        let objects: HashMap<_, _> = candidate.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        for cell in &table.cells {
+            let object = objects
+                .get(&cell.id)
+                .copied()
+                .ok_or_else(|| format!("table cell {} not found", cell.id))?;
+            let width: f32 = table.columns[cell.start(TableAxis::Column)
+                ..cell.start(TableAxis::Column) + cell.span(TableAxis::Column)]
+                .iter()
+                .sum();
+            let height: f32 = table.rows[cell.start(TableAxis::Row)
+                ..cell.start(TableAxis::Row) + cell.span(TableAxis::Row)]
+                .iter()
+                .sum();
+            let mut required = 0.0_f32;
+            if let Some((base, layout)) = crate::board::object_label_rect(object).and_then(|base| {
+                crate::label_style::layout(object, base, object.label())
+                    .map(|layout| (base, layout))
+            }) {
+                let style = object.label_style.as_deref().cloned().unwrap_or_default();
+                let angle = layout.rotation.to_radians();
+                let area_fraction = base.size.y / object.rect.size.y;
+                let occupied = layout.block.size.y * angle.cos().abs()
+                    + layout.block.size.x * angle.sin().abs()
+                    + 2.0 * style.spacing
+                    + style.spacing_top
+                    + style.spacing_bottom;
+                if area_fraction <= 0.0 || !area_fraction.is_finite() {
+                    return Err("table cell has no usable text height".into());
+                }
+                required = occupied.max(0.0) / area_fraction;
+            }
+            if let Some(bottom) = content_bottom.get(&cell.id) {
+                required = required.max(*bottom - object.rect.min.y);
+            }
+            if !width.is_finite() || !required.is_finite() {
+                return Err("table content has invalid bounds".into());
+            }
+            if required > height {
+                let last = cell.start(TableAxis::Row) + cell.span(TableAxis::Row) - 1;
+                table.rows[last] += required - height;
+            }
+        }
+        if table != candidate.canvas.scene.tables[&id] {
+            self.commit_table(candidate, id, table)
+        } else {
+            *self = candidate;
+            Ok(())
+        }
+    }
+
     fn table(&self, id: CanvasObjectId) -> Result<&SceneTable, String> {
         self.canvas
             .scene

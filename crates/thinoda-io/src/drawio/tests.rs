@@ -14739,6 +14739,24 @@ type TableSummary = (
     thinoda_core::scene_table::TableStripes,
 );
 
+#[test]
+fn content_grown_table_round_trips_native_and_drawio() {
+    let mut doc = thinoda_core::Document::new(Workbook::new(Sheet::new("Board", "Root")));
+    let id = doc.insert_canvas_table(Vec2::ZERO, 1, 1, None).unwrap();
+    let cell = doc.sheet().canvas.scene.tables[&id].cells[0].id;
+    let text = "one two three four five six seven eight nine ten eleven twelve";
+    doc.set_canvas_object_label("Edit cell", cell, text)
+        .unwrap();
+    let expected = table_summary(doc.sheet());
+    assert!(expected.0[0] > thinoda_core::scene_table::DEFAULT_TABLE_ROW);
+    let native = crate::formats::native_export(doc.workbook()).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(table_summary(&reopened.sheets[0]), expected);
+    let drawio = export(doc.workbook()).unwrap();
+    let imported = import(&drawio).unwrap().workbook;
+    assert_eq!(table_summary(&imported.sheets[0]), expected);
+}
+
 /// Grid, spans and labels of the only table, independent of object ids.
 fn table_summary(sheet: &Sheet) -> TableSummary {
     assert_eq!(sheet.canvas.scene.tables.len(), 1);

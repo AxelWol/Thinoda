@@ -3908,7 +3908,7 @@ impl<'a> PageImport<'a> {
                     } else {
                         total / count
                     };
-                    (size.round()).max(MIN_TABLE_TRACK)
+                    size.max(MIN_TABLE_TRACK)
                 })
                 .collect()
         };

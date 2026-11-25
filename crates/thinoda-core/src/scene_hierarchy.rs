@@ -1462,7 +1462,7 @@ impl<'a> SceneHierarchy<'a> {
         closure
     }
 
-    fn require_unlocked_path(&self, id: CanvasObjectId) -> Result<(), String> {
+    pub(crate) fn require_unlocked_path(&self, id: CanvasObjectId) -> Result<(), String> {
         let mut cursor = Some(id);
         while let Some(id) = cursor {
             if self.locked.contains(&id) {

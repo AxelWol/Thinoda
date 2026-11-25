@@ -64,6 +64,7 @@ pub const CALENDAR: &str = "\u{febcc}"; // calendar_month
 pub const DATE: &str = "\u{fe878}"; // event
 pub const TODAY: &str = "\u{fe8df}"; // today
 pub const ZONES: &str = "\u{fe871}"; // dashboard
+pub const TABLE: &str = "\u{fe265}"; // table_chart
 pub const OUTLINER: &str = "\u{fe241}"; // format_list_bulleted
 pub const NUMBERING: &str = "\u{fe242}"; // format_list_numbered
 pub const MAP: &str = "\u{fe97a}"; // account_tree
@@ -217,6 +218,7 @@ pub const ALL: &[(&str, &str, &str)] = &[
     ("DATE", DATE, "event"),
     ("TODAY", TODAY, "today"),
     ("ZONES", ZONES, "dashboard"),
+    ("TABLE", TABLE, "table_chart"),
     ("OUTLINER", OUTLINER, "format_list_bulleted"),
     ("NUMBERING", NUMBERING, "format_list_numbered"),
     ("MAP", MAP, "account_tree"),
