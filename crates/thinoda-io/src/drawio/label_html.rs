@@ -396,42 +396,69 @@ fn inline_css(
                 }
             }
             "font-size" => {
-                let relative = lower
-                    .strip_suffix("em")
-                    .and_then(|value| value.trim().parse::<f32>().ok())
-                    .or_else(|| {
-                        lower
-                            .strip_suffix('%')
-                            .and_then(|value| value.trim().parse::<f32>().ok())
-                            .map(|value| value / 100.0)
-                    });
+                let (absolute, relative, approximate) = {
+                    let mut input = cssparser::ParserInput::new(&lower);
+                    let mut parser = cssparser::Parser::new(&mut input);
+                    let parsed = match parser.next() {
+                        Ok(cssparser::Token::Ident(name)) => {
+                            let size = match name.to_ascii_lowercase().as_str() {
+                                "xx-small" => Some(9.0),
+                                "x-small" => Some(10.0),
+                                "small" => Some(13.0),
+                                "medium" | "initial" => Some(16.0),
+                                "large" => Some(18.0),
+                                "x-large" => Some(24.0),
+                                "xx-large" => Some(32.0),
+                                "xxx-large" => Some(48.0),
+                                _ => None,
+                            };
+                            (size, None, size.is_some())
+                        }
+                        Ok(cssparser::Token::Dimension { value, unit, .. }) => {
+                            let value = *value;
+                            match unit.to_ascii_lowercase().as_str() {
+                                "px" => (Some(value), None, false),
+                                "pt" => (Some(value * 4.0 / 3.0), None, false),
+                                "pc" => (Some(value * 16.0), None, false),
+                                "in" => (Some(value * 96.0), None, false),
+                                "cm" => (Some(value * 96.0 / 2.54), None, false),
+                                "mm" => (Some(value * 96.0 / 25.4), None, false),
+                                "q" => (Some(value * 96.0 / 101.6), None, false),
+                                "rem" => (Some(value * 16.0), None, true),
+                                "em" => (None, Some(value), false),
+                                _ => (None, None, false),
+                            }
+                        }
+                        Ok(cssparser::Token::Percentage { unit_value, .. }) => {
+                            (None, Some(*unit_value), false)
+                        }
+                        _ => (None, None, false),
+                    };
+                    if parser.is_exhausted() {
+                        parsed
+                    } else {
+                        (None, None, false)
+                    }
+                };
                 if relative == Some(1.0) {
                     style.font_size = inherited.font_size;
                     continue;
                 }
-                let size = lower
-                    .strip_suffix("px")
-                    .and_then(|value| value.trim().parse::<f32>().ok())
-                    .or_else(|| {
-                        lower
-                            .strip_suffix("pt")
-                            .and_then(|value| value.trim().parse::<f32>().ok())
-                            .map(|value| value * 4.0 / 3.0)
+                let size = absolute.or_else(|| {
+                    relative.and_then(|scale| {
+                        inherited
+                            .font_size
+                            .or(base_font_size)
+                            .map(|size| size * scale)
                     })
-                    .or_else(|| {
-                        relative.and_then(|scale| {
-                            inherited
-                                .font_size
-                                .or(base_font_size)
-                                .map(|size| size * scale)
-                        })
-                    });
+                });
                 match size {
                     Some(size)
                         if size.is_finite()
                             && (MIN_INLINE_FONT_SIZE..=MAX_INLINE_FONT_SIZE).contains(&size) =>
                     {
-                        style.font_size = Some(size)
+                        style.font_size = Some(size);
+                        loss |= approximate;
                     }
                     _ => loss = true,
                 }
@@ -454,6 +481,26 @@ fn inline_css(
         }
     }
     loss
+}
+
+fn legacy_font_size(value: &str) -> Option<f32> {
+    let value = value.trim_start_matches([' ', '\t', '\n', '\r', '\u{000c}']);
+    let (relative, digits) = match value.as_bytes().first() {
+        Some(b'+') => (1_i64, &value[1..]),
+        Some(b'-') => (-1_i64, &value[1..]),
+        _ => (0_i64, value),
+    };
+    let end = digits.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 {
+        return None;
+    }
+    let number = digits[..end].parse::<i32>().ok()? as i64;
+    let size = if relative == 0 {
+        number
+    } else {
+        3 + relative * number
+    };
+    Some([10.0, 13.0, 16.0, 18.0, 24.0, 32.0, 48.0][(size.clamp(1, 7) - 1) as usize])
 }
 
 fn legacy_font_color(value: &str) -> Option<thinoda_core::Color> {
@@ -803,6 +850,14 @@ fn parse_html_with_limit(
                             loss = true;
                         }
                     }
+                    if name == "font"
+                        && let Some(size) = el.get_attribute("size")
+                    {
+                        if let Some(size) = legacy_font_size(&decode_entities(&size)) {
+                            rich.style.font_size = Some(size);
+                        }
+                        loss = true;
+                    }
                     let mut inherit_underline = false;
                     let mut inherit_strike = false;
                     for attribute in el.attributes() {
@@ -822,7 +877,7 @@ fn parse_html_with_limit(
                                 inherit_strike = true;
                             }
                             "data-thinoda-break" if marker => {}
-                            "color" | "face" if name == "font" => {}
+                            "color" | "face" | "size" if name == "font" => {}
                             _ => loss = true,
                         }
                     }
